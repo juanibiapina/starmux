@@ -255,8 +255,8 @@ pub fn run(cfg: &Config, ctx: &Context, names: &[String]) -> BTreeMap<String, Fa
     }
     #[cfg(unix)]
     unsafe {
-        libc::signal(libc::SIGTERM, cancel as libc::sighandler_t);
-        libc::signal(libc::SIGHUP, cancel as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, cancel as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGHUP, cancel as *const () as libc::sighandler_t);
     }
     std::thread::scope(|scope| {
         let tasks: Vec<_> = names
