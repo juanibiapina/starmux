@@ -1,0 +1,33 @@
+[package]
+name = "starmux"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "A fast and configurable tmux sidebar"
+repository = "https://github.com/juanibiapina/starmux"
+homepage = "https://github.com/juanibiapina/starmux"
+readme = "README.md"
+publish = false
+
+[package.metadata.dist]
+# Build release artifacts even though this package is not published to crates.io.
+dist = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+unicode-segmentation = "1"
+unicode-width = "0.2"
+sha2 = "0.10"
+libc = "0.2"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+# The profile that cargo-dist uses for release artifacts.
+[profile.dist]
+inherits = "release"

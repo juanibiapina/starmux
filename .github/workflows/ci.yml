@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install tmux on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tmux
+      - name: Install tmux build dependencies on macOS
+        if: runner.os == 'macOS'
+        run: brew install autoconf automake jemalloc libevent libtool ncurses pkgconf utf8proc
+      - name: Build tmux PR 5468 on macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          TMUX_COMMIT: ad40c090854dbf9f7ee2aba93b6840182c80b03e
+          TMUX_SHA256: 1f8ae072661e97b783699f2523f3ddc0a32a6f2a05a493b2a732300eeb4c7951
+        run: |
+          curl -L --fail --silent --show-error \
+            "https://github.com/dewyze/tmux/archive/${TMUX_COMMIT}.tar.gz" \
+            -o "$RUNNER_TEMP/tmux.tar.gz"
+          echo "$TMUX_SHA256  $RUNNER_TEMP/tmux.tar.gz" | shasum -a 256 -c -
+          tar -xzf "$RUNNER_TEMP/tmux.tar.gz" -C "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP/tmux-${TMUX_COMMIT}"
+          sh autogen.sh
+          ./configure --prefix="$RUNNER_TEMP/tmux" --enable-utf8proc
+          make -j2 install
+          echo "$RUNNER_TEMP/tmux/bin" >> "$GITHUB_PATH"
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+        env:
+          STARMUX_REQUIRE_SIDE_STATUS: ${{ runner.os == 'macOS' && '1' || '' }}
+      - run: cargo build --release --locked
+      - name: Smoke-test the binary
+        run: |
+          target/release/starmux --version
+          target/release/starmux check-config
+          target/release/starmux init tmux | grep -F 'render-query --socket='
+      - run: cargo package --locked

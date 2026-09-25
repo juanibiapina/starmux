@@ -1,0 +1,26 @@
+# Config for 'cargo dist'
+# https://opensource.axo.dev/cargo-dist/
+
+[workspace]
+members = ["cargo:."]
+
+[dist]
+# Keep this in sync with the generated release workflow.
+cargo-dist-version = "0.31.0"
+# Publish GitHub releases from version tags.
+ci = "github"
+# Generate a portable shell installer and a Homebrew formula.
+installers = ["shell", "homebrew"]
+# Build the same macOS and Linux targets as deltoids.
+targets = [
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+  "aarch64-unknown-linux-gnu",
+  "x86_64-unknown-linux-gnu",
+]
+# Pull requests validate the release plan without building artifacts.
+pr-run-mode = "plan"
+unix-archive = ".tar.gz"
+# Publish the generated formula to the personal tap.
+publish-jobs = ["homebrew"]
+tap = "juanibiapina/homebrew-taps"
