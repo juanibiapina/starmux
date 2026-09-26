@@ -154,7 +154,6 @@ Add `pi-context` to show the plans, pull requests, and loaded skills recorded by
 modules = ["sessions", "divider", "pi-live", "divider", "pi-context"]
 
 [pi-context]
-heading_style = "bold"
 category_style = "dim"
 text_style = "default"
 plan_style = "fg=magenta"
@@ -166,11 +165,11 @@ closed_style = "fg=red"
 unknown_style = "fg=brightblack"
 ```
 
-`Context` is followed by nonempty Plans, PRs, and Skills sections. `◇` marks a plan and `✦` marks a loaded skill. A PR row shows `owner/repo#number` with a green `●` for open, muted `●` for draft, purple `●` for merged, red `●` for closed, or muted `○` when its state is unknown. Draft and closed rows include a word when space permits. These rows have no click targets. Text is escaped and clipped to the sidebar width. Styles accept palette colors. Use `disabled = true` to hide the module.
+Only nonempty Plans, PRs, and Skills sections appear. `◇` marks a plan and `✦` marks a loaded skill. A PR row shows `owner/repo#number` with Nerd Font Codicon icons: green `` for open, muted `` for draft, purple `` for merged, and red `` for closed. Unknown state uses a muted ``. Draft and closed rows include a word when space permits. Click a PR row to open its GitHub page. Click a plan to open its Markdown file or a skill to open its `SKILL.md` with the system's file handler. Clicks resolve the selected Pi session again and reject stale or missing targets. Pi-live records skill paths for newly loaded skills, including cached GitHub skills. Older skill records use `~/.agents/skills/<name>/SKILL.md` or `~/.pi/agent/skills/<name>/SKILL.md` when present; other older records have no file target until the skill is loaded again. Text is escaped and clipped to the sidebar width. Styles accept palette colors. Use `disabled = true` to hide the module.
 
 The module reads the selected reachable session's version 1 context file through its pi-live status record. Switching panes updates the rows. No selected Pi session, an empty context, a missing file, or an invalid file produces no context rows. The Pi status scan is shared with `pi-live` when both modules are enabled. It shows at most 16 entries in each category.
 
-PR states come from authenticated `gh api` requests in a background worker. A sidebar render uses the cached result immediately and refreshes eligible PRs after five minutes. At most 16 PRs can start a refresh per render, matching the displayed PR limit. Concurrent clients share a lease per PR. Failed lookups retry after one minute, preserve the last known state for up to 30 minutes, then show `○`. A missing `gh` command or GitHub authentication leaves the association visible with unknown state. The cache lives under `${XDG_CACHE_HOME:-~/.cache}/starmux/pr-state`.
+PR states come from authenticated `gh api` requests in a background worker. A sidebar render uses the cached result immediately and refreshes eligible PRs after five minutes. At most 16 PRs can start a refresh per render, matching the displayed PR limit. Concurrent clients share a lease per PR. Failed lookups retry after one minute, preserve the last known state for up to 30 minutes, then show a muted ``. A missing `gh` command or GitHub authentication leaves the association visible with unknown state. The cache lives under `${XDG_CACHE_HOME:-~/.cache}/starmux/pr-state`.
 
 ## Gob jobs
 

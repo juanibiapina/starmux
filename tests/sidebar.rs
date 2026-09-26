@@ -864,11 +864,19 @@ fn pi_context_pr_state_icons_use_distinct_styles() {
         ..Default::default()
     };
     for (state, icon, style) in [
-        (starmux::pr_state::PrState::Open, "●", "fg=green"),
-        (starmux::pr_state::PrState::Draft, "●", "fg=brightblack"),
-        (starmux::pr_state::PrState::Merged, "●", "fg=magenta"),
-        (starmux::pr_state::PrState::Closed, "●", "fg=red"),
-        (starmux::pr_state::PrState::Unknown, "○", "fg=brightblack"),
+        (starmux::pr_state::PrState::Open, "\u{ea64}", "fg=green"),
+        (
+            starmux::pr_state::PrState::Draft,
+            "\u{ebdb}",
+            "fg=brightblack",
+        ),
+        (starmux::pr_state::PrState::Merged, "\u{eafe}", "fg=magenta"),
+        (starmux::pr_state::PrState::Closed, "\u{ebda}", "fg=red"),
+        (
+            starmux::pr_state::PrState::Unknown,
+            "\u{ea64}",
+            "fg=brightblack",
+        ),
     ] {
         let rendered = sidebar
             .render_with_context(&snapshot(), &[], &[], &[], Some(&context), &[state])
@@ -883,10 +891,22 @@ fn pi_context_pr_state_icons_use_distinct_styles() {
 #[test]
 fn pi_context_icons_and_clipping_work_at_narrow_widths() {
     let sidebar = Sidebar::from_toml("modules = [\"pi-context\"]").unwrap();
+    let dir = std::env::temp_dir().join(format!("starmux-context-rows-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let plan = dir.join("plan.md");
+    let skill = dir.join("SKILL.md");
+    std::fs::write(&plan, "# Plan").unwrap();
+    std::fs::write(&skill, "# Skill").unwrap();
     let context = starmux::PiContext {
-        plans: vec!["#[fg=red] Build an extensive search".into()],
+        plans: vec![starmux::PiPlan {
+            title: "#[fg=red] Build an extensive search".into(),
+            path: plan,
+        }],
         pull_requests: vec!["https://github.com/owner/repo/pull/42".into()],
-        skills: vec!["testing".into()],
+        skills: vec![starmux::PiSkill {
+            name: "testing".into(),
+            path: Some(skill),
+        }],
     };
     for width in [16, 24, 30] {
         let mut input = snapshot();
@@ -902,12 +922,33 @@ fn pi_context_icons_and_clipping_work_at_narrow_widths() {
             )
             .unwrap();
         assert!(
-            rendered.contains("◇") && rendered.contains("●") && rendered.contains("✦"),
+            rendered.contains("◇") && rendered.contains("\u{ebdb}") && rendered.contains("✦"),
             "{rendered}"
         );
         assert!(rendered.contains("##[fg=red]"), "{rendered}");
-        assert!(!rendered.contains("#[range="), "{rendered}");
-        assert_eq!(rendered.matches("#[nl]").count(), 9);
+        for kind in ["sl", "sr", "ss"] {
+            assert_eq!(
+                rendered.matches(&format!("#[range=user|{kind}")).count(),
+                1,
+                "{rendered}"
+            );
+        }
+        assert_eq!(rendered.matches("#[range=").count(), 3, "{rendered}");
+        for row in rendered
+            .split("#[nl]")
+            .filter(|row| row.contains("#[range=user|"))
+        {
+            let token = row
+                .split("#[range=user|")
+                .nth(1)
+                .unwrap()
+                .split(' ')
+                .next()
+                .unwrap();
+            assert_eq!(token.len(), 14);
+        }
+        assert_eq!(rendered.matches("#[nl]").count(), 8);
+        assert!(!rendered.contains(" Context"), "{rendered}");
         if width == 30 {
             assert!(rendered.contains("owner/repo##42 draft"), "{rendered}");
         }
@@ -922,4 +963,5 @@ fn pi_context_icons_and_clipping_work_at_narrow_widths() {
         .render_with_context(&input, &[], &[], &[], Some(&long), &[])
         .unwrap();
     assert!(rendered.contains("…##4242"), "{rendered}");
+    std::fs::remove_dir_all(dir).unwrap();
 }

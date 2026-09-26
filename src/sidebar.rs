@@ -57,7 +57,6 @@ struct Config {
 #[serde(default, deny_unknown_fields)]
 struct PiContextConfig {
     disabled: bool,
-    heading_style: String,
     category_style: String,
     text_style: String,
     plan_style: String,
@@ -73,7 +72,6 @@ impl Default for PiContextConfig {
     fn default() -> Self {
         Self {
             disabled: false,
-            heading_style: "bold".into(),
             category_style: "dim".into(),
             text_style: "default".into(),
             plan_style: "fg=magenta".into(),
@@ -429,7 +427,6 @@ impl Sidebar {
             &config.usage.critical_bar_style,
             &config.usage.stale_style,
             &config.usage.unavailable_style,
-            &config.pi_context.heading_style,
             &config.pi_context.category_style,
             &config.pi_context.text_style,
             &config.pi_context.plan_style,
@@ -593,7 +590,12 @@ impl Sidebar {
                 }
                 "pi-context" if !self.config.pi_context.disabled => {
                     if let Some(context) = context {
-                        rows.extend(self.render_pi_context(context, states, snapshot.width)?);
+                        rows.extend(self.render_pi_context(
+                            context,
+                            states,
+                            snapshot.width,
+                            &snapshot.current_pane,
+                        )?);
                     }
                 }
                 "gob" if !self.config.gob.disabled => {
@@ -1030,6 +1032,7 @@ impl Sidebar {
         context: &crate::PiContext,
         states: &[crate::pr_state::PrState],
         width: usize,
+        pane: &str,
     ) -> Result<Vec<Row>, String> {
         if context.plans.is_empty() && context.pull_requests.is_empty() && context.skills.is_empty()
         {
@@ -1037,45 +1040,58 @@ impl Sidebar {
         }
         let cfg = &self.config.pi_context;
         let mut rows = Vec::new();
-        let mut push =
-            |text: String, style: &str, icon: Option<(&str, &str)>| -> Result<(), String> {
-                let mut spans = Vec::new();
-                if let Some((glyph, icon_style)) = icon {
-                    spans.push(Span {
-                        text: "  ".into(),
-                        style: "default".into(),
-                    });
-                    spans.push(Span {
-                        text: glyph.into(),
-                        style: resolve_style(icon_style, "default", &self.palette)?,
-                    });
-                    spans.push(Span {
-                        text: " ".into(),
-                        style: "default".into(),
-                    });
-                }
+        let mut push = |text: String,
+                        style: &str,
+                        icon: Option<(&str, &str)>,
+                        range: Option<Range>|
+         -> Result<(), String> {
+            let mut spans = Vec::new();
+            if let Some((glyph, icon_style)) = icon {
                 spans.push(Span {
-                    text,
-                    style: resolve_style(style, "default", &self.palette)?,
+                    text: "  ".into(),
+                    style: "default".into(),
                 });
-                rows.push(Row {
-                    spans,
-                    fill: None,
-                    range: None,
-                    focus: false,
-                    selected: false,
+                spans.push(Span {
+                    text: glyph.into(),
+                    style: resolve_style(icon_style, "default", &self.palette)?,
                 });
-                Ok(())
-            };
-        push(" Context".into(), &cfg.heading_style, None)?;
+                spans.push(Span {
+                    text: " ".into(),
+                    style: "default".into(),
+                });
+            }
+            spans.push(Span {
+                text,
+                style: resolve_style(style, "default", &self.palette)?,
+            });
+            rows.push(Row {
+                spans,
+                fill: None,
+                range,
+                focus: false,
+                selected: false,
+            });
+            Ok(())
+        };
         if !context.plans.is_empty() {
-            push(" Plans".into(), &cfg.category_style, None)?;
-            for title in &context.plans {
-                push(title.clone(), &cfg.text_style, Some(("◇", &cfg.plan_style)))?;
+            push(" Plans".into(), &cfg.category_style, None, None)?;
+            for (index, plan) in context.plans.iter().enumerate() {
+                let range = plan
+                    .path
+                    .is_file()
+                    .then(|| crate::navigation::file_token("sl", pane, &plan.path, index))
+                    .transpose()?
+                    .map(Range::File);
+                push(
+                    plan.title.clone(),
+                    &cfg.text_style,
+                    Some(("◇", &cfg.plan_style)),
+                    range,
+                )?;
             }
         }
         if !context.pull_requests.is_empty() {
-            push(" PRs".into(), &cfg.category_style, None)?;
+            push(" PRs".into(), &cfg.category_style, None, None)?;
             for (index, url) in context.pull_requests.iter().enumerate() {
                 let Some((label, _)) = crate::pr_state::parse_url(url) else {
                     continue;
@@ -1085,11 +1101,11 @@ impl Sidebar {
                     .copied()
                     .unwrap_or(crate::pr_state::PrState::Unknown)
                 {
-                    crate::pr_state::PrState::Open => ("●", &cfg.open_style),
-                    crate::pr_state::PrState::Draft => ("●", &cfg.draft_style),
-                    crate::pr_state::PrState::Merged => ("●", &cfg.merged_style),
-                    crate::pr_state::PrState::Closed => ("●", &cfg.closed_style),
-                    crate::pr_state::PrState::Unknown => ("○", &cfg.unknown_style),
+                    crate::pr_state::PrState::Open => ("\u{ea64}", &cfg.open_style),
+                    crate::pr_state::PrState::Draft => ("\u{ebdb}", &cfg.draft_style),
+                    crate::pr_state::PrState::Merged => ("\u{eafe}", &cfg.merged_style),
+                    crate::pr_state::PrState::Closed => ("\u{ebda}", &cfg.closed_style),
+                    crate::pr_state::PrState::Unknown => ("\u{ea64}", &cfg.unknown_style),
                 };
                 let state_word = match states
                     .get(index)
@@ -1116,16 +1132,30 @@ impl Sidebar {
                 } else {
                     label
                 };
-                push(label, &cfg.text_style, Some((glyph, style)))?;
+                let token = crate::navigation::pr_token(pane, url, index)?;
+                push(
+                    label,
+                    &cfg.text_style,
+                    Some((glyph, style)),
+                    Some(Range::PullRequest(token)),
+                )?;
             }
         }
         if !context.skills.is_empty() {
-            push(" Skills".into(), &cfg.category_style, None)?;
-            for skill in &context.skills {
+            push(" Skills".into(), &cfg.category_style, None, None)?;
+            for (index, skill) in context.skills.iter().enumerate() {
+                let range = skill
+                    .path
+                    .as_ref()
+                    .filter(|path| path.is_file())
+                    .map(|path| crate::navigation::file_token("ss", pane, path, index))
+                    .transpose()?
+                    .map(Range::File);
                 push(
-                    skill.clone(),
+                    skill.name.clone(),
                     &cfg.text_style,
                     Some(("✦", &cfg.skill_style)),
+                    range,
                 )?;
             }
         }
@@ -1858,6 +1888,8 @@ enum Range {
     ForeignWindow(String),
     PiPane(String),
     UsagePage(String),
+    PullRequest(String),
+    File(String),
 }
 
 fn escaped(text: &str) -> String {
@@ -1902,9 +1934,11 @@ fn render_rows(rows: &[Row], width: usize) -> String {
                     "#[range=window|{index} {}]",
                     if row.focus { "list=focus " } else { "" }
                 )),
-                Range::ForeignWindow(token) | Range::PiPane(token) | Range::UsagePage(token) => {
-                    result.push_str(&format!("#[range=user|{token} ]"))
-                }
+                Range::ForeignWindow(token)
+                | Range::PiPane(token)
+                | Range::UsagePage(token)
+                | Range::PullRequest(token)
+                | Range::File(token) => result.push_str(&format!("#[range=user|{token} ]")),
             }
         }
         for span in &row.spans {
@@ -1929,7 +1963,12 @@ fn render_rows(rows: &[Row], width: usize) -> String {
                 result.push_str("#[norange]#[list=on default]")
             }
             Some(
-                Range::Window(_) | Range::ForeignWindow(_) | Range::PiPane(_) | Range::UsagePage(_),
+                Range::Window(_)
+                | Range::ForeignWindow(_)
+                | Range::PiPane(_)
+                | Range::UsagePage(_)
+                | Range::PullRequest(_)
+                | Range::File(_),
             ) => result.push_str("#[norange default]"),
             None => {}
         }

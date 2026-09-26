@@ -286,11 +286,23 @@ fn ping(path: &Path, timeout: Duration) -> bool {
     false
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PiPlan {
+    pub title: String,
+    pub path: PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PiSkill {
+    pub name: String,
+    pub path: Option<PathBuf>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct PiContext {
-    pub plans: Vec<String>,
+    pub plans: Vec<PiPlan>,
     pub pull_requests: Vec<String>,
-    pub skills: Vec<String>,
+    pub skills: Vec<PiSkill>,
 }
 
 const MAX_CONTEXT_BYTES: u64 = 256 * 1024;
@@ -314,6 +326,8 @@ pub(crate) fn read_context(path: &Path, session_id: &str) -> Option<PiContext> {
     if value.get("version")?.as_u64()? != 1 || value.get("sessionId")?.as_str()? != session_id {
         return None;
     }
+    let session_file = path.file_name()?.to_str()?.strip_suffix(".context.json")?;
+    let directory = path.parent()?;
     let plans = value.get("plans")?.as_array()?;
     let prs = value
         .get("pullRequests")
@@ -325,17 +339,36 @@ pub(crate) fn read_context(path: &Path, session_id: &str) -> Option<PiContext> {
         .map(Value::as_array)
         .unwrap_or(Some(&Vec::new()))
         .cloned()?;
+    let skill_paths = value
+        .get("skillPaths")
+        .map(Value::as_object)
+        .unwrap_or(Some(&serde_json::Map::new()))
+        .cloned()?;
     if plans.iter().any(|p| {
         let id = p.get("id").and_then(Value::as_str);
         let title = p.get("title").and_then(Value::as_str);
-        let plan_path = p.get("path").and_then(Value::as_str);
-        id.is_none_or(|id| id.len() != 24 || !id.bytes().all(|b| b.is_ascii_hexdigit()))
-            || title.is_none_or(str::is_empty)
-            || plan_path.is_none_or(str::is_empty)
+        let relative = p.get("path").and_then(Value::as_str);
+        id.is_none_or(|id| {
+            id.len() != 24
+                || !id
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        }) || title.is_none_or(str::is_empty)
+            || id
+                .zip(relative)
+                .is_none_or(|(id, relative)| relative != format!("{session_file}.plans/{id}.md"))
     }) || prs.iter().any(|p| {
         p.as_str()
             .is_none_or(|s| crate::pr_state::parse_url(s).is_none())
-    }) || skills.iter().any(|s| s.as_str().is_none())
+    }) || skills
+        .iter()
+        .any(|s| s.as_str().is_none_or(|name| !valid_skill_name(name)))
+        || skill_paths.iter().any(|(name, value)| {
+            !skills.iter().any(|skill| skill.as_str() == Some(name))
+                || value
+                    .as_str()
+                    .is_none_or(|file| !valid_skill_path(Path::new(file)))
+        })
     {
         return None;
     }
@@ -343,7 +376,12 @@ pub(crate) fn read_context(path: &Path, session_id: &str) -> Option<PiContext> {
         plans: plans
             .iter()
             .take(MAX_ITEMS)
-            .filter_map(|p| p.get("title")?.as_str().map(str::to_owned))
+            .filter_map(|p| {
+                Some(PiPlan {
+                    title: p.get("title")?.as_str()?.to_owned(),
+                    path: directory.join(p.get("path")?.as_str()?),
+                })
+            })
             .collect(),
         pull_requests: prs
             .iter()
@@ -353,9 +391,45 @@ pub(crate) fn read_context(path: &Path, session_id: &str) -> Option<PiContext> {
         skills: skills
             .iter()
             .take(MAX_ITEMS)
-            .filter_map(|s| s.as_str().map(str::to_owned))
+            .filter_map(|s| {
+                let name = s.as_str()?;
+                let path = skill_paths
+                    .get(name)
+                    .and_then(Value::as_str)
+                    .map(PathBuf::from)
+                    .or_else(|| local_skill_path(name));
+                Some(PiSkill {
+                    name: name.to_owned(),
+                    path,
+                })
+            })
             .collect(),
     })
+}
+
+fn valid_skill_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && !name.starts_with('-')
+        && !name.ends_with('-')
+        && !name.contains("--")
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+fn valid_skill_path(path: &Path) -> bool {
+    path.is_absolute()
+        && path.file_name().is_some_and(|name| name == "SKILL.md")
+        && path.as_os_str().len() <= 4096
+}
+
+fn local_skill_path(name: &str) -> Option<PathBuf> {
+    let home = PathBuf::from(std::env::var_os("HOME")?);
+    [home.join(".agents/skills"), home.join(".pi/agent/skills")]
+        .into_iter()
+        .map(|dir| dir.join(name).join("SKILL.md"))
+        .find(|path| path.is_file())
 }
 
 #[cfg(test)]
@@ -365,7 +439,7 @@ mod context_tests {
     fn reads_only_matching_regular_context_and_caps_entries() {
         let dir = std::env::temp_dir().join(format!("starmux-context-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("session.context.json");
+        let path = dir.join("session.jsonl.context.json");
         let value = serde_json::json!({
             "version": 1, "sessionId": "session",
             "plans": (0..20).map(|n| serde_json::json!({"id": format!("{n:024x}"), "title": format!("Plan {n}"), "path": format!("session.jsonl.plans/{n:024x}.md")})).collect::<Vec<_>>(),

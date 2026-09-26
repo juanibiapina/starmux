@@ -730,10 +730,17 @@ fn pi_attention_row_click_selects_its_pane() {
     ] {
         let session_file = root.join(format!("{id}.jsonl"));
         let context_path = root.join(format!("{id}.jsonl.context.json"));
+        let plan_relative = format!("{id}.jsonl.plans/0123456789abcdef01234567.md");
+        let plan_path = root.join(&plan_relative);
+        fs::create_dir_all(plan_path.parent().unwrap()).unwrap();
+        fs::write(&plan_path, format!("# {id} plan")).unwrap();
+        let skill_path = root.join(format!("skills/{id}/SKILL.md"));
+        fs::create_dir_all(skill_path.parent().unwrap()).unwrap();
+        fs::write(&skill_path, "# Testing").unwrap();
         fs::write(&context_path, serde_json::json!({
             "version": 1, "sessionId": id,
-            "plans": [{"id": "0123456789abcdef01234567", "title": format!("{id} plan"), "path": "plan.md"}],
-            "pullRequests": [], "skills": ["testing"]
+            "plans": [{"id": "0123456789abcdef01234567", "title": format!("{id} plan"), "path": plan_relative}],
+            "pullRequests": [], "skills": ["testing"], "skillPaths": {"testing": skill_path}
         }).to_string()).unwrap();
         let status = serde_json::json!({
             "version": 1, "sessionId": id, "name": name, "pid": 1,
@@ -878,6 +885,59 @@ fn pi_attention_row_click_selects_its_pane() {
         !selected_context.contains("working plan"),
         "{selected_context}"
     );
+    use std::os::unix::fs::PermissionsExt;
+    let opener = root.join(if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    });
+    fs::write(
+        &opener,
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$STARMUX_TEST_ARGS\"\n",
+    )
+    .unwrap();
+    fs::set_permissions(&opener, fs::Permissions::from_mode(0o700)).unwrap();
+    let opened = root.join("opened-file");
+    for (kind, expected) in [
+        (
+            "sl",
+            root.join("attention.jsonl.plans/0123456789abcdef01234567.md"),
+        ),
+        ("ss", root.join("skills/attention/SKILL.md")),
+    ] {
+        let token = selected_context
+            .split(&format!("#[range=user|{kind}"))
+            .nth(1)
+            .unwrap()
+            .split(' ')
+            .next()
+            .unwrap();
+        let target = format!("--target={kind}{token}");
+        let output = Command::new(binary)
+            .args([
+                "activate",
+                &format!("--socket={socket_path}"),
+                &format!("--client={client_name}"),
+                &target,
+            ])
+            .env("STARMUX_CONFIG", &config)
+            .env("STARMUX_TEST_ARGS", &opened)
+            .env(
+                "PATH",
+                format!("{}:{}", root.display(), std::env::var("PATH").unwrap()),
+            )
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            fs::read_to_string(&opened).unwrap().trim(),
+            expected.to_str().unwrap()
+        );
+    }
     let token = row
         .split("#[range=user|")
         .nth(1)
