@@ -1,4 +1,28 @@
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn attached_client(socket: &str, target: &str) -> std::process::Command {
+    let mut command = std::process::Command::new("script");
+    #[cfg(target_os = "macos")]
+    command.args([
+        "-q",
+        "/dev/null",
+        "tmux",
+        "-L",
+        socket,
+        "attach",
+        "-t",
+        target,
+    ]);
+    #[cfg(target_os = "linux")]
+    command.args([
+        "-q",
+        "-c",
+        &format!("tmux -L {socket} attach -t {target}"),
+        "/dev/null",
+    ]);
+    command
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 fn attached_side_status_paints_navigation_rows() {
     use std::{
@@ -106,17 +130,7 @@ fn attached_side_status_paints_navigation_rows() {
     tmux(&["source-file", adapter_path.to_str().unwrap()]);
     let capture = root.join("client.out");
     let output = fs::File::create(&capture).unwrap();
-    let mut client = Command::new("script")
-        .args([
-            "-q",
-            "/dev/null",
-            "tmux",
-            "-L",
-            &socket,
-            "attach",
-            "-t",
-            "main",
-        ])
+    let mut client = attached_client(&socket, "main")
         .env("TERM", "xterm-256color")
         .stdin(Stdio::piped())
         .stdout(Stdio::from(output))
@@ -202,7 +216,7 @@ fn attached_side_status_paints_navigation_rows() {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 fn clicking_foreign_window_switches_the_attached_client_to_that_window() {
     use std::{
@@ -281,17 +295,7 @@ fn clicking_foreign_window_switches_the_attached_client_to_that_window() {
     tmux(&["set", "-g", "side-status-width", "30"]);
     tmux(&["source-file", adapter_path.to_str().unwrap()]);
     let capture = root.join("client.out");
-    let mut client = Command::new("script")
-        .args([
-            "-q",
-            "/dev/null",
-            "tmux",
-            "-L",
-            &socket,
-            "attach",
-            "-t",
-            "main",
-        ])
+    let mut client = attached_client(&socket, "main")
         .env("TERM", "xterm-256color")
         .stdin(Stdio::piped())
         .stdout(Stdio::from(fs::File::create(&capture).unwrap()))
