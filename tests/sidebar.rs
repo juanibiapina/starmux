@@ -7,6 +7,7 @@ fn snapshot() -> Snapshot {
         width: 30,
         client_width: 100,
         client_height: 25,
+        status_lines: 1,
         current_session: "$0".into(),
         current_pane: "%0".into(),
         pane_path: "/tmp".into(),
@@ -70,6 +71,53 @@ fn portable_defaults_render_navigation_without_personal_options() {
     assert!(rendered.contains("----------------------------"));
     assert!(!rendered.contains("●"));
     assert!(!rendered.contains("#c099ff"));
+}
+
+#[test]
+fn spacer_places_following_rows_at_the_bottom_and_collapses_on_overflow() {
+    let sidebar = Sidebar::from_toml(
+        "modules = [\"sessions\", \"gob\", \"spacer\", \"divider\"]\n[gob]\ndisabled = true",
+    )
+    .unwrap();
+    let mut input = snapshot();
+    input.client_height = 12;
+    let rendered = sidebar.render(&input).unwrap();
+    let lines: Vec<_> = rendered.split("#[nl]").collect();
+    assert_eq!(lines.len() - 1, 13); // 11 visible rows plus two list marker newlines.
+    assert!(lines[lines.len() - 2].contains("----------------------------"));
+    let gap = &lines[7..lines.len() - 2];
+    assert_eq!(gap.len(), 5);
+    assert!(gap
+        .iter()
+        .all(|line| line.ends_with("#[default]") && !line.contains("#[range=")));
+
+    input.client_height = 5;
+    let overfull = sidebar.render(&input).unwrap();
+    let unspaced = Sidebar::from_toml("modules = [\"sessions\", \"divider\"]")
+        .unwrap()
+        .render(&input)
+        .unwrap();
+    assert_eq!(overfull, unspaced);
+    assert!(Sidebar::from_toml("modules = [\"spacer\", \"spacer\"]").is_err());
+}
+
+#[test]
+fn blank_reserves_one_row_below_bottom_aligned_content() {
+    let sidebar =
+        Sidebar::from_toml("modules = [\"sessions\", \"spacer\", \"divider\", \"blank\"]").unwrap();
+    let mut input = snapshot();
+    input.client_height = 12;
+    let rendered = sidebar.render(&input).unwrap();
+    let lines: Vec<_> = rendered.split("#[nl]").collect();
+    assert_eq!(lines.len() - 1, 13);
+    assert!(lines[lines.len() - 3].contains("----------------------------"));
+    assert_eq!(lines[lines.len() - 2], "#[default]");
+
+    let repeated = Sidebar::from_toml("modules = [\"blank\", \"blank\"]")
+        .unwrap()
+        .render(&input)
+        .unwrap();
+    assert_eq!(repeated.matches("#[nl]").count(), 4);
 }
 
 #[test]

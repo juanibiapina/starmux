@@ -28,6 +28,7 @@ pub struct Snapshot {
     pub width: usize,
     pub client_width: usize,
     pub client_height: usize,
+    pub status_lines: usize,
     pub current_session: String,
     pub current_pane: String,
     pub pane_path: String,
@@ -298,13 +299,15 @@ impl Sidebar {
     }
 
     fn compile(config: Config) -> Result<Self, String> {
-        let known = ["sessions", "divider", "pi-live", "usage", "gob"];
+        let known = [
+            "sessions", "divider", "pi-live", "usage", "gob", "spacer", "blank",
+        ];
         let mut seen = BTreeSet::new();
         for name in &config.modules {
             if !known.contains(&name.as_str()) {
                 return Err(format!("unknown module {name}"));
             }
-            if name != "divider" && !seen.insert(name) {
+            if name != "divider" && name != "blank" && !seen.insert(name) {
                 return Err(format!("duplicate module {name}"));
             }
         }
@@ -500,6 +503,7 @@ impl Sidebar {
     ) -> Result<String, String> {
         validate_snapshot(snapshot)?;
         let mut rows = Vec::new();
+        let mut spacer = None;
         for name in &self.config.modules {
             match name.as_str() {
                 "sessions" if !self.sessions.config.disabled => {
@@ -517,9 +521,17 @@ impl Sidebar {
                 "gob" if !self.config.gob.disabled => {
                     rows.extend(self.render_gob(gob_jobs, snapshot.width)?)
                 }
+                "spacer" => spacer = Some(rows.len()),
+                "blank" => rows.push(Row::blank()),
                 "sessions" | "divider" | "pi-live" | "usage" | "gob" => {}
                 _ => return Err(format!("unknown module {name}")),
             }
+        }
+        if let Some(index) = spacer {
+            // The two list marker newlines precede the visible side status rows.
+            let available = snapshot.client_height.saturating_sub(snapshot.status_lines);
+            let padding = available.saturating_sub(rows.len());
+            rows.splice(index..index, (0..padding).map(|_| Row::blank()));
         }
         Ok(render_rows(&rows, snapshot.width))
     }
@@ -1640,6 +1652,18 @@ struct Row {
     selected: bool,
 }
 
+impl Row {
+    fn blank() -> Self {
+        Self {
+            spans: Vec::new(),
+            fill: None,
+            range: None,
+            focus: false,
+            selected: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 enum Range {
     Session(String),
@@ -1680,6 +1704,9 @@ fn render_rows(rows: &[Row], width: usize) -> String {
     );
     for row in rows {
         let mut remaining = width;
+        if row.spans.is_empty() && row.range.is_none() && row.fill.is_none() {
+            result.push_str("#[default]");
+        }
         if let Some(range) = &row.range {
             match range {
                 Range::Session(id) => result.push_str(&format!("#[range=session|{id} ]")),

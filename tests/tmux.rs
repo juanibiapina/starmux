@@ -203,7 +203,7 @@ fn attached_side_status_paints_navigation_rows() {
         String::from_utf8_lossy(&valid.stderr)
     );
     assert!(String::from_utf8_lossy(&valid.stdout).contains("#[range=window|"));
-    let mut stale = query;
+    let mut stale = query.clone();
     stale[5] = "--current-window=@999999999".into();
     let rejected = Command::new(binary)
         .args(&stale)
@@ -212,6 +212,45 @@ fn attached_side_status_paints_navigation_rows() {
         .unwrap();
     assert!(!rejected.status.success());
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("tmux focus changed during query"));
+
+    fs::write(&config_path, "modules = [\"spacer\", \"divider\"]\n").unwrap();
+    for (status, expected_status_rows) in [("on", 1), ("off", 0), ("2", 2)] {
+        tmux(&["set", "-g", "status", status]);
+        let height = Command::new("tmux")
+            .args([
+                "-L",
+                &socket,
+                "display-message",
+                "-p",
+                "-c",
+                client_name.trim(),
+                "#{client_height}",
+            ])
+            .output()
+            .unwrap();
+        assert!(height.status.success());
+        let height: usize = String::from_utf8(height.stdout)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let padded = Command::new(binary)
+            .args(&query)
+            .env("STARMUX_CONFIG", &config_path)
+            .output()
+            .unwrap();
+        assert!(
+            padded.status.success(),
+            "{}",
+            String::from_utf8_lossy(&padded.stderr)
+        );
+        let padded = String::from_utf8(padded.stdout).unwrap();
+        assert_eq!(
+            padded.matches("#[nl]").count(),
+            height - expected_status_rows + 2
+        );
+        assert!(padded.contains("----------------------------#[nl]"));
+    }
     tmux(&["kill-server"]);
     let _ = client.wait();
     fs::remove_dir_all(root).unwrap();

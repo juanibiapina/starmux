@@ -12,7 +12,9 @@ Run `starmux print-config` to print the complete configuration. Run `starmux che
 modules = ["sessions", "divider"]
 ```
 
-The built-ins are `sessions`, `divider`, `pi-live`, `usage`, and `gob`. Unknown names and duplicate names other than `divider` are errors. Repeat `divider` to separate multiple sections, for example `modules = ["sessions", "divider", "pi-live", "divider", "usage", "divider", "gob"]`. Each divider uses the same `[divider]` settings. `pi-live`, `usage`, and `gob` are not enabled by default.
+The built-ins are `sessions`, `divider`, `pi-live`, `usage`, `gob`, `spacer`, and `blank`. Unknown names and duplicate names other than `divider` and `blank` are errors. Repeat `divider` to separate multiple sections, for example `modules = ["sessions", "divider", "pi-live", "divider", "usage", "divider", "gob"]`. Each divider uses the same `[divider]` settings. `pi-live`, `usage`, and `gob` are not enabled by default.
+
+Place one `spacer` between modules to push the following rows to the bottom of the sidebar. For example, `modules = ["sessions", "spacer", "divider", "usage"]` keeps sessions at the top and usage at the bottom. The spacer takes only the rows left after all other modules render. It adds no rows if the sidebar is full, and it has no style or click target. Its size updates when the client is resized. Add `blank` after `usage` to leave one empty row below it: `modules = ["sessions", "spacer", "divider", "usage", "blank"]`. Each `blank` entry adds one empty row without a style or click target; repeat it for more space.
 
 ## Row formats
 

@@ -435,7 +435,7 @@ fn transport(window_options: &[(String, String)]) -> String {
         window.push_str(&format!(" --window-option-{alias}=#{{q/s:{option}}}"));
     }
     window.push_str(" --end-window");
-    format!("--input-version=2 --client-width=#{{client_width}} --client-height=#{{client_height}} --current-session=#{{q/s:session_id}} --current-pane=#{{pane_id}} --pane-path=#{{q/s:pane_current_path}} --session-count=#{{server_sessions}} #{{S:{session} #{{W:{window} }} --end-session }}")
+    format!("--input-version=3 --client-width=#{{client_width}} --client-height=#{{client_height}} --status=#{{status}} --current-session=#{{q/s:session_id}} --current-pane=#{{pane_id}} --pane-path=#{{q/s:pane_current_path}} --session-count=#{{server_sessions}} #{{S:{session} #{{W:{window} }} --end-session }}")
 }
 
 struct Fields<'a> {
@@ -534,11 +534,21 @@ fn parse_snapshot(
     window_options: &[(String, String)],
 ) -> Result<Snapshot, String> {
     let mut fields = Fields { values, cursor: 0 };
-    if fields.take("input-version")? != "2" {
+    if fields.take("input-version")? != "3" {
         return Err("unsupported tmux snapshot version".into());
     }
     let client_width = fields.number("client-width", 10000)?;
     let client_height = fields.number("client-height", 10000)?;
+    let status = fields.take("status")?;
+    let status_lines = match status.as_str() {
+        "off" => 0,
+        "on" => 1,
+        _ => status
+            .parse::<usize>()
+            .ok()
+            .filter(|lines| *lines <= client_height)
+            .ok_or("invalid tmux status height")?,
+    };
     let current_session = fields.id("current-session", '$')?;
     let current_pane = fields.id("current-pane", '%')?;
     let pane_path = fields.take("pane-path")?;
@@ -589,6 +599,7 @@ fn parse_snapshot(
         width,
         client_width,
         client_height,
+        status_lines,
         current_session,
         current_pane,
         pane_path,
@@ -659,6 +670,7 @@ mod tests {
             width: 30,
             client_width: 100,
             client_height: 25,
+            status_lines: 1,
             current_session: "$0".into(),
             current_pane: "%0".into(),
             pane_path: "/tmp".into(),
@@ -781,6 +793,7 @@ mod tests {
             width: 40,
             client_width: 100,
             client_height: 25,
+            status_lines: 1,
             current_session: "$0".into(),
             current_pane: "%0".into(),
             pane_path: "/tmp".into(),
@@ -893,6 +906,7 @@ mod tests {
             width: 40,
             client_width: 100,
             client_height: 25,
+            status_lines: 1,
             current_session: "$0".into(),
             current_pane: "%0".into(),
             pane_path: "/tmp".into(),

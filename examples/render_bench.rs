@@ -14,6 +14,7 @@ fn main() {
         width: 30,
         client_width: 100,
         client_height: 25,
+        status_lines: 1,
         current_session: "$0".into(),
         current_pane: "%0".into(),
         pane_path: "/tmp".into(),

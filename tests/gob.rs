@@ -6,6 +6,7 @@ fn snapshot(width: usize) -> Snapshot {
         width,
         client_width: 100,
         client_height: 30,
+        status_lines: 1,
         current_session: "$0".into(),
         current_pane: "%0".into(),
         pane_path: "/tmp".into(),
