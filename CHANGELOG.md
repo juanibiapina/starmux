@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-27
+
 ### Added
 - Show the selected Pi session's plans, pull requests, and loaded skills in the sidebar. Click rows to open their links, with a configurable command for plan and skill files.
 - Show running gob jobs for the current pane's directory with green status dots and progress bars when past run times are available.
