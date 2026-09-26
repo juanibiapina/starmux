@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Show the selected Pi session's plans, pull requests, and loaded skills in the sidebar. Click rows to open their links, with a configurable command for plan and skill files.
 - Show running gob jobs for the current pane's directory with green status dots and progress bars when past run times are available.
 - Show subscription usage for selected providers in aligned columns, with quota warning colors, reset countdowns, and cache age after 30 minutes. Click Claude, Codex, GitHub Copilot, or z.ai usage rows to open the provider's usage page.
 - Place dividers between multiple sidebar sections by listing `divider` more than once.

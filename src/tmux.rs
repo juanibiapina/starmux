@@ -556,7 +556,13 @@ impl<T: Tmux> Application<T> {
             }
             let index = crate::navigation::file_index(token)?;
             let snapshot = self.snapshot(socket, client, 1, None)?;
-            let (_, context) = self.pi_sessions(socket, &snapshot)?;
+            let mut context = None;
+            for _ in 0..3 {
+                context = self.pi_sessions(socket, &snapshot)?.1;
+                if context.is_some() {
+                    break;
+                }
+            }
             let context = context.ok_or("file click target is no longer present")?;
             let path = if token.starts_with("sl") {
                 &context
