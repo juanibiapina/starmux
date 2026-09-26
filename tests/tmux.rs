@@ -92,8 +92,9 @@ fn attached_side_status_paints_navigation_rows() {
     if !supported {
         tmux(&["kill-server"]);
         fs::remove_dir_all(root).unwrap();
-        assert!(
-            std::env::var_os("STARMUX_REQUIRE_SIDE_STATUS").is_none(),
+        assert_ne!(
+            std::env::var_os("STARMUX_REQUIRE_SIDE_STATUS"),
+            Some("1".into()),
             "tmux lacks side-status; the release parity gate cannot run"
         );
         eprintln!("skipping attached-client test: tmux lacks side-status");
@@ -279,8 +280,9 @@ fn clicking_foreign_window_switches_the_attached_client_to_that_window() {
     if !supported {
         tmux(&["kill-server"]);
         fs::remove_dir_all(root).unwrap();
-        assert!(
-            std::env::var_os("STARMUX_REQUIRE_SIDE_STATUS").is_none(),
+        assert_ne!(
+            std::env::var_os("STARMUX_REQUIRE_SIDE_STATUS"),
+            Some("1".into()),
             "tmux lacks side-status; the click parity gate cannot run"
         );
         eprintln!("skipping attached-client click test: tmux lacks side-status");
