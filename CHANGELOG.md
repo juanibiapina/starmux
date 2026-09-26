@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Show live Pi sessions only in the sidebar of their own tmux server.
+
 ## [0.2.0] - 2026-09-26
 
 ### Added

@@ -487,7 +487,35 @@ fn pi_attention_row_click_selects_its_pane() {
         );
         return;
     }
+    let server_socket = tmux(&["display-message", "-p", "-t", "main:0", "#{socket_path}"]);
     let working = tmux(&["display-message", "-p", "-t", "main:0", "#{pane_id}"]);
+    let foreign_socket = format!("{socket}-foreign");
+    let foreign_tmux = |args: &[&str]| -> String {
+        let output = Command::new("tmux")
+            .args(["-L", &foreign_socket])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    foreign_tmux(&[
+        "-f",
+        "/dev/null",
+        "new-session",
+        "-d",
+        "-s",
+        "main",
+        "sleep 60",
+    ]);
+    let foreign_pane = foreign_tmux(&["display-message", "-p", "-t", "main:0", "#{pane_id}"]);
+    let foreign_server_socket =
+        foreign_tmux(&["display-message", "-p", "-t", "main:0", "#{socket_path}"]);
+    assert_eq!(working, foreign_pane);
     tmux(&["new-window", "-d", "-t", "main:", "-n", "beta", "sleep 60"]);
     let attention = tmux(&[
         "split-window",
@@ -530,7 +558,7 @@ fn pi_attention_row_click_selects_its_pane() {
             "version": 1, "sessionId": id, "name": name, "pid": 1,
             "cwd": "/tmp", "socketPath": pi_socket, "startedAt": "2026-01-01T00:00:00Z",
             "updatedAt": "2026-01-01T00:00:00Z", "state": state,
-            "tmux": {"paneId": pane, "sessionName": "main", "windowIndex": 0, "windowName": "old"}
+            "tmux": {"paneId": pane, "sessionName": "main", "windowIndex": 0, "windowName": "old", "socketPath": server_socket}
         });
         fs::write(
             root.join("status").join(format!("{id}.json")),
@@ -538,6 +566,16 @@ fn pi_attention_row_click_selects_its_pane() {
         )
         .unwrap();
     }
+    fs::write(
+        root.join("status/foreign.json"),
+        serde_json::json!({
+            "version": 1, "sessionId": "foreign", "name": "foreign pi", "pid": 1,
+            "cwd": "/tmp", "socketPath": pi_socket,
+            "startedAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z",
+            "state": "idle",
+            "tmux": {"paneId": foreign_pane, "sessionName": "main", "socketPath": foreign_server_socket}
+        }).to_string(),
+    ).unwrap();
     let config = root.join("config.toml");
     fs::write(
         &config,
@@ -620,6 +658,7 @@ fn pi_attention_row_click_selects_its_pane() {
         String::from_utf8_lossy(&rendered.stderr)
     );
     let rendered = String::from_utf8(rendered.stdout).unwrap();
+    assert!(!rendered.contains("foreign pi"), "{rendered}");
     assert!(rendered.find("attention").unwrap() < rendered.find("working item").unwrap());
     let row = rendered
         .split("#[nl]")
@@ -658,6 +697,7 @@ fn pi_attention_row_click_selects_its_pane() {
     assert!(!stale.status.success());
     assert_eq!(focus(), focus_after_close);
     tmux(&["kill-server"]);
+    foreign_tmux(&["kill-server"]);
     let _ = client.wait();
     running.store(false, Ordering::Relaxed);
     responder.join().unwrap();

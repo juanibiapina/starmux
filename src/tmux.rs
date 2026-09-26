@@ -266,7 +266,7 @@ impl<T: Tmux> Application<T> {
         } else {
             std::path::PathBuf::from(data_dir)
         };
-        let mut sessions = crate::pi_live::list(&path)?;
+        let mut sessions = crate::pi_live::list(&path, std::path::Path::new(socket))?;
         if sessions.iter().any(|session| session.location.is_some()) {
             let panes = self.tmux.panes(socket)?;
             for session in &mut sessions {
@@ -703,14 +703,16 @@ mod tests {
         .unwrap();
         live["state"] = "idle".into();
         live["tmux"] = serde_json::json!({
-            "paneId": "%0", "sessionName": "main", "windowIndex": 5, "windowName": "old"
+            "paneId": "%0", "sessionName": "main", "windowIndex": 5, "windowName": "old",
+            "socketPath": "/tmp/starmux-current.sock"
         });
         fs::write(data_dir.join("status/live.json"), live.to_string()).unwrap();
-        fs::write(
-            data_dir.join("status/unnamed.json"),
-            record("unnamed", &socket_path, "", &repo),
-        )
-        .unwrap();
+        let mut unnamed: serde_json::Value =
+            serde_json::from_str(&record("unnamed", &socket_path, "", &repo)).unwrap();
+        unnamed["tmux"] = serde_json::json!({
+            "paneId": "%1", "sessionName": "main", "socketPath": "/tmp/starmux-current.sock"
+        });
+        fs::write(data_dir.join("status/unnamed.json"), unnamed.to_string()).unwrap();
         fs::write(
             data_dir.join("status/stale.json"),
             record(
@@ -747,7 +749,9 @@ mod tests {
             state: "notify".into(),
         }]);
         let app = Application::new(Sidebar::from_toml(&config).unwrap(), tmux.clone());
-        let rendered = app.render_query("socket", "client", 40, None).unwrap();
+        let rendered = app
+            .render_query("/tmp/starmux-current.sock", "client", 40, None)
+            .unwrap();
         responder.join().unwrap();
         assert!(rendered.contains("#[bold] repo#[bg=default]"), "{rendered}");
         assert!(rendered.contains("#[range=user|sp9 ]"), "{rendered}");
@@ -761,11 +765,122 @@ mod tests {
         assert!(rendered.find("##[fg=red]").unwrap() < rendered.find("unnamed").unwrap());
         assert!(!rendered.contains("stale"), "{rendered}");
         assert_eq!(rendered.matches("#[range=").count(), 2);
-        app.activate("socket", "client", "sp9").unwrap();
+        app.activate("/tmp/starmux-current.sock", "client", "sp9")
+            .unwrap();
         assert_eq!(
             tmux.activations(),
-            vec![("socket".into(), "client".into(), "sp9".into())]
+            vec![(
+                "/tmp/starmux-current.sock".into(),
+                "client".into(),
+                "sp9".into()
+            )]
         );
+        fs::remove_dir_all(data_dir).unwrap();
+    }
+
+    #[test]
+    fn pi_live_excludes_foreign_and_legacy_records_before_matching_panes() {
+        use std::{
+            fs,
+            io::{Read, Write},
+            os::unix::net::UnixListener,
+            thread,
+        };
+        let data_dir = std::env::temp_dir().join(format!(
+            "sx-{}-{:?}",
+            std::process::id(),
+            thread::current().id()
+        ));
+        fs::create_dir_all(data_dir.join("status")).unwrap();
+        fs::create_dir_all(data_dir.join("sockets")).unwrap();
+        let pi_socket = data_dir.join("sockets/live.sock");
+        let listener = UnixListener::bind(&pi_socket).unwrap();
+        let responder = thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0; 128];
+                assert!(stream.read(&mut request).unwrap() > 0);
+                stream
+                    .write_all(b"{\"ok\":true,\"result\":{\"type\":\"pong\"}}\n")
+                    .unwrap();
+            }
+        });
+        let record = |id: &str, tmux: serde_json::Value| {
+            serde_json::json!({
+                "version": 1, "sessionId": id, "name": id, "pid": 1,
+                "cwd": "/tmp", "socketPath": pi_socket,
+                "startedAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z",
+                "state": "idle", "tmux": tmux
+            })
+            .to_string()
+        };
+        for index in 0..40 {
+            let id = format!("a-foreign-{index:02}");
+            fs::write(data_dir.join("status").join(format!("{id}.json")), record(&id,
+                serde_json::json!({"paneId": "%0", "sessionName": "main", "socketPath": "/tmp/other-tmux.sock"})
+            )).unwrap();
+        }
+        fs::write(
+            data_dir.join("status/legacy.json"),
+            record(
+                "legacy",
+                serde_json::json!({"paneId": "%0", "sessionName": "main"}),
+            ),
+        )
+        .unwrap();
+        fs::write(
+            data_dir.join("status/no-tmux.json"),
+            record("no-tmux", serde_json::Value::Null),
+        )
+        .unwrap();
+        fs::write(data_dir.join("status/z-local.json"), record("z-local",
+            serde_json::json!({"paneId": "%0", "sessionName": "main", "socketPath": "/tmp/current-tmux.sock"})
+        )).unwrap();
+        let config = format!(
+            "modules = [\"pi-live\"]\n[pi-live]\ndata_dir = {:?}\n",
+            data_dir.to_str().unwrap()
+        );
+        let tmux = MemoryTmux::new(Snapshot {
+            width: 40,
+            client_width: 100,
+            client_height: 25,
+            current_session: "$0".into(),
+            current_pane: "%0".into(),
+            pane_path: "/tmp".into(),
+            sessions: vec![Session {
+                id: "$0".into(),
+                name: "main".into(),
+                windows: vec![],
+            }],
+        })
+        .with_panes(vec![Pane {
+            id: "%0".into(),
+            session: "$0".into(),
+            session_name: "main".into(),
+            window: "@1".into(),
+            state: "notify".into(),
+        }]);
+        let app = Application::new(Sidebar::from_toml(&config).unwrap(), tmux);
+        let rendered = app
+            .render_query("/tmp/current-tmux.sock", "client", 40, None)
+            .unwrap();
+        assert!(rendered.contains("z-local"), "{rendered}");
+        assert!(rendered.contains("#[range=user|sp"), "{rendered}");
+        assert!(rendered.contains("fg=magenta,bg=default]●"), "{rendered}");
+        assert!(
+            !rendered.contains("foreign")
+                && !rendered.contains("legacy")
+                && !rendered.contains("no-tmux"),
+            "{rendered}"
+        );
+        let explained = app
+            .explain("/tmp/current-tmux.sock", "client", 40, None)
+            .unwrap();
+        assert!(
+            explained.contains("z-local") && !explained.contains("foreign"),
+            "{explained}"
+        );
+        responder.join().unwrap();
         fs::remove_dir_all(data_dir).unwrap();
     }
 }

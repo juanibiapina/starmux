@@ -44,6 +44,8 @@ struct TmuxLocation {
     pane_id: String,
     #[serde(rename = "sessionName")]
     session_name: String,
+    #[serde(rename = "socketPath")]
+    socket_path: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -70,7 +72,7 @@ pub(crate) fn default_data_dir() -> Result<PathBuf, String> {
         .ok_or_else(|| "HOME is required for pi-live".to_owned())
 }
 
-pub(crate) fn list(data_dir: &Path) -> Result<Vec<PiSession>, String> {
+pub(crate) fn list(data_dir: &Path, tmux_socket: &Path) -> Result<Vec<PiSession>, String> {
     let status_dir = data_dir.join("status");
     let entries = match fs::read_dir(&status_dir) {
         Ok(entries) => entries,
@@ -89,10 +91,10 @@ pub(crate) fn list(data_dir: &Path) -> Result<Vec<PiSession>, String> {
         }
     }
     paths.sort_by(|a, b| a.0.cmp(&b.0));
-    paths.truncate(MAX_RECORDS);
 
     let started = Instant::now();
     let mut sessions = Vec::new();
+    let mut matching_records = 0;
     for (id, path) in paths {
         if started.elapsed() >= QUERY_BUDGET {
             break;
@@ -126,9 +128,18 @@ pub(crate) fn list(data_dir: &Path) -> Result<Vec<PiSession>, String> {
             || record.updated_at.is_empty()
             || !matches!(record.state.as_str(), "idle" | "working")
             || record.socket_path.parent() != Some(data_dir.join("sockets").as_path())
+            || record.tmux.as_ref().is_none_or(|tmux| {
+                tmux.socket_path.as_deref() != Some(tmux_socket)
+                    || !tmux_socket.is_absolute()
+                    || !valid_tmux_id(&tmux.pane_id, '%')
+            })
         {
             continue;
         }
+        if matching_records == MAX_RECORDS {
+            break;
+        }
+        matching_records += 1;
         let Ok(socket_metadata) = fs::symlink_metadata(&record.socket_path) else {
             continue;
         };
@@ -144,11 +155,9 @@ pub(crate) fn list(data_dir: &Path) -> Result<Vec<PiSession>, String> {
             .name
             .filter(|name| !name.trim().is_empty())
             .unwrap_or_else(|| record.session_id.chars().take(8).collect());
-        let location = record.tmux.and_then(|tmux| {
-            valid_tmux_id(&tmux.pane_id, '%').then_some(PiLocation {
-                pane: tmux.pane_id,
-                session_name: tmux.session_name,
-            })
+        let location = record.tmux.map(|tmux| PiLocation {
+            pane: tmux.pane_id,
+            session_name: tmux.session_name,
         });
         sessions.push(PiSession {
             name,
