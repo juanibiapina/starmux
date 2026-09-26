@@ -49,6 +49,43 @@ struct Config {
     pi_live: PiLiveConfig,
     usage: UsageConfig,
     gob: GobConfig,
+    #[serde(rename = "pi-context")]
+    pi_context: PiContextConfig,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+struct PiContextConfig {
+    disabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    open_command: Option<Vec<String>>,
+    category_style: String,
+    text_style: String,
+    plan_style: String,
+    skill_style: String,
+    open_style: String,
+    draft_style: String,
+    merged_style: String,
+    closed_style: String,
+    unknown_style: String,
+}
+
+impl Default for PiContextConfig {
+    fn default() -> Self {
+        Self {
+            disabled: false,
+            open_command: None,
+            category_style: "dim".into(),
+            text_style: "default".into(),
+            plan_style: "fg=magenta".into(),
+            skill_style: "fg=magenta".into(),
+            open_style: "fg=green".into(),
+            draft_style: "fg=brightblack".into(),
+            merged_style: "fg=magenta".into(),
+            closed_style: "fg=red".into(),
+            unknown_style: "fg=brightblack".into(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -153,6 +190,7 @@ impl Default for Config {
             pi_live: PiLiveConfig::default(),
             usage: UsageConfig::default(),
             gob: GobConfig::default(),
+            pi_context: PiContextConfig::default(),
         }
     }
 }
@@ -300,7 +338,14 @@ impl Sidebar {
 
     fn compile(config: Config) -> Result<Self, String> {
         let known = [
-            "sessions", "divider", "pi-live", "usage", "gob", "spacer", "blank",
+            "sessions",
+            "divider",
+            "pi-live",
+            "usage",
+            "gob",
+            "pi-context",
+            "spacer",
+            "blank",
         ];
         let mut seen = BTreeSet::new();
         for name in &config.modules {
@@ -367,6 +412,28 @@ impl Sidebar {
         {
             return Err("pi-live data_dir must be an absolute path".into());
         }
+        if let Some(command) = &config.pi_context.open_command {
+            if command.is_empty()
+                || command.len() > 16
+                || command[0].is_empty()
+                || command[0].contains('{')
+                || command[0].contains('}')
+                || command
+                    .iter()
+                    .any(|arg| arg.len() > 1024 || arg.contains('\0'))
+                || command
+                    .iter()
+                    .filter(|arg| arg.as_str() == "{file}")
+                    .count()
+                    != 1
+                || command.iter().skip(1).any(|arg| {
+                    (arg.contains('{') || arg.contains('}'))
+                        && !matches!(arg.as_str(), "{file}" | "{pane}" | "{socket}")
+                })
+            {
+                return Err("pi-context open_command must be argv with one {file} argument and optional {pane} and {socket} arguments".into());
+            }
+        }
         for style in [
             &config.sessions.current_session_style,
             &config.sessions.other_session_style,
@@ -385,6 +452,15 @@ impl Sidebar {
             &config.usage.critical_bar_style,
             &config.usage.stale_style,
             &config.usage.unavailable_style,
+            &config.pi_context.category_style,
+            &config.pi_context.text_style,
+            &config.pi_context.plan_style,
+            &config.pi_context.skill_style,
+            &config.pi_context.open_style,
+            &config.pi_context.draft_style,
+            &config.pi_context.merged_style,
+            &config.pi_context.closed_style,
+            &config.pi_context.unknown_style,
             &config.gob.heading_style,
             &config.gob.running_style,
             &config.gob.progress_style,
@@ -452,11 +528,37 @@ impl Sidebar {
     }
 
     pub(crate) fn pi_live_data_dir(&self) -> Option<&str> {
-        if self.config.pi_live.disabled || !self.config.modules.iter().any(|name| name == "pi-live")
+        if (self.config.pi_live.disabled
+            || !self.config.modules.iter().any(|name| name == "pi-live"))
+            && !self.pi_context_enabled()
         {
             return None;
         }
         Some(self.config.pi_live.data_dir.as_deref().unwrap_or(""))
+    }
+
+    pub(crate) fn pi_context_enabled(&self) -> bool {
+        !self.config.pi_context.disabled
+            && self.config.modules.iter().any(|name| name == "pi-context")
+    }
+
+    pub(crate) fn file_open_args(
+        &self,
+        file: &std::path::Path,
+        pane: &str,
+        socket: &str,
+    ) -> Option<Vec<std::ffi::OsString>> {
+        self.config.pi_context.open_command.as_ref().map(|command| {
+            command
+                .iter()
+                .map(|arg| match arg.as_str() {
+                    "{file}" => file.as_os_str().to_owned(),
+                    "{pane}" => pane.into(),
+                    "{socket}" => socket.into(),
+                    _ => arg.into(),
+                })
+                .collect()
+        })
     }
 
     pub(crate) fn gob_enabled(&self) -> bool {
@@ -501,6 +603,18 @@ impl Sidebar {
         usage_rows: &[crate::usage::UsageRow],
         gob_jobs: &[crate::gob::GobJob],
     ) -> Result<String, String> {
+        self.render_with_context(snapshot, pi_sessions, usage_rows, gob_jobs, None, &[])
+    }
+
+    pub fn render_with_context(
+        &self,
+        snapshot: &Snapshot,
+        pi_sessions: &[crate::PiSession],
+        usage_rows: &[crate::usage::UsageRow],
+        gob_jobs: &[crate::gob::GobJob],
+        context: Option<&crate::PiContext>,
+        states: &[crate::pr_state::PrState],
+    ) -> Result<String, String> {
         validate_snapshot(snapshot)?;
         let mut rows = Vec::new();
         let mut spacer = None;
@@ -518,12 +632,22 @@ impl Sidebar {
                 "usage" if !self.config.usage.disabled => {
                     rows.extend(self.render_usage(usage_rows, snapshot.width)?)
                 }
+                "pi-context" if !self.config.pi_context.disabled => {
+                    if let Some(context) = context {
+                        rows.extend(self.render_pi_context(
+                            context,
+                            states,
+                            snapshot.width,
+                            &snapshot.current_pane,
+                        )?);
+                    }
+                }
                 "gob" if !self.config.gob.disabled => {
                     rows.extend(self.render_gob(gob_jobs, snapshot.width)?)
                 }
                 "spacer" => spacer = Some(rows.len()),
                 "blank" => rows.push(Row::blank()),
-                "sessions" | "divider" | "pi-live" | "usage" | "gob" => {}
+                "sessions" | "divider" | "pi-live" | "usage" | "gob" | "pi-context" => {}
                 _ => return Err(format!("unknown module {name}")),
             }
         }
@@ -942,6 +1066,141 @@ impl Sidebar {
                     focus: false,
                     selected: false,
                 });
+            }
+        }
+        Ok(rows)
+    }
+
+    fn render_pi_context(
+        &self,
+        context: &crate::PiContext,
+        states: &[crate::pr_state::PrState],
+        width: usize,
+        pane: &str,
+    ) -> Result<Vec<Row>, String> {
+        if context.plans.is_empty() && context.pull_requests.is_empty() && context.skills.is_empty()
+        {
+            return Ok(Vec::new());
+        }
+        let cfg = &self.config.pi_context;
+        let mut rows = Vec::new();
+        let mut push = |text: String,
+                        style: &str,
+                        icon: Option<(&str, &str)>,
+                        range: Option<Range>|
+         -> Result<(), String> {
+            let mut spans = Vec::new();
+            if let Some((glyph, icon_style)) = icon {
+                spans.push(Span {
+                    text: "  ".into(),
+                    style: "default".into(),
+                });
+                spans.push(Span {
+                    text: glyph.into(),
+                    style: resolve_style(icon_style, "default", &self.palette)?,
+                });
+                spans.push(Span {
+                    text: " ".into(),
+                    style: "default".into(),
+                });
+            }
+            spans.push(Span {
+                text,
+                style: resolve_style(style, "default", &self.palette)?,
+            });
+            rows.push(Row {
+                spans,
+                fill: None,
+                range,
+                focus: false,
+                selected: false,
+            });
+            Ok(())
+        };
+        if !context.plans.is_empty() {
+            push(" Plans".into(), &cfg.category_style, None, None)?;
+            for (index, plan) in context.plans.iter().enumerate() {
+                let range = plan
+                    .path
+                    .is_file()
+                    .then(|| crate::navigation::file_token("sl", pane, &plan.path, index))
+                    .transpose()?
+                    .map(Range::File);
+                push(
+                    plan.title.clone(),
+                    &cfg.text_style,
+                    Some(("◇", &cfg.plan_style)),
+                    range,
+                )?;
+            }
+        }
+        if !context.pull_requests.is_empty() {
+            push(" PRs".into(), &cfg.category_style, None, None)?;
+            for (index, url) in context.pull_requests.iter().enumerate() {
+                let Some((label, _)) = crate::pr_state::parse_url(url) else {
+                    continue;
+                };
+                let (glyph, style) = match states
+                    .get(index)
+                    .copied()
+                    .unwrap_or(crate::pr_state::PrState::Unknown)
+                {
+                    crate::pr_state::PrState::Open => ("\u{ea64}", &cfg.open_style),
+                    crate::pr_state::PrState::Draft => ("\u{ebdb}", &cfg.draft_style),
+                    crate::pr_state::PrState::Merged => ("\u{eafe}", &cfg.merged_style),
+                    crate::pr_state::PrState::Closed => ("\u{ebda}", &cfg.closed_style),
+                    crate::pr_state::PrState::Unknown => ("\u{ea64}", &cfg.unknown_style),
+                };
+                let state_word = match states
+                    .get(index)
+                    .copied()
+                    .unwrap_or(crate::pr_state::PrState::Unknown)
+                {
+                    crate::pr_state::PrState::Draft => " draft",
+                    crate::pr_state::PrState::Closed => " closed",
+                    _ => "",
+                };
+                let available = width.saturating_sub(4);
+                let label = if label.len() + state_word.len() <= available {
+                    format!("{label}{state_word}")
+                } else if label.len() <= available {
+                    label
+                } else if let Some((repo, number)) = label.split_once('#') {
+                    let suffix = format!("#{number}");
+                    let prefix = available.saturating_sub(suffix.len() + 1);
+                    if prefix == 0 {
+                        suffix
+                    } else {
+                        format!("{}…{suffix}", &repo[..prefix.min(repo.len())])
+                    }
+                } else {
+                    label
+                };
+                let token = crate::navigation::pr_token(pane, url, index)?;
+                push(
+                    label,
+                    &cfg.text_style,
+                    Some((glyph, style)),
+                    Some(Range::PullRequest(token)),
+                )?;
+            }
+        }
+        if !context.skills.is_empty() {
+            push(" Skills".into(), &cfg.category_style, None, None)?;
+            for (index, skill) in context.skills.iter().enumerate() {
+                let range = skill
+                    .path
+                    .as_ref()
+                    .filter(|path| path.is_file())
+                    .map(|path| crate::navigation::file_token("ss", pane, path, index))
+                    .transpose()?
+                    .map(Range::File);
+                push(
+                    skill.name.clone(),
+                    &cfg.text_style,
+                    Some(("✦", &cfg.skill_style)),
+                    range,
+                )?;
             }
         }
         Ok(rows)
@@ -1673,6 +1932,8 @@ enum Range {
     ForeignWindow(String),
     PiPane(String),
     UsagePage(String),
+    PullRequest(String),
+    File(String),
 }
 
 fn escaped(text: &str) -> String {
@@ -1717,9 +1978,11 @@ fn render_rows(rows: &[Row], width: usize) -> String {
                     "#[range=window|{index} {}]",
                     if row.focus { "list=focus " } else { "" }
                 )),
-                Range::ForeignWindow(token) | Range::PiPane(token) | Range::UsagePage(token) => {
-                    result.push_str(&format!("#[range=user|{token} ]"))
-                }
+                Range::ForeignWindow(token)
+                | Range::PiPane(token)
+                | Range::UsagePage(token)
+                | Range::PullRequest(token)
+                | Range::File(token) => result.push_str(&format!("#[range=user|{token} ]")),
             }
         }
         for span in &row.spans {
@@ -1744,7 +2007,12 @@ fn render_rows(rows: &[Row], width: usize) -> String {
                 result.push_str("#[norange]#[list=on default]")
             }
             Some(
-                Range::Window(_) | Range::ForeignWindow(_) | Range::PiPane(_) | Range::UsagePage(_),
+                Range::Window(_)
+                | Range::ForeignWindow(_)
+                | Range::PiPane(_)
+                | Range::UsagePage(_)
+                | Range::PullRequest(_)
+                | Range::File(_),
             ) => result.push_str("#[norange default]"),
             None => {}
         }

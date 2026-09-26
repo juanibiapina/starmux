@@ -728,9 +728,24 @@ fn pi_attention_row_click_selects_its_pane() {
         ("attention", "attention", &attention, "idle"),
         ("working", "working item", &working, "working"),
     ] {
+        let session_file = root.join(format!("{id}.jsonl"));
+        let context_path = root.join(format!("{id}.jsonl.context.json"));
+        let plan_relative = format!("{id}.jsonl.plans/0123456789abcdef01234567.md");
+        let plan_path = root.join(&plan_relative);
+        fs::create_dir_all(plan_path.parent().unwrap()).unwrap();
+        fs::write(&plan_path, format!("# {id} plan")).unwrap();
+        let skill_path = root.join(format!("skills/{id}/SKILL.md"));
+        fs::create_dir_all(skill_path.parent().unwrap()).unwrap();
+        fs::write(&skill_path, "# Testing").unwrap();
+        fs::write(&context_path, serde_json::json!({
+            "version": 1, "sessionId": id,
+            "plans": [{"id": "0123456789abcdef01234567", "title": format!("{id} plan"), "path": plan_relative}],
+            "pullRequests": [], "skills": ["testing"], "skillPaths": {"testing": skill_path}
+        }).to_string()).unwrap();
         let status = serde_json::json!({
             "version": 1, "sessionId": id, "name": name, "pid": 1,
-            "cwd": "/tmp", "socketPath": pi_socket, "startedAt": "2026-01-01T00:00:00Z",
+            "cwd": "/tmp", "socketPath": pi_socket, "sessionFile": session_file,
+            "contextPath": context_path, "startedAt": "2026-01-01T00:00:00Z",
             "updatedAt": "2026-01-01T00:00:00Z", "state": state,
             "tmux": {"paneId": pane, "sessionName": "main", "windowIndex": 0, "windowName": "old", "socketPath": server_socket}
         });
@@ -754,7 +769,7 @@ fn pi_attention_row_click_selects_its_pane() {
     fs::write(
         &config,
         format!(
-            "modules = [\"sessions\", \"divider\", \"pi-live\"]\n[pi-live]\ndata_dir = {:?}\n",
+            "modules = [\"sessions\", \"divider\", \"pi-live\", \"divider\", \"pi-context\"]\n[pi-live]\ndata_dir = {:?}\n[pi-context]\nopen_command = [\"dev\", \"tmux\", \"edit\", \"{{file}}\", \"{{pane}}\", \"{{socket}}\"]\n",
             root.to_str().unwrap()
         ),
     )
@@ -816,24 +831,36 @@ fn pi_attention_row_click_selects_its_pane() {
         &client_name,
         "#{socket_path}",
     ]);
-    let rendered = Command::new(binary)
-        .args([
-            "render-query",
-            "--width=30",
-            &format!("--socket={socket_path}"),
-            &format!("--client={client_name}"),
-        ])
-        .env("STARMUX_CONFIG", &config)
-        .output()
-        .unwrap();
-    assert!(
-        rendered.status.success(),
-        "{}",
-        String::from_utf8_lossy(&rendered.stderr)
-    );
-    let rendered = String::from_utf8(rendered.stdout).unwrap();
+    let mut rendered = String::new();
+    for _ in 0..10 {
+        let output = Command::new(binary)
+            .args([
+                "render-query",
+                "--width=30",
+                &format!("--socket={socket_path}"),
+                &format!("--client={client_name}"),
+            ])
+            .env("STARMUX_CONFIG", &config)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        rendered = String::from_utf8(output.stdout).unwrap();
+        if rendered.contains("attention") && rendered.contains("working item") {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
     assert!(!rendered.contains("foreign pi"), "{rendered}");
-    assert!(rendered.find("attention").unwrap() < rendered.find("working item").unwrap());
+    assert!(
+        rendered.find("attention").is_some_and(|position| rendered
+            .find("working item")
+            .is_some_and(|other| position < other)),
+        "{rendered}"
+    );
     let row = rendered
         .split("#[nl]")
         .find(|row| row.contains("attention"))
@@ -850,6 +877,91 @@ fn pi_attention_row_click_selects_its_pane() {
         thread::sleep(Duration::from_millis(100));
     }
     assert_eq!(focus(), format!("{target_window}|{attention}"));
+    let mut selected_context = String::new();
+    for _ in 0..10 {
+        let output = Command::new(binary)
+            .args([
+                "render-query",
+                "--width=30",
+                &format!("--socket={socket_path}"),
+                &format!("--client={client_name}"),
+            ])
+            .env("STARMUX_CONFIG", &config)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        selected_context = String::from_utf8(output.stdout).unwrap();
+        if selected_context.contains("attention plan") && selected_context.contains("✦") {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        selected_context.contains("attention plan") && selected_context.contains("✦"),
+        "{selected_context}"
+    );
+    assert!(
+        !selected_context.contains("working plan"),
+        "{selected_context}"
+    );
+    use std::os::unix::fs::PermissionsExt;
+    let opener = root.join("dev");
+    fs::write(
+        &opener,
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$STARMUX_TEST_ARGS\"\n",
+    )
+    .unwrap();
+    fs::set_permissions(&opener, fs::Permissions::from_mode(0o700)).unwrap();
+    let opened = root.join("opened-file");
+    for (kind, expected) in [
+        (
+            "sl",
+            root.join("attention.jsonl.plans/0123456789abcdef01234567.md"),
+        ),
+        ("ss", root.join("skills/attention/SKILL.md")),
+    ] {
+        let token = selected_context
+            .split(&format!("#[range=user|{kind}"))
+            .nth(1)
+            .unwrap()
+            .split(' ')
+            .next()
+            .unwrap();
+        let target = format!("--target={kind}{token}");
+        let output = Command::new(binary)
+            .args([
+                "activate",
+                &format!("--socket={socket_path}"),
+                &format!("--client={client_name}"),
+                &target,
+            ])
+            .env("STARMUX_CONFIG", &config)
+            .env("STARMUX_TEST_ARGS", &opened)
+            .env(
+                "PATH",
+                format!("{}:{}", root.display(), std::env::var("PATH").unwrap()),
+            )
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            fs::read_to_string(&opened).unwrap().trim(),
+            format!(
+                "tmux\nedit\n{}\n{}\n{}",
+                expected.display(),
+                attention,
+                socket_path
+            )
+        );
+    }
     let token = row
         .split("#[range=user|")
         .nth(1)

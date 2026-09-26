@@ -855,3 +855,134 @@ source = "icon"
     assert!(rendered.contains("##[range=user|bad]##{pane_id}"));
     assert!(!rendered.contains("#[range=user|bad]#{pane_id}"));
 }
+
+#[test]
+fn pi_context_open_command_requires_one_file_argument_and_separate_placeholders() {
+    for command in [
+        "[]",
+        "[\"dev\", \"tmux\", \"edit\"]",
+        "[\"{file}\"]",
+        "[\"dev\", \"{file}\", \"{file}\"]",
+        "[\"dev\", \"--file={file}\"]",
+        "[\"dev\", \"{file}\", \"{unknown}\"]",
+    ] {
+        assert!(
+            Sidebar::from_toml(&format!(
+                "modules = [\"pi-context\"]\n[pi-context]\nopen_command = {command}"
+            ))
+            .is_err(),
+            "{command}"
+        );
+    }
+    assert!(Sidebar::from_toml("modules = [\"pi-context\"]\n[pi-context]\nopen_command = [\"dev\", \"tmux\", \"edit\", \"{file}\", \"{pane}\", \"{socket}\"]").is_ok());
+}
+
+#[test]
+fn pi_context_pr_state_icons_use_distinct_styles() {
+    let sidebar = Sidebar::from_toml("modules = [\"pi-context\"]").unwrap();
+    let context = starmux::PiContext {
+        pull_requests: vec!["https://github.com/o/r/pull/1".into()],
+        ..Default::default()
+    };
+    for (state, icon, style) in [
+        (starmux::pr_state::PrState::Open, "\u{ea64}", "fg=green"),
+        (
+            starmux::pr_state::PrState::Draft,
+            "\u{ebdb}",
+            "fg=brightblack",
+        ),
+        (starmux::pr_state::PrState::Merged, "\u{eafe}", "fg=magenta"),
+        (starmux::pr_state::PrState::Closed, "\u{ebda}", "fg=red"),
+        (
+            starmux::pr_state::PrState::Unknown,
+            "\u{ea64}",
+            "fg=brightblack",
+        ),
+    ] {
+        let rendered = sidebar
+            .render_with_context(&snapshot(), &[], &[], &[], Some(&context), &[state])
+            .unwrap();
+        assert!(
+            rendered.contains(&format!("#[{style}]{icon}")),
+            "{rendered}"
+        );
+    }
+}
+
+#[test]
+fn pi_context_icons_and_clipping_work_at_narrow_widths() {
+    let sidebar = Sidebar::from_toml("modules = [\"pi-context\"]").unwrap();
+    let dir = std::env::temp_dir().join(format!("starmux-context-rows-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let plan = dir.join("plan.md");
+    let skill = dir.join("SKILL.md");
+    std::fs::write(&plan, "# Plan").unwrap();
+    std::fs::write(&skill, "# Skill").unwrap();
+    let context = starmux::PiContext {
+        plans: vec![starmux::PiPlan {
+            title: "#[fg=red] Build an extensive search".into(),
+            path: plan,
+        }],
+        pull_requests: vec!["https://github.com/owner/repo/pull/42".into()],
+        skills: vec![starmux::PiSkill {
+            name: "testing".into(),
+            path: Some(skill),
+        }],
+    };
+    for width in [16, 24, 30] {
+        let mut input = snapshot();
+        input.width = width;
+        let rendered = sidebar
+            .render_with_context(
+                &input,
+                &[],
+                &[],
+                &[],
+                Some(&context),
+                &[starmux::pr_state::PrState::Draft],
+            )
+            .unwrap();
+        assert!(
+            rendered.contains("◇") && rendered.contains("\u{ebdb}") && rendered.contains("✦"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("##[fg=red]"), "{rendered}");
+        for kind in ["sl", "sr", "ss"] {
+            assert_eq!(
+                rendered.matches(&format!("#[range=user|{kind}")).count(),
+                1,
+                "{rendered}"
+            );
+        }
+        assert_eq!(rendered.matches("#[range=").count(), 3, "{rendered}");
+        for row in rendered
+            .split("#[nl]")
+            .filter(|row| row.contains("#[range=user|"))
+        {
+            let token = row
+                .split("#[range=user|")
+                .nth(1)
+                .unwrap()
+                .split(' ')
+                .next()
+                .unwrap();
+            assert_eq!(token.len(), 14);
+        }
+        assert_eq!(rendered.matches("#[nl]").count(), 8);
+        assert!(!rendered.contains(" Context"), "{rendered}");
+        if width == 30 {
+            assert!(rendered.contains("owner/repo##42 draft"), "{rendered}");
+        }
+    }
+    let long = starmux::PiContext {
+        pull_requests: vec!["https://github.com/verylongowner/verylongrepository/pull/4242".into()],
+        ..Default::default()
+    };
+    let mut input = snapshot();
+    input.width = 16;
+    let rendered = sidebar
+        .render_with_context(&input, &[], &[], &[], Some(&long), &[])
+        .unwrap();
+    assert!(rendered.contains("…##4242"), "{rendered}");
+    std::fs::remove_dir_all(dir).unwrap();
+}

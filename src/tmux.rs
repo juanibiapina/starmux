@@ -58,6 +58,14 @@ pub trait Tmux {
     ) -> Result<Snapshot, String>;
 
     fn activate(&self, socket: &str, client: &str, token: &str) -> Result<(), String>;
+
+    fn open_url(&self, url: &str) -> Result<(), String>;
+
+    fn open_file(
+        &self,
+        path: &std::path::Path,
+        command: Option<&[std::ffi::OsString]>,
+    ) -> Result<(), String>;
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -115,13 +123,37 @@ impl Tmux for ProcessTmux {
         parse_snapshot(&words(&output)?, width, window_options)
     }
 
+    fn open_url(&self, url: &str) -> Result<(), String> {
+        open_browser_target(std::ffi::OsStr::new(url))
+    }
+
+    fn open_file(
+        &self,
+        path: &std::path::Path,
+        command: Option<&[std::ffi::OsString]>,
+    ) -> Result<(), String> {
+        if let Some(command) = command {
+            let (executable, args) = command.split_first().ok_or("empty file opener command")?;
+            let status = Command::new(executable)
+                .args(args)
+                .status()
+                .map_err(|error| format!("file opener failed: {error}"))?;
+            return if status.success() {
+                Ok(())
+            } else {
+                Err(format!("file opener exited with {status}"))
+            };
+        }
+        open_browser_target(path.as_os_str())
+    }
+
     fn activate(&self, socket: &str, client: &str, token: &str) -> Result<(), String> {
         if socket.is_empty() || client.is_empty() {
             return Err("missing tmux socket or client name".into());
         }
         if token.starts_with("su") {
             let url = crate::usage::page_url(token).ok_or("invalid click target")?;
-            return open_usage_page(url);
+            return open_browser_url(url);
         }
         if token.starts_with("sp") {
             let (pane_id, window_id) = crate::navigation::pane_target(token)?;
@@ -150,16 +182,20 @@ impl Tmux for ProcessTmux {
     }
 }
 
-fn open_usage_page(url: &str) -> Result<(), String> {
+fn open_browser_url(url: &str) -> Result<(), String> {
+    open_browser_target(std::ffi::OsStr::new(url))
+}
+
+fn open_browser_target(target: &std::ffi::OsStr) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     let opener = "open";
     #[cfg(target_os = "linux")]
     let opener = "xdg-open";
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    return Err("opening usage pages is unsupported on this platform".into());
+    return Err("opening browser pages is unsupported on this platform".into());
 
     let status = Command::new(opener)
-        .arg(url)
+        .arg(target)
         .status()
         .map_err(|error| format!("browser opener failed: {error}"))?;
     if status.success() {
@@ -190,6 +226,9 @@ struct MemoryTmux {
     snapshot: Snapshot,
     panes: Vec<Pane>,
     activations: Arc<Mutex<Vec<(String, String, String)>>>,
+    opened_urls: Arc<Mutex<Vec<String>>>,
+    opened_files: Arc<Mutex<Vec<std::path::PathBuf>>>,
+    file_commands: Arc<Mutex<Vec<Option<Vec<std::ffi::OsString>>>>>,
 }
 
 #[cfg(test)]
@@ -199,6 +238,9 @@ impl MemoryTmux {
             snapshot,
             panes: Vec::new(),
             activations: Arc::new(Mutex::new(Vec::new())),
+            opened_urls: Arc::new(Mutex::new(Vec::new())),
+            opened_files: Arc::new(Mutex::new(Vec::new())),
+            file_commands: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -210,10 +252,40 @@ impl MemoryTmux {
     fn activations(&self) -> Vec<(String, String, String)> {
         self.activations.lock().unwrap().clone()
     }
+
+    fn opened_urls(&self) -> Vec<String> {
+        self.opened_urls.lock().unwrap().clone()
+    }
+
+    fn opened_files(&self) -> Vec<std::path::PathBuf> {
+        self.opened_files.lock().unwrap().clone()
+    }
+
+    fn file_commands(&self) -> Vec<Option<Vec<std::ffi::OsString>>> {
+        self.file_commands.lock().unwrap().clone()
+    }
 }
 
 #[cfg(test)]
 impl Tmux for MemoryTmux {
+    fn open_file(
+        &self,
+        path: &std::path::Path,
+        command: Option<&[std::ffi::OsString]>,
+    ) -> Result<(), String> {
+        self.opened_files.lock().unwrap().push(path.to_owned());
+        self.file_commands
+            .lock()
+            .unwrap()
+            .push(command.map(<[_]>::to_vec));
+        Ok(())
+    }
+
+    fn open_url(&self, url: &str) -> Result<(), String> {
+        self.opened_urls.lock().unwrap().push(url.to_owned());
+        Ok(())
+    }
+
     fn panes(&self, _socket: &str) -> Result<Vec<Pane>, String> {
         Ok(self.panes.clone())
     }
@@ -274,30 +346,38 @@ impl<T: Tmux> Application<T> {
         focus: Option<&Focus>,
     ) -> Result<String, String> {
         let snapshot = self.snapshot(socket, client, width, focus)?;
-        let pi_sessions = self.pi_sessions(socket, &snapshot)?;
+        let (pi_sessions, context) = self.pi_sessions(socket, &snapshot)?;
+        let states = self.pr_states(context.as_ref(), true);
         let usage = self.usage_rows(true)?;
         let jobs = self.gob_jobs(&snapshot)?;
-        self.sidebar
-            .render_with_modules(&snapshot, &pi_sessions, &usage, &jobs)
+        self.sidebar.render_with_context(
+            &snapshot,
+            &pi_sessions,
+            &usage,
+            &jobs,
+            context.as_ref(),
+            &states,
+        )
     }
 
     fn pi_sessions(
         &self,
         socket: &str,
         snapshot: &Snapshot,
-    ) -> Result<Vec<crate::PiSession>, String> {
+    ) -> Result<(Vec<crate::PiSession>, Option<crate::PiContext>), String> {
         let Some(data_dir) = self.sidebar.pi_live_data_dir() else {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), None));
         };
         let path = if data_dir.is_empty() {
             crate::pi_live::default_data_dir()?
         } else {
             std::path::PathBuf::from(data_dir)
         };
-        let mut sessions = crate::pi_live::list(&path, std::path::Path::new(socket))?;
-        if sessions.iter().any(|session| session.location.is_some()) {
+        let mut entries = crate::pi_live::list(&path, std::path::Path::new(socket))?;
+        if entries.iter().any(|entry| entry.session.location.is_some()) {
             let panes = self.tmux.panes(socket)?;
-            for session in &mut sessions {
+            for entry in &mut entries {
+                let session = &mut entry.session;
                 let Some(location) = &session.location else {
                     continue;
                 };
@@ -318,7 +398,41 @@ impl<T: Tmux> Application<T> {
                 };
             }
         }
-        Ok(sessions)
+        let context = if self.sidebar.pi_context_enabled() {
+            entries
+                .iter()
+                .find(|entry| entry.session.selected)
+                .and_then(|entry| {
+                    entry
+                        .context_path
+                        .as_ref()
+                        .and_then(|path| crate::pi_live::read_context(path, &entry.session_id))
+                })
+        } else {
+            None
+        };
+        Ok((
+            entries.into_iter().map(|entry| entry.session).collect(),
+            context,
+        ))
+    }
+
+    fn pr_states(
+        &self,
+        context: Option<&crate::PiContext>,
+        spawn: bool,
+    ) -> Vec<crate::pr_state::PrState> {
+        let Some(context) = context else {
+            return Vec::new();
+        };
+        let Some(dir) = crate::pr_state::default_dir() else {
+            return vec![crate::pr_state::PrState::Unknown; context.pull_requests.len()];
+        };
+        context
+            .pull_requests
+            .iter()
+            .map(|url| crate::pr_state::resolve(url, &dir, spawn))
+            .collect()
     }
 
     fn gob_jobs(&self, snapshot: &Snapshot) -> Result<Vec<crate::GobJob>, String> {
@@ -366,12 +480,20 @@ impl<T: Tmux> Application<T> {
                 ));
             }
         }
-        let mut pi_sessions = self.pi_sessions(socket, &snapshot)?;
+        let (mut pi_sessions, context) = self.pi_sessions(socket, &snapshot)?;
         crate::pi_live::sort_sessions(&mut pi_sessions);
         for session in pi_sessions {
             result.push_str(&format!(
                 "pi-live project={:?} {:?} {:?} target={:?} selected={}\n",
                 session.project, session.state, session.name, session.target, session.selected
+            ));
+        }
+        if let Some(context) = context {
+            result.push_str(&format!(
+                "pi-context plans={} prs={} skills={}\n",
+                context.plans.len(),
+                context.pull_requests.len(),
+                context.skills.len()
             ));
         }
         for usage in self.usage_rows(false)? {
@@ -403,7 +525,8 @@ impl<T: Tmux> Application<T> {
     ) -> Result<String, String> {
         let started = Instant::now();
         let snapshot = self.snapshot(socket, client, width, focus)?;
-        let pi_sessions = self.pi_sessions(socket, &snapshot)?;
+        let (pi_sessions, context) = self.pi_sessions(socket, &snapshot)?;
+        let states = self.pr_states(context.as_ref(), false);
         let queried = started.elapsed().as_micros();
         let usage = self.usage_rows(false)?;
         let usage_us = started.elapsed().as_micros().saturating_sub(queried);
@@ -412,8 +535,14 @@ impl<T: Tmux> Application<T> {
             .elapsed()
             .as_micros()
             .saturating_sub(queried + usage_us);
-        self.sidebar
-            .render_with_modules(&snapshot, &pi_sessions, &usage, &jobs)?;
+        self.sidebar.render_with_context(
+            &snapshot,
+            &pi_sessions,
+            &usage,
+            &jobs,
+            context.as_ref(),
+            &states,
+        )?;
         Ok(format!(
             "{{\"query_us\":{queried},\"usage_us\":{usage_us},\"gob_us\":{gob_us},\"render_us\":{}}}",
             started.elapsed().as_micros().saturating_sub(queried + usage_us + gob_us)
@@ -421,6 +550,58 @@ impl<T: Tmux> Application<T> {
     }
 
     pub fn activate(&self, socket: &str, client: &str, token: &str) -> Result<(), String> {
+        if token.starts_with("sl") || token.starts_with("ss") {
+            if !self.sidebar.pi_context_enabled() {
+                return Err("file click target is not enabled".into());
+            }
+            let index = crate::navigation::file_index(token)?;
+            let snapshot = self.snapshot(socket, client, 1, None)?;
+            let mut context = None;
+            for _ in 0..3 {
+                context = self.pi_sessions(socket, &snapshot)?.1;
+                if context.is_some() {
+                    break;
+                }
+            }
+            let context = context.ok_or("file click target is no longer present")?;
+            let path = if token.starts_with("sl") {
+                &context
+                    .plans
+                    .get(index)
+                    .ok_or("plan click target is no longer present")?
+                    .path
+            } else {
+                context
+                    .skills
+                    .get(index)
+                    .and_then(|skill| skill.path.as_ref())
+                    .ok_or("skill click target is no longer present")?
+            };
+            if crate::navigation::file_token(&token[..2], &snapshot.current_pane, path, index)?
+                != token
+                || !std::fs::metadata(path).is_ok_and(|meta| meta.is_file())
+            {
+                return Err("file click target is no longer present".into());
+            }
+            let command = self
+                .sidebar
+                .file_open_args(path, &snapshot.current_pane, socket);
+            return self.tmux.open_file(path, command.as_deref());
+        }
+        if token.starts_with("sr") {
+            if !self.sidebar.pi_context_enabled() {
+                return Err("PR click target is not enabled".into());
+            }
+            let snapshot = self.snapshot(socket, client, 1, None)?;
+            let (_, context) = self.pi_sessions(socket, &snapshot)?;
+            let context = context.ok_or("PR click target is no longer present")?;
+            let url = crate::navigation::pr_target(
+                token,
+                &snapshot.current_pane,
+                &context.pull_requests,
+            )?;
+            return self.tmux.open_url(url);
+        }
         self.tmux.activate(socket, client, token)
     }
 
@@ -760,7 +941,7 @@ mod tests {
         let socket_path = data_dir.join("sockets/live.sock");
         let listener = UnixListener::bind(&socket_path).unwrap();
         let responder = thread::spawn(move || {
-            for _ in 0..2 {
+            for _ in 0..20 {
                 let (mut socket, _) = listener.accept().unwrap();
                 let mut request = [0; 128];
                 let len = socket.read(&mut request).unwrap();
@@ -788,6 +969,28 @@ mod tests {
         ))
         .unwrap();
         live["state"] = "idle".into();
+        let session_file = data_dir.join("live.jsonl");
+        let context_path = data_dir.join("live.jsonl.context.json");
+        live["sessionFile"] = serde_json::json!(session_file);
+        live["contextPath"] = serde_json::json!(context_path);
+        let plan_path = data_dir.join("live.jsonl.plans/0123456789abcdef01234567.md");
+        fs::create_dir_all(plan_path.parent().unwrap()).unwrap();
+        fs::write(&plan_path, "# Build search").unwrap();
+        let skill_path = data_dir.join("skills/testing/SKILL.md");
+        fs::create_dir_all(skill_path.parent().unwrap()).unwrap();
+        fs::write(&skill_path, "# Testing").unwrap();
+        fs::write(
+            &context_path,
+            serde_json::json!({
+                "version": 1, "sessionId": "live",
+                "plans": [{"id": "0123456789abcdef01234567", "title": "#[fg=red] Build search", "path": "live.jsonl.plans/0123456789abcdef01234567.md"}],
+                "pullRequests": [],
+                "skills": ["testing"],
+                "skillPaths": {"testing": skill_path}
+            })
+            .to_string(),
+        )
+        .unwrap();
         live["tmux"] = serde_json::json!({
             "paneId": "%0", "sessionName": "main", "windowIndex": 5, "windowName": "old",
             "socketPath": "/tmp/starmux-current.sock"
@@ -811,7 +1014,7 @@ mod tests {
         .unwrap();
         fs::write(data_dir.join("status/broken.json"), "{bad json").unwrap();
         let config = format!(
-            "modules = [\"sessions\", \"pi-live\"]\n[pi-live]\ndata_dir = {:?}\nformat = \"$name $state\"\n",
+            "modules = [\"sessions\", \"pi-live\", \"pi-context\"]\n[pi-live]\ndata_dir = {:?}\nformat = \"$name $state\"\n[pi-context]\nopen_command = [\"dev\", \"tmux\", \"edit\", \"{{file}}\", \"{{pane}}\", \"{{socket}}\"]\n",
             data_dir.to_str().unwrap()
         );
         let tmux = MemoryTmux::new(Snapshot {
@@ -839,6 +1042,85 @@ mod tests {
         let rendered = app
             .render_query("/tmp/starmux-current.sock", "client", 40, None)
             .unwrap();
+        let mut other_snapshot = tmux.snapshot.clone();
+        other_snapshot.current_pane = "%1".into();
+        let other_tmux = MemoryTmux::new(other_snapshot).with_panes(tmux.panes.clone());
+        let other_app = Application::new(Sidebar::from_toml(&config).unwrap(), other_tmux);
+        let other_rendered = other_app
+            .render_query("/tmp/starmux-current.sock", "client", 40, None)
+            .unwrap();
+        assert!(
+            !other_rendered.contains(" Plans") && !other_rendered.contains("Build search"),
+            "{other_rendered}"
+        );
+        let context_only = format!(
+            "modules = [\"pi-context\"]\n[pi-live]\ndata_dir = {:?}\n",
+            data_dir.to_str().unwrap()
+        );
+        let context_app =
+            Application::new(Sidebar::from_toml(&context_only).unwrap(), tmux.clone());
+        let context_rendered = context_app
+            .render_query("/tmp/starmux-current.sock", "client", 40, None)
+            .unwrap();
+        assert!(
+            context_rendered.contains("Build search") && !context_rendered.contains("unnamed"),
+            "{context_rendered}"
+        );
+        let plan_token = crate::navigation::file_token("sl", "%0", &plan_path, 0).unwrap();
+        let skill_token = crate::navigation::file_token("ss", "%0", &skill_path, 0).unwrap();
+        app.activate("/tmp/starmux-current.sock", "client", &plan_token)
+            .unwrap();
+        app.activate("/tmp/starmux-current.sock", "client", &skill_token)
+            .unwrap();
+        assert_eq!(tmux.opened_files(), [plan_path.clone(), skill_path.clone()]);
+        assert_eq!(
+            tmux.file_commands(),
+            [
+                Some(vec![
+                    "dev".into(),
+                    "tmux".into(),
+                    "edit".into(),
+                    plan_path.as_os_str().to_owned(),
+                    "%0".into(),
+                    "/tmp/starmux-current.sock".into()
+                ]),
+                Some(vec![
+                    "dev".into(),
+                    "tmux".into(),
+                    "edit".into(),
+                    skill_path.as_os_str().to_owned(),
+                    "%0".into(),
+                    "/tmp/starmux-current.sock".into()
+                ]),
+            ]
+        );
+        fs::remove_file(&plan_path).unwrap();
+        assert!(app
+            .activate("/tmp/starmux-current.sock", "client", &plan_token)
+            .is_err());
+        assert_eq!(tmux.opened_files().len(), 2);
+        let pr_url = "https://github.com/owner/repo/pull/42";
+        let second_url = "https://github.com/owner/another/pull/47";
+        let mut updated_context: serde_json::Value =
+            serde_json::from_slice(&fs::read(&context_path).unwrap()).unwrap();
+        updated_context["pullRequests"] = serde_json::json!([pr_url, second_url]);
+        fs::write(&context_path, updated_context.to_string()).unwrap();
+        let token = crate::navigation::pr_token("%0", pr_url, 0).unwrap();
+        let second_token = crate::navigation::pr_token("%0", second_url, 1).unwrap();
+        app.activate("/tmp/starmux-current.sock", "client", &token)
+            .unwrap();
+        app.activate("/tmp/starmux-current.sock", "client", &second_token)
+            .unwrap();
+        assert_eq!(tmux.opened_urls(), [pr_url, second_url]);
+        assert!(other_app
+            .activate("/tmp/starmux-current.sock", "client", &token)
+            .is_err());
+        updated_context["pullRequests"] = serde_json::json!([]);
+        fs::write(&context_path, updated_context.to_string()).unwrap();
+        assert!(app
+            .activate("/tmp/starmux-current.sock", "client", &token)
+            .is_err());
+        assert_eq!(tmux.opened_urls(), [pr_url, second_url]);
         responder.join().unwrap();
         assert!(rendered.contains("#[bold] repo#[bg=default]"), "{rendered}");
         assert!(rendered.contains("#[range=user|sp9 ]"), "{rendered}");
@@ -849,9 +1131,14 @@ mod tests {
             "{rendered}"
         );
         assert!(rendered.contains("unnamed #[fg=yellow]●"), "{rendered}");
+        assert!(rendered.contains(" Plans"), "{rendered}");
+        assert!(!rendered.contains(" Context"), "{rendered}");
+        assert!(rendered.contains("◇"), "{rendered}");
+        assert!(rendered.contains("##[fg=red] Build search"), "{rendered}");
+        assert!(rendered.contains("✦"), "{rendered}");
         assert!(rendered.find("##[fg=red]").unwrap() < rendered.find("unnamed").unwrap());
         assert!(!rendered.contains("stale"), "{rendered}");
-        assert_eq!(rendered.matches("#[range=").count(), 2);
+        assert_eq!(rendered.matches("#[range=").count(), 4);
         app.activate("/tmp/starmux-current.sock", "client", "sp9")
             .unwrap();
         assert_eq!(

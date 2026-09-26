@@ -22,7 +22,7 @@ fn help_and_adapter_expose_only_the_query_interface() {
     let adapter = String::from_utf8(adapter.stdout).unwrap();
     assert!(adapter.contains("--width=#{side-status-width}"));
     assert!(adapter.contains("MouseDown1Status"));
-    assert!(adapter.contains("(sw|sp|su),#{mouse_status_range}"));
+    assert!(adapter.contains("(sw|sp|su|sr|sl|ss),#{mouse_status_range}"));
     assert!(!adapter.contains("side-status-width 30"));
     assert!(!adapter.contains("side-status-style"));
     assert!(!adapter.contains("@window_icon"));
