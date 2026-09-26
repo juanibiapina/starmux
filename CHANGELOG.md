@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-26
+
 ### Added
 - Configure built-in sidebar modules with safe row formats, named palettes, and window-option indicator rules.
 
