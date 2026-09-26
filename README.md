@@ -1,11 +1,6 @@
 # Starmux
 
-**A fast and configurable sidebar for tmux.**
-
-- Navigate: click a session or window to switch to it.
-- Stay oriented: follow the active window when the list exceeds the screen height.
-- Compose: choose and order built-in sidebar modules.
-- Customize: format rows and colors without allowing tmux-format injection.
+A fast and configurable sidebar for tmux.
 
 [Configuration](docs/configuration.md)
 
@@ -21,7 +16,7 @@ Install Starmux:
 brew install juanibiapina/taps/starmux
 ```
 
-Generate the tmux adapter:
+Generate the tmux adapter (may also be required after upgrades).
 
 ```sh
 mkdir -p "$HOME/.config/tmux"
@@ -36,9 +31,3 @@ set -g side-status-width 30
 set -g side-status-style default
 source-file ~/.config/tmux/starmux.conf
 ```
-
-The generated adapter reads `side-status-width` at render time, so tmux remains the source of truth for the width. Regenerate the adapter after installing a new Starmux version.
-
-The defaults need no Starmux configuration file. Run `starmux check-config` to validate a custom configuration and `starmux print-config` to inspect its effective values.
-
-Starmux is [MIT licensed](LICENSE).
