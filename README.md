@@ -2,6 +2,10 @@
 
 A fast and configurable sidebar for tmux.
 
+- View tmux sessions and windows, pi sessions, pi-live context, AI provider usage
+- Everything is clickable with a mouse and takes you to the expected place
+- Supports colorschemes
+
 ![Starmux sidebar showing sessions and windows](docs/images/sidebar.png)
 
 The screenshot uses my [custom Starmux configuration](https://github.com/juanibiapina/dotfiles/blob/main/dotfiles/tmux/.config/starmux.toml).
