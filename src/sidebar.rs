@@ -172,7 +172,7 @@ impl Default for PiLiveConfig {
         Self {
             disabled: false,
             data_dir: None,
-            format: "   $state $name".into(),
+            format: "  $state $name".into(),
             project_style: "bold".into(),
             idle_style: "fg=brightblack".into(),
             working_style: "fg=yellow".into(),

@@ -102,7 +102,7 @@ Add `pi-live` to `modules` to show a state icon and the name of each reachable P
 modules = ["sessions", "divider", "pi-live"]
 
 [pi-live]
-format = "   $state $name"
+format = "  $state $name"
 project_style = "bold"
 idle_style = "fg=brightblack"
 working_style = "fg=yellow"
