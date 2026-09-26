@@ -751,13 +751,69 @@ stale_style = "fg=muted"
         .render_with_usage(&input, &[], &[unavailable])
         .unwrap();
     assert!(unavailable_rendered.contains("Codex (unavailable)"));
-    assert!(!unavailable_rendered.contains("#[range=user|"));
+    assert!(unavailable_rendered.contains("#[range=user|su4 ]"));
 
     input.width = 12;
     let clipped = sidebar
         .render_with_usage(&input, &[], &[usage("codex", "Codex", false, 50.0)])
         .unwrap();
     assert!(!clipped.contains("#{oops}"));
+}
+
+#[test]
+fn usage_plan_rows_link_to_their_provider_page() {
+    let sidebar =
+        Sidebar::from_toml("modules = [\"usage\"]\n[usage]\nproviders = [\"codex\"]").unwrap();
+    let usage = UsageRow {
+        provider: "codex".into(),
+        display_name: "#[range=user|su0]".into(),
+        windows: ["5h", "Week"]
+            .into_iter()
+            .map(|label| UsageWindow {
+                label: label.into(),
+                used_percent: 20.0,
+                duration_seconds: None,
+                reset_at: None,
+            })
+            .collect(),
+        stale: true,
+        fetched_at: None,
+        unavailable: false,
+    };
+    let rendered = sidebar
+        .render_with_usage(&snapshot(), &[], &[usage])
+        .unwrap();
+    assert_eq!(
+        rendered.matches("#[range=user|su4 ]").count(),
+        3,
+        "{rendered}"
+    );
+    assert!(rendered.contains("##[range=user|su0]"), "{rendered}");
+    assert_eq!(rendered.matches("#[range=user|su0 ]").count(), 0);
+}
+
+#[test]
+fn usage_without_a_web_page_has_no_click_target() {
+    let sidebar =
+        Sidebar::from_toml("modules = [\"usage\"]\n[usage]\nproviders = [\"gemini\"]").unwrap();
+    let usage = UsageRow {
+        provider: "gemini".into(),
+        display_name: "Gemini".into(),
+        windows: vec![UsageWindow {
+            label: "Pro".into(),
+            used_percent: 20.0,
+            duration_seconds: None,
+            reset_at: None,
+        }],
+        stale: false,
+        fetched_at: None,
+        unavailable: false,
+    };
+    let rendered = sidebar
+        .render_with_usage(&snapshot(), &[], &[usage])
+        .unwrap();
+    assert!(rendered.contains("Gemini"));
+    assert!(!rendered.contains("#[range=user|"), "{rendered}");
 }
 
 #[test]

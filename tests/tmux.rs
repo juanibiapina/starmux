@@ -468,6 +468,141 @@ fn clicking_foreign_window_switches_the_attached_client_to_that_window() {
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
+fn clicking_usage_opens_the_provider_page() {
+    use std::{
+        fs,
+        io::Write,
+        os::unix::fs::PermissionsExt,
+        process::{Command, Stdio},
+        thread,
+        time::Duration,
+    };
+
+    let root = std::env::temp_dir().join(format!("starmux-usage-click-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let socket = format!("starmux-usage-click-{}", std::process::id());
+    let binary = env!("CARGO_BIN_EXE_starmux");
+    let opener = root.join(if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    });
+    fs::write(
+        &opener,
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$STARMUX_TEST_ARGS\"\n",
+    )
+    .unwrap();
+    fs::set_permissions(&opener, fs::Permissions::from_mode(0o755)).unwrap();
+    let args_file = root.join("opened");
+    let config = root.join("config.toml");
+    fs::write(
+        &config,
+        format!(
+            "modules = [\"usage\"]\n[usage]\nproviders = [\"codex\"]\ncache_dir = {:?}\n",
+            root.join("cache")
+        ),
+    )
+    .unwrap();
+    let generated = Command::new(binary)
+        .args(["init", "tmux"])
+        .output()
+        .unwrap();
+    assert!(generated.status.success());
+    let adapter = String::from_utf8(generated.stdout)
+        .unwrap()
+        .replace(
+            "starmux render-query",
+            &format!(
+                "env STARMUX_CONFIG={} {binary} render-query",
+                config.display()
+            ),
+        )
+        .replace(
+            "starmux activate",
+            &format!(
+                "env PATH={} STARMUX_TEST_ARGS={} {binary} activate",
+                root.display(),
+                args_file.display()
+            ),
+        );
+    let adapter_path = root.join("adapter.conf");
+    fs::write(&adapter_path, adapter).unwrap();
+    let tmux = |args: &[&str]| {
+        let output = Command::new("tmux")
+            .args(["-L", &socket])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "tmux {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    tmux(&[
+        "-f",
+        "/dev/null",
+        "new-session",
+        "-d",
+        "-s",
+        "main",
+        "sleep 60",
+    ]);
+    let supported = Command::new("tmux")
+        .args(["-L", &socket, "show-options", "-gv", "side-status"])
+        .output()
+        .unwrap()
+        .status
+        .success();
+    if !supported {
+        tmux(&["kill-server"]);
+        fs::remove_dir_all(root).unwrap();
+        assert_ne!(
+            std::env::var_os("STARMUX_REQUIRE_SIDE_STATUS"),
+            Some("1".into())
+        );
+        return;
+    }
+    tmux(&["set", "-g", "mouse", "on"]);
+    tmux(&["set", "-g", "status-interval", "1"]);
+    tmux(&["set", "-g", "side-status", "left"]);
+    tmux(&["set", "-g", "side-status-width", "30"]);
+    tmux(&["source-file", adapter_path.to_str().unwrap()]);
+    let capture = root.join("client.out");
+    let mut client = attached_client(&socket, "main")
+        .env("TERM", "xterm-256color")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::from(fs::File::create(&capture).unwrap()))
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut input = client.stdin.take().unwrap();
+    for _ in 0..40 {
+        if fs::read_to_string(&capture).unwrap().contains("codex") {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert!(fs::read_to_string(&capture).unwrap().contains("codex"));
+    write!(input, "\x1b[<0;3;1M\x1b[<0;3;1m").unwrap();
+    input.flush().unwrap();
+    for _ in 0..40 {
+        if args_file.exists() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(
+        fs::read_to_string(&args_file).unwrap(),
+        "https://chatgpt.com/settings/usage\n"
+    );
+    tmux(&["kill-server"]);
+    let _ = client.wait();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
 fn pi_attention_row_click_selects_its_pane() {
     use std::{
         fs,

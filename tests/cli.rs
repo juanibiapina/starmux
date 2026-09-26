@@ -22,6 +22,7 @@ fn help_and_adapter_expose_only_the_query_interface() {
     let adapter = String::from_utf8(adapter.stdout).unwrap();
     assert!(adapter.contains("--width=#{side-status-width}"));
     assert!(adapter.contains("MouseDown1Status"));
+    assert!(adapter.contains("(sw|sp|su),#{mouse_status_range}"));
     assert!(!adapter.contains("side-status-width 30"));
     assert!(!adapter.contains("side-status-style"));
     assert!(!adapter.contains("@window_icon"));
@@ -65,6 +66,66 @@ fn render_query_requires_a_valid_explicit_width_before_calling_tmux() {
         assert!(!output.status.success());
         assert!(String::from_utf8_lossy(&output.stderr).contains("width"));
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn usage_click_opens_only_a_known_provider_page() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = std::env::temp_dir().join(format!("starmux-opener-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let opener = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    let script = dir.join(opener);
+    std::fs::write(
+        &script,
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$STARMUX_TEST_ARGS\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let args_file = dir.join("args");
+    let activate = |token: &str| {
+        Command::new(env!("CARGO_BIN_EXE_starmux"))
+            .args([
+                "activate",
+                "--socket=/tmp/test.sock",
+                "--client=test",
+                &format!("--target={token}"),
+            ])
+            .env("PATH", &dir)
+            .env("STARMUX_TEST_ARGS", &args_file)
+            .output()
+            .unwrap()
+    };
+    for token in [
+        "su", "su2", "su3", "su5", "su7", "su8", "su4extra", "su4;echo",
+    ] {
+        assert!(!activate(token).status.success(), "{token}");
+        assert!(!args_file.exists(), "{token}");
+    }
+    for (token, url) in [
+        ("su0", "https://claude.ai/settings/usage"),
+        (
+            "su1",
+            "https://github.com/settings/billing/premium_requests_usage",
+        ),
+        ("su4", "https://chatgpt.com/settings/usage"),
+        (
+            "su6",
+            "https://z.ai/manage-apikey/coding-plan/personal/usage",
+        ),
+    ] {
+        assert!(activate(token).status.success(), "{token}");
+        assert_eq!(
+            std::fs::read_to_string(&args_file).unwrap(),
+            format!("{url}\n")
+        );
+    }
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]

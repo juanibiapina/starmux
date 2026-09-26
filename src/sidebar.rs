@@ -805,6 +805,8 @@ impl Sidebar {
             } else {
                 String::new()
             };
+            let page_range =
+                crate::usage::page_token(provider).map(|token| Range::UsagePage(token.into()));
             rows.push(Row {
                 spans: vec![Span {
                     text: format!(" {}{suffix}", usage.display_name),
@@ -815,7 +817,7 @@ impl Sidebar {
                     )?),
                 }],
                 fill: None,
-                range: None,
+                range: page_range.clone(),
                 focus: false,
                 selected: false,
             });
@@ -853,7 +855,7 @@ impl Sidebar {
                         &self.palette,
                     )?,
                     fill: None,
-                    range: None,
+                    range: page_range.clone(),
                     focus: false,
                     selected: false,
                 });
@@ -1670,6 +1672,7 @@ enum Range {
     Window(usize),
     ForeignWindow(String),
     PiPane(String),
+    UsagePage(String),
 }
 
 fn escaped(text: &str) -> String {
@@ -1714,7 +1717,7 @@ fn render_rows(rows: &[Row], width: usize) -> String {
                     "#[range=window|{index} {}]",
                     if row.focus { "list=focus " } else { "" }
                 )),
-                Range::ForeignWindow(token) | Range::PiPane(token) => {
+                Range::ForeignWindow(token) | Range::PiPane(token) | Range::UsagePage(token) => {
                     result.push_str(&format!("#[range=user|{token} ]"))
                 }
             }
@@ -1740,9 +1743,9 @@ fn render_rows(rows: &[Row], width: usize) -> String {
             Some(Range::Window(_) | Range::ForeignWindow(_) | Range::PiPane(_)) if row.selected => {
                 result.push_str("#[norange]#[list=on default]")
             }
-            Some(Range::Window(_) | Range::ForeignWindow(_) | Range::PiPane(_)) => {
-                result.push_str("#[norange default]")
-            }
+            Some(
+                Range::Window(_) | Range::ForeignWindow(_) | Range::PiPane(_) | Range::UsagePage(_),
+            ) => result.push_str("#[norange default]"),
             None => {}
         }
         if let Some(fill) = &row.fill {

@@ -28,6 +28,36 @@ pub(crate) const PROVIDERS: &[&str] = &[
     "xai",
 ];
 
+// Only fixed provider keys can become click tokens or browser destinations.
+const USAGE_PAGES: &[(&str, &str, &str)] = &[
+    ("anthropic", "su0", "https://claude.ai/settings/usage"),
+    (
+        "copilot",
+        "su1",
+        "https://github.com/settings/billing/premium_requests_usage",
+    ),
+    ("codex", "su4", "https://chatgpt.com/settings/usage"),
+    (
+        "zai",
+        "su6",
+        "https://z.ai/manage-apikey/coding-plan/personal/usage",
+    ),
+];
+
+pub(crate) fn page_token(provider: &str) -> Option<&'static str> {
+    USAGE_PAGES
+        .iter()
+        .find(|(name, _, _)| *name == provider)
+        .map(|(_, token, _)| *token)
+}
+
+pub(crate) fn page_url(token: &str) -> Option<&'static str> {
+    USAGE_PAGES
+        .iter()
+        .find(|(_, name, _)| *name == token)
+        .map(|(_, _, url)| *url)
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UsageWindow {
     pub label: String,

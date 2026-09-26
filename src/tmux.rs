@@ -119,6 +119,10 @@ impl Tmux for ProcessTmux {
         if socket.is_empty() || client.is_empty() {
             return Err("missing tmux socket or client name".into());
         }
+        if token.starts_with("su") {
+            let url = crate::usage::page_url(token).ok_or("invalid click target")?;
+            return open_usage_page(url);
+        }
         if token.starts_with("sp") {
             let (pane_id, window_id) = crate::navigation::pane_target(token)?;
             let pane = self
@@ -143,6 +147,25 @@ impl Tmux for ProcessTmux {
         }
         let target = crate::navigation::target(token)?;
         tmux_switch(socket, client, &target)
+    }
+}
+
+fn open_usage_page(url: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let opener = "open";
+    #[cfg(target_os = "linux")]
+    let opener = "xdg-open";
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    return Err("opening usage pages is unsupported on this platform".into());
+
+    let status = Command::new(opener)
+        .arg(url)
+        .status()
+        .map_err(|error| format!("browser opener failed: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("browser opener exited with {status}"))
     }
 }
 
@@ -219,6 +242,8 @@ impl Tmux for MemoryTmux {
     fn activate(&self, socket: &str, client: &str, token: &str) -> Result<(), String> {
         if token.starts_with("sp") {
             crate::navigation::pane_target(token)?;
+        } else if token.starts_with("su") {
+            crate::usage::page_url(token).ok_or("invalid click target")?;
         } else {
             crate::navigation::target(token)?;
         }
