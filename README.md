@@ -4,6 +4,8 @@ A fast and configurable sidebar for tmux.
 
 ![Starmux sidebar showing sessions and windows](docs/images/sidebar.png)
 
+The screenshot uses my [custom Starmux configuration](https://github.com/juanibiapina/dotfiles/blob/main/dotfiles/tmux/.config/starmux.toml).
+
 [Configuration](docs/configuration.md)
 
 ## Requirements
