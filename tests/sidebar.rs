@@ -855,3 +855,71 @@ source = "icon"
     assert!(rendered.contains("##[range=user|bad]##{pane_id}"));
     assert!(!rendered.contains("#[range=user|bad]#{pane_id}"));
 }
+
+#[test]
+fn pi_context_pr_state_icons_use_distinct_styles() {
+    let sidebar = Sidebar::from_toml("modules = [\"pi-context\"]").unwrap();
+    let context = starmux::PiContext {
+        pull_requests: vec!["https://github.com/o/r/pull/1".into()],
+        ..Default::default()
+    };
+    for (state, icon, style) in [
+        (starmux::pr_state::PrState::Open, "●", "fg=green"),
+        (starmux::pr_state::PrState::Draft, "●", "fg=brightblack"),
+        (starmux::pr_state::PrState::Merged, "●", "fg=magenta"),
+        (starmux::pr_state::PrState::Closed, "●", "fg=red"),
+        (starmux::pr_state::PrState::Unknown, "○", "fg=brightblack"),
+    ] {
+        let rendered = sidebar
+            .render_with_context(&snapshot(), &[], &[], &[], Some(&context), &[state])
+            .unwrap();
+        assert!(
+            rendered.contains(&format!("#[{style}]{icon}")),
+            "{rendered}"
+        );
+    }
+}
+
+#[test]
+fn pi_context_icons_and_clipping_work_at_narrow_widths() {
+    let sidebar = Sidebar::from_toml("modules = [\"pi-context\"]").unwrap();
+    let context = starmux::PiContext {
+        plans: vec!["#[fg=red] Build an extensive search".into()],
+        pull_requests: vec!["https://github.com/owner/repo/pull/42".into()],
+        skills: vec!["testing".into()],
+    };
+    for width in [16, 24, 30] {
+        let mut input = snapshot();
+        input.width = width;
+        let rendered = sidebar
+            .render_with_context(
+                &input,
+                &[],
+                &[],
+                &[],
+                Some(&context),
+                &[starmux::pr_state::PrState::Draft],
+            )
+            .unwrap();
+        assert!(
+            rendered.contains("◇") && rendered.contains("●") && rendered.contains("✦"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("##[fg=red]"), "{rendered}");
+        assert!(!rendered.contains("#[range="), "{rendered}");
+        assert_eq!(rendered.matches("#[nl]").count(), 9);
+        if width == 30 {
+            assert!(rendered.contains("owner/repo##42 draft"), "{rendered}");
+        }
+    }
+    let long = starmux::PiContext {
+        pull_requests: vec!["https://github.com/verylongowner/verylongrepository/pull/4242".into()],
+        ..Default::default()
+    };
+    let mut input = snapshot();
+    input.width = 16;
+    let rendered = sidebar
+        .render_with_context(&input, &[], &[], &[], Some(&long), &[])
+        .unwrap();
+    assert!(rendered.contains("…##4242"), "{rendered}");
+}

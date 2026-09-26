@@ -49,6 +49,42 @@ struct Config {
     pi_live: PiLiveConfig,
     usage: UsageConfig,
     gob: GobConfig,
+    #[serde(rename = "pi-context")]
+    pi_context: PiContextConfig,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+struct PiContextConfig {
+    disabled: bool,
+    heading_style: String,
+    category_style: String,
+    text_style: String,
+    plan_style: String,
+    skill_style: String,
+    open_style: String,
+    draft_style: String,
+    merged_style: String,
+    closed_style: String,
+    unknown_style: String,
+}
+
+impl Default for PiContextConfig {
+    fn default() -> Self {
+        Self {
+            disabled: false,
+            heading_style: "bold".into(),
+            category_style: "dim".into(),
+            text_style: "default".into(),
+            plan_style: "fg=magenta".into(),
+            skill_style: "fg=magenta".into(),
+            open_style: "fg=green".into(),
+            draft_style: "fg=brightblack".into(),
+            merged_style: "fg=magenta".into(),
+            closed_style: "fg=red".into(),
+            unknown_style: "fg=brightblack".into(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -153,6 +189,7 @@ impl Default for Config {
             pi_live: PiLiveConfig::default(),
             usage: UsageConfig::default(),
             gob: GobConfig::default(),
+            pi_context: PiContextConfig::default(),
         }
     }
 }
@@ -300,7 +337,14 @@ impl Sidebar {
 
     fn compile(config: Config) -> Result<Self, String> {
         let known = [
-            "sessions", "divider", "pi-live", "usage", "gob", "spacer", "blank",
+            "sessions",
+            "divider",
+            "pi-live",
+            "usage",
+            "gob",
+            "pi-context",
+            "spacer",
+            "blank",
         ];
         let mut seen = BTreeSet::new();
         for name in &config.modules {
@@ -385,6 +429,16 @@ impl Sidebar {
             &config.usage.critical_bar_style,
             &config.usage.stale_style,
             &config.usage.unavailable_style,
+            &config.pi_context.heading_style,
+            &config.pi_context.category_style,
+            &config.pi_context.text_style,
+            &config.pi_context.plan_style,
+            &config.pi_context.skill_style,
+            &config.pi_context.open_style,
+            &config.pi_context.draft_style,
+            &config.pi_context.merged_style,
+            &config.pi_context.closed_style,
+            &config.pi_context.unknown_style,
             &config.gob.heading_style,
             &config.gob.running_style,
             &config.gob.progress_style,
@@ -452,11 +506,18 @@ impl Sidebar {
     }
 
     pub(crate) fn pi_live_data_dir(&self) -> Option<&str> {
-        if self.config.pi_live.disabled || !self.config.modules.iter().any(|name| name == "pi-live")
+        if (self.config.pi_live.disabled
+            || !self.config.modules.iter().any(|name| name == "pi-live"))
+            && !self.pi_context_enabled()
         {
             return None;
         }
         Some(self.config.pi_live.data_dir.as_deref().unwrap_or(""))
+    }
+
+    pub(crate) fn pi_context_enabled(&self) -> bool {
+        !self.config.pi_context.disabled
+            && self.config.modules.iter().any(|name| name == "pi-context")
     }
 
     pub(crate) fn gob_enabled(&self) -> bool {
@@ -501,6 +562,18 @@ impl Sidebar {
         usage_rows: &[crate::usage::UsageRow],
         gob_jobs: &[crate::gob::GobJob],
     ) -> Result<String, String> {
+        self.render_with_context(snapshot, pi_sessions, usage_rows, gob_jobs, None, &[])
+    }
+
+    pub fn render_with_context(
+        &self,
+        snapshot: &Snapshot,
+        pi_sessions: &[crate::PiSession],
+        usage_rows: &[crate::usage::UsageRow],
+        gob_jobs: &[crate::gob::GobJob],
+        context: Option<&crate::PiContext>,
+        states: &[crate::pr_state::PrState],
+    ) -> Result<String, String> {
         validate_snapshot(snapshot)?;
         let mut rows = Vec::new();
         let mut spacer = None;
@@ -518,12 +591,17 @@ impl Sidebar {
                 "usage" if !self.config.usage.disabled => {
                     rows.extend(self.render_usage(usage_rows, snapshot.width)?)
                 }
+                "pi-context" if !self.config.pi_context.disabled => {
+                    if let Some(context) = context {
+                        rows.extend(self.render_pi_context(context, states, snapshot.width)?);
+                    }
+                }
                 "gob" if !self.config.gob.disabled => {
                     rows.extend(self.render_gob(gob_jobs, snapshot.width)?)
                 }
                 "spacer" => spacer = Some(rows.len()),
                 "blank" => rows.push(Row::blank()),
-                "sessions" | "divider" | "pi-live" | "usage" | "gob" => {}
+                "sessions" | "divider" | "pi-live" | "usage" | "gob" | "pi-context" => {}
                 _ => return Err(format!("unknown module {name}")),
             }
         }
@@ -942,6 +1020,113 @@ impl Sidebar {
                     focus: false,
                     selected: false,
                 });
+            }
+        }
+        Ok(rows)
+    }
+
+    fn render_pi_context(
+        &self,
+        context: &crate::PiContext,
+        states: &[crate::pr_state::PrState],
+        width: usize,
+    ) -> Result<Vec<Row>, String> {
+        if context.plans.is_empty() && context.pull_requests.is_empty() && context.skills.is_empty()
+        {
+            return Ok(Vec::new());
+        }
+        let cfg = &self.config.pi_context;
+        let mut rows = Vec::new();
+        let mut push =
+            |text: String, style: &str, icon: Option<(&str, &str)>| -> Result<(), String> {
+                let mut spans = Vec::new();
+                if let Some((glyph, icon_style)) = icon {
+                    spans.push(Span {
+                        text: "  ".into(),
+                        style: "default".into(),
+                    });
+                    spans.push(Span {
+                        text: glyph.into(),
+                        style: resolve_style(icon_style, "default", &self.palette)?,
+                    });
+                    spans.push(Span {
+                        text: " ".into(),
+                        style: "default".into(),
+                    });
+                }
+                spans.push(Span {
+                    text,
+                    style: resolve_style(style, "default", &self.palette)?,
+                });
+                rows.push(Row {
+                    spans,
+                    fill: None,
+                    range: None,
+                    focus: false,
+                    selected: false,
+                });
+                Ok(())
+            };
+        push(" Context".into(), &cfg.heading_style, None)?;
+        if !context.plans.is_empty() {
+            push(" Plans".into(), &cfg.category_style, None)?;
+            for title in &context.plans {
+                push(title.clone(), &cfg.text_style, Some(("◇", &cfg.plan_style)))?;
+            }
+        }
+        if !context.pull_requests.is_empty() {
+            push(" PRs".into(), &cfg.category_style, None)?;
+            for (index, url) in context.pull_requests.iter().enumerate() {
+                let Some((label, _)) = crate::pr_state::parse_url(url) else {
+                    continue;
+                };
+                let (glyph, style) = match states
+                    .get(index)
+                    .copied()
+                    .unwrap_or(crate::pr_state::PrState::Unknown)
+                {
+                    crate::pr_state::PrState::Open => ("●", &cfg.open_style),
+                    crate::pr_state::PrState::Draft => ("●", &cfg.draft_style),
+                    crate::pr_state::PrState::Merged => ("●", &cfg.merged_style),
+                    crate::pr_state::PrState::Closed => ("●", &cfg.closed_style),
+                    crate::pr_state::PrState::Unknown => ("○", &cfg.unknown_style),
+                };
+                let state_word = match states
+                    .get(index)
+                    .copied()
+                    .unwrap_or(crate::pr_state::PrState::Unknown)
+                {
+                    crate::pr_state::PrState::Draft => " draft",
+                    crate::pr_state::PrState::Closed => " closed",
+                    _ => "",
+                };
+                let available = width.saturating_sub(4);
+                let label = if label.len() + state_word.len() <= available {
+                    format!("{label}{state_word}")
+                } else if label.len() <= available {
+                    label
+                } else if let Some((repo, number)) = label.split_once('#') {
+                    let suffix = format!("#{number}");
+                    let prefix = available.saturating_sub(suffix.len() + 1);
+                    if prefix == 0 {
+                        suffix
+                    } else {
+                        format!("{}…{suffix}", &repo[..prefix.min(repo.len())])
+                    }
+                } else {
+                    label
+                };
+                push(label, &cfg.text_style, Some((glyph, style)))?;
+            }
+        }
+        if !context.skills.is_empty() {
+            push(" Skills".into(), &cfg.category_style, None)?;
+            for skill in &context.skills {
+                push(
+                    skill.clone(),
+                    &cfg.text_style,
+                    Some(("✦", &cfg.skill_style)),
+                )?;
             }
         }
         Ok(rows)

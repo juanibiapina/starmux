@@ -728,9 +728,17 @@ fn pi_attention_row_click_selects_its_pane() {
         ("attention", "attention", &attention, "idle"),
         ("working", "working item", &working, "working"),
     ] {
+        let session_file = root.join(format!("{id}.jsonl"));
+        let context_path = root.join(format!("{id}.jsonl.context.json"));
+        fs::write(&context_path, serde_json::json!({
+            "version": 1, "sessionId": id,
+            "plans": [{"id": "0123456789abcdef01234567", "title": format!("{id} plan"), "path": "plan.md"}],
+            "pullRequests": [], "skills": ["testing"]
+        }).to_string()).unwrap();
         let status = serde_json::json!({
             "version": 1, "sessionId": id, "name": name, "pid": 1,
-            "cwd": "/tmp", "socketPath": pi_socket, "startedAt": "2026-01-01T00:00:00Z",
+            "cwd": "/tmp", "socketPath": pi_socket, "sessionFile": session_file,
+            "contextPath": context_path, "startedAt": "2026-01-01T00:00:00Z",
             "updatedAt": "2026-01-01T00:00:00Z", "state": state,
             "tmux": {"paneId": pane, "sessionName": "main", "windowIndex": 0, "windowName": "old", "socketPath": server_socket}
         });
@@ -754,7 +762,7 @@ fn pi_attention_row_click_selects_its_pane() {
     fs::write(
         &config,
         format!(
-            "modules = [\"sessions\", \"divider\", \"pi-live\"]\n[pi-live]\ndata_dir = {:?}\n",
+            "modules = [\"sessions\", \"divider\", \"pi-live\", \"divider\", \"pi-context\"]\n[pi-live]\ndata_dir = {:?}\n",
             root.to_str().unwrap()
         ),
     )
@@ -850,6 +858,26 @@ fn pi_attention_row_click_selects_its_pane() {
         thread::sleep(Duration::from_millis(100));
     }
     assert_eq!(focus(), format!("{target_window}|{attention}"));
+    let selected_context = Command::new(binary)
+        .args([
+            "render-query",
+            "--width=30",
+            &format!("--socket={socket_path}"),
+            &format!("--client={client_name}"),
+        ])
+        .env("STARMUX_CONFIG", &config)
+        .output()
+        .unwrap();
+    assert!(selected_context.status.success());
+    let selected_context = String::from_utf8(selected_context.stdout).unwrap();
+    assert!(
+        selected_context.contains("attention plan") && selected_context.contains("✦"),
+        "{selected_context}"
+    );
+    assert!(
+        !selected_context.contains("working plan"),
+        "{selected_context}"
+    );
     let token = row
         .split("#[range=user|")
         .nth(1)

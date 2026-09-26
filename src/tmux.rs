@@ -274,30 +274,38 @@ impl<T: Tmux> Application<T> {
         focus: Option<&Focus>,
     ) -> Result<String, String> {
         let snapshot = self.snapshot(socket, client, width, focus)?;
-        let pi_sessions = self.pi_sessions(socket, &snapshot)?;
+        let (pi_sessions, context) = self.pi_sessions(socket, &snapshot)?;
+        let states = self.pr_states(context.as_ref(), true);
         let usage = self.usage_rows(true)?;
         let jobs = self.gob_jobs(&snapshot)?;
-        self.sidebar
-            .render_with_modules(&snapshot, &pi_sessions, &usage, &jobs)
+        self.sidebar.render_with_context(
+            &snapshot,
+            &pi_sessions,
+            &usage,
+            &jobs,
+            context.as_ref(),
+            &states,
+        )
     }
 
     fn pi_sessions(
         &self,
         socket: &str,
         snapshot: &Snapshot,
-    ) -> Result<Vec<crate::PiSession>, String> {
+    ) -> Result<(Vec<crate::PiSession>, Option<crate::PiContext>), String> {
         let Some(data_dir) = self.sidebar.pi_live_data_dir() else {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), None));
         };
         let path = if data_dir.is_empty() {
             crate::pi_live::default_data_dir()?
         } else {
             std::path::PathBuf::from(data_dir)
         };
-        let mut sessions = crate::pi_live::list(&path, std::path::Path::new(socket))?;
-        if sessions.iter().any(|session| session.location.is_some()) {
+        let mut entries = crate::pi_live::list(&path, std::path::Path::new(socket))?;
+        if entries.iter().any(|entry| entry.session.location.is_some()) {
             let panes = self.tmux.panes(socket)?;
-            for session in &mut sessions {
+            for entry in &mut entries {
+                let session = &mut entry.session;
                 let Some(location) = &session.location else {
                     continue;
                 };
@@ -318,7 +326,41 @@ impl<T: Tmux> Application<T> {
                 };
             }
         }
-        Ok(sessions)
+        let context = if self.sidebar.pi_context_enabled() {
+            entries
+                .iter()
+                .find(|entry| entry.session.selected)
+                .and_then(|entry| {
+                    entry
+                        .context_path
+                        .as_ref()
+                        .and_then(|path| crate::pi_live::read_context(path, &entry.session_id))
+                })
+        } else {
+            None
+        };
+        Ok((
+            entries.into_iter().map(|entry| entry.session).collect(),
+            context,
+        ))
+    }
+
+    fn pr_states(
+        &self,
+        context: Option<&crate::PiContext>,
+        spawn: bool,
+    ) -> Vec<crate::pr_state::PrState> {
+        let Some(context) = context else {
+            return Vec::new();
+        };
+        let Some(dir) = crate::pr_state::default_dir() else {
+            return vec![crate::pr_state::PrState::Unknown; context.pull_requests.len()];
+        };
+        context
+            .pull_requests
+            .iter()
+            .map(|url| crate::pr_state::resolve(url, &dir, spawn))
+            .collect()
     }
 
     fn gob_jobs(&self, snapshot: &Snapshot) -> Result<Vec<crate::GobJob>, String> {
@@ -366,12 +408,20 @@ impl<T: Tmux> Application<T> {
                 ));
             }
         }
-        let mut pi_sessions = self.pi_sessions(socket, &snapshot)?;
+        let (mut pi_sessions, context) = self.pi_sessions(socket, &snapshot)?;
         crate::pi_live::sort_sessions(&mut pi_sessions);
         for session in pi_sessions {
             result.push_str(&format!(
                 "pi-live project={:?} {:?} {:?} target={:?} selected={}\n",
                 session.project, session.state, session.name, session.target, session.selected
+            ));
+        }
+        if let Some(context) = context {
+            result.push_str(&format!(
+                "pi-context plans={} prs={} skills={}\n",
+                context.plans.len(),
+                context.pull_requests.len(),
+                context.skills.len()
             ));
         }
         for usage in self.usage_rows(false)? {
@@ -403,7 +453,8 @@ impl<T: Tmux> Application<T> {
     ) -> Result<String, String> {
         let started = Instant::now();
         let snapshot = self.snapshot(socket, client, width, focus)?;
-        let pi_sessions = self.pi_sessions(socket, &snapshot)?;
+        let (pi_sessions, context) = self.pi_sessions(socket, &snapshot)?;
+        let states = self.pr_states(context.as_ref(), false);
         let queried = started.elapsed().as_micros();
         let usage = self.usage_rows(false)?;
         let usage_us = started.elapsed().as_micros().saturating_sub(queried);
@@ -412,8 +463,14 @@ impl<T: Tmux> Application<T> {
             .elapsed()
             .as_micros()
             .saturating_sub(queried + usage_us);
-        self.sidebar
-            .render_with_modules(&snapshot, &pi_sessions, &usage, &jobs)?;
+        self.sidebar.render_with_context(
+            &snapshot,
+            &pi_sessions,
+            &usage,
+            &jobs,
+            context.as_ref(),
+            &states,
+        )?;
         Ok(format!(
             "{{\"query_us\":{queried},\"usage_us\":{usage_us},\"gob_us\":{gob_us},\"render_us\":{}}}",
             started.elapsed().as_micros().saturating_sub(queried + usage_us + gob_us)
@@ -760,7 +817,7 @@ mod tests {
         let socket_path = data_dir.join("sockets/live.sock");
         let listener = UnixListener::bind(&socket_path).unwrap();
         let responder = thread::spawn(move || {
-            for _ in 0..2 {
+            for _ in 0..6 {
                 let (mut socket, _) = listener.accept().unwrap();
                 let mut request = [0; 128];
                 let len = socket.read(&mut request).unwrap();
@@ -788,6 +845,21 @@ mod tests {
         ))
         .unwrap();
         live["state"] = "idle".into();
+        let session_file = data_dir.join("live.jsonl");
+        let context_path = data_dir.join("live.jsonl.context.json");
+        live["sessionFile"] = serde_json::json!(session_file);
+        live["contextPath"] = serde_json::json!(context_path);
+        fs::write(
+            &context_path,
+            serde_json::json!({
+                "version": 1, "sessionId": "live",
+                "plans": [{"id": "0123456789abcdef01234567", "title": "#[fg=red] Build search", "path": "live.jsonl.plans/0123456789abcdef01234567.md"}],
+                "pullRequests": [],
+                "skills": ["testing"]
+            })
+            .to_string(),
+        )
+        .unwrap();
         live["tmux"] = serde_json::json!({
             "paneId": "%0", "sessionName": "main", "windowIndex": 5, "windowName": "old",
             "socketPath": "/tmp/starmux-current.sock"
@@ -811,7 +883,7 @@ mod tests {
         .unwrap();
         fs::write(data_dir.join("status/broken.json"), "{bad json").unwrap();
         let config = format!(
-            "modules = [\"sessions\", \"pi-live\"]\n[pi-live]\ndata_dir = {:?}\nformat = \"$name $state\"\n",
+            "modules = [\"sessions\", \"pi-live\", \"pi-context\"]\n[pi-live]\ndata_dir = {:?}\nformat = \"$name $state\"\n",
             data_dir.to_str().unwrap()
         );
         let tmux = MemoryTmux::new(Snapshot {
@@ -839,6 +911,30 @@ mod tests {
         let rendered = app
             .render_query("/tmp/starmux-current.sock", "client", 40, None)
             .unwrap();
+        let mut other_snapshot = tmux.snapshot.clone();
+        other_snapshot.current_pane = "%1".into();
+        let other_tmux = MemoryTmux::new(other_snapshot).with_panes(tmux.panes.clone());
+        let other_app = Application::new(Sidebar::from_toml(&config).unwrap(), other_tmux);
+        let other_rendered = other_app
+            .render_query("/tmp/starmux-current.sock", "client", 40, None)
+            .unwrap();
+        assert!(
+            !other_rendered.contains(" Context") && !other_rendered.contains("Build search"),
+            "{other_rendered}"
+        );
+        let context_only = format!(
+            "modules = [\"pi-context\"]\n[pi-live]\ndata_dir = {:?}\n",
+            data_dir.to_str().unwrap()
+        );
+        let context_app =
+            Application::new(Sidebar::from_toml(&context_only).unwrap(), tmux.clone());
+        let context_rendered = context_app
+            .render_query("/tmp/starmux-current.sock", "client", 40, None)
+            .unwrap();
+        assert!(
+            context_rendered.contains("Build search") && !context_rendered.contains("unnamed"),
+            "{context_rendered}"
+        );
         responder.join().unwrap();
         assert!(rendered.contains("#[bold] repo#[bg=default]"), "{rendered}");
         assert!(rendered.contains("#[range=user|sp9 ]"), "{rendered}");
@@ -849,6 +945,10 @@ mod tests {
             "{rendered}"
         );
         assert!(rendered.contains("unnamed #[fg=yellow]●"), "{rendered}");
+        assert!(rendered.contains(" Context"), "{rendered}");
+        assert!(rendered.contains("◇"), "{rendered}");
+        assert!(rendered.contains("##[fg=red] Build search"), "{rendered}");
+        assert!(rendered.contains("✦"), "{rendered}");
         assert!(rendered.find("##[fg=red]").unwrap() < rendered.find("unnamed").unwrap());
         assert!(!rendered.contains("stale"), "{rendered}");
         assert_eq!(rendered.matches("#[range=").count(), 2);

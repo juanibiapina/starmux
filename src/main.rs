@@ -90,6 +90,12 @@ fn run() -> Result<(), String> {
             _ => Err("usage: starmux init tmux".into()),
         };
     }
+    if command == "pr-refresh" {
+        return match args.as_slice() {
+            [_, url, dir] => starmux::pr_state::refresh(url, std::path::Path::new(dir)),
+            _ => Err("usage: starmux pr-refresh URL CACHE_DIR".into()),
+        };
+    }
     if command == "usage-refresh" {
         let parsed = flags(&args[1..])?;
         if parsed.len() != 2 {

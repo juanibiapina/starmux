@@ -12,7 +12,7 @@ Run `starmux print-config` to print the complete configuration. Run `starmux che
 modules = ["sessions", "divider"]
 ```
 
-The built-ins are `sessions`, `divider`, `pi-live`, `usage`, `gob`, `spacer`, and `blank`. Unknown names and duplicate names other than `divider` and `blank` are errors. Repeat `divider` to separate multiple sections, for example `modules = ["sessions", "divider", "pi-live", "divider", "usage", "divider", "gob"]`. Each divider uses the same `[divider]` settings. `pi-live`, `usage`, and `gob` are not enabled by default.
+The built-ins are `sessions`, `divider`, `pi-live`, `pi-context`, `usage`, `gob`, `spacer`, and `blank`. Unknown names and duplicate names other than `divider` and `blank` are errors. Repeat `divider` to separate multiple sections, for example `modules = ["sessions", "divider", "pi-live", "divider", "usage", "divider", "gob"]`. Each divider uses the same `[divider]` settings. `pi-live`, `pi-context`, `usage`, and `gob` are not enabled by default.
 
 Place one `spacer` between modules to push the following rows to the bottom of the sidebar. For example, `modules = ["sessions", "spacer", "divider", "usage"]` keeps sessions at the top and usage at the bottom. The spacer takes only the rows left after all other modules render. It adds no rows if the sidebar is full, and it has no style or click target. Its size updates when the client is resized. Add `blank` after `usage` to leave one empty row below it: `modules = ["sessions", "spacer", "divider", "usage", "blank"]`. Each `blank` entry adds one empty row without a style or click target; repeat it for more space.
 
@@ -94,7 +94,7 @@ character = "-"
 style = "dim"
 ```
 
-Set `disabled = true` in `[sessions]`, `[divider]`, `[pi-live]`, `[usage]`, or `[gob]` to omit that module without changing the shared module order.
+Set `disabled = true` in `[sessions]`, `[divider]`, `[pi-live]`, `[pi-context]`, `[usage]`, or `[gob]` to omit that module without changing the shared module order.
 
 ## Provider usage
 
@@ -145,6 +145,32 @@ The row format supports `$state` (a `●` icon) and `$name`, optional groups, an
 Only Pi sessions published with the current tmux server's socket path appear in its sidebar. Sessions outside tmux and older records without the server socket path are hidden until Pi restarts with an updated pi-live publisher. A row with a matching pane on that server is clickable. Starmux resolves the pane's current window on click and selects the pane. A record without a matching pane remains visible without a click target or selected styling. With a custom tmux mouse binding, route `sp` user ranges to `starmux activate` as well as `sw` ranges; `starmux init tmux` emits the required binding.
 
 Starmux reads version 1 JSON records from `~/.local/share/pi/status` and checks each session's published Unix socket with pi-live's version 1 ping request. An absent directory, invalid records, unsupported versions, and unreachable sessions produce no rows for those records. A bad record does not hide healthy sessions. Starmux scans at most 256 directory entries and checks at most 32 records matching the current tmux socket per render, with a 200 ms total query budget and a 40 ms ping timeout per session. Set `data_dir` to an absolute path under `[pi-live]` when pi-live publishes elsewhere; Starmux looks for `status/` and `sockets/` in that directory. Reading the files does not remove stale records.
+
+## Selected Pi context
+
+Add `pi-context` to show the plans, pull requests, and loaded skills recorded by pi-live for the Pi session in the selected tmux pane. It can be placed independently of `pi-live`:
+
+```toml
+modules = ["sessions", "divider", "pi-live", "divider", "pi-context"]
+
+[pi-context]
+heading_style = "bold"
+category_style = "dim"
+text_style = "default"
+plan_style = "fg=magenta"
+skill_style = "fg=magenta"
+open_style = "fg=green"
+draft_style = "fg=brightblack"
+merged_style = "fg=magenta"
+closed_style = "fg=red"
+unknown_style = "fg=brightblack"
+```
+
+`Context` is followed by nonempty Plans, PRs, and Skills sections. `◇` marks a plan and `✦` marks a loaded skill. A PR row shows `owner/repo#number` with a green `●` for open, muted `●` for draft, purple `●` for merged, red `●` for closed, or muted `○` when its state is unknown. Draft and closed rows include a word when space permits. These rows have no click targets. Text is escaped and clipped to the sidebar width. Styles accept palette colors. Use `disabled = true` to hide the module.
+
+The module reads the selected reachable session's version 1 context file through its pi-live status record. Switching panes updates the rows. No selected Pi session, an empty context, a missing file, or an invalid file produces no context rows. The Pi status scan is shared with `pi-live` when both modules are enabled. It shows at most 16 entries in each category.
+
+PR states come from authenticated `gh api` requests in a background worker. A sidebar render uses the cached result immediately and refreshes eligible PRs after five minutes. At most 16 PRs can start a refresh per render, matching the displayed PR limit. Concurrent clients share a lease per PR. Failed lookups retry after one minute, preserve the last known state for up to 30 minutes, then show `○`. A missing `gh` command or GitHub authentication leaves the association visible with unknown state. The cache lives under `${XDG_CACHE_HOME:-~/.cache}/starmux/pr-state`.
 
 ## Gob jobs
 

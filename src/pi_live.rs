@@ -64,6 +64,10 @@ struct Record {
     updated_at: String,
     state: String,
     tmux: Option<TmuxLocation>,
+    #[serde(rename = "sessionFile")]
+    session_file: Option<PathBuf>,
+    #[serde(rename = "contextPath")]
+    context_path: Option<PathBuf>,
 }
 
 pub(crate) fn default_data_dir() -> Result<PathBuf, String> {
@@ -72,7 +76,13 @@ pub(crate) fn default_data_dir() -> Result<PathBuf, String> {
         .ok_or_else(|| "HOME is required for pi-live".to_owned())
 }
 
-pub(crate) fn list(data_dir: &Path, tmux_socket: &Path) -> Result<Vec<PiSession>, String> {
+pub(crate) struct LiveEntry {
+    pub session: PiSession,
+    pub session_id: String,
+    pub context_path: Option<PathBuf>,
+}
+
+pub(crate) fn list(data_dir: &Path, tmux_socket: &Path) -> Result<Vec<LiveEntry>, String> {
     let status_dir = data_dir.join("status");
     let entries = match fs::read_dir(&status_dir) {
         Ok(entries) => entries,
@@ -159,13 +169,26 @@ pub(crate) fn list(data_dir: &Path, tmux_socket: &Path) -> Result<Vec<PiSession>
             pane: tmux.pane_id,
             session_name: tmux.session_name,
         });
-        sessions.push(PiSession {
-            name,
-            project: project_root(&record.cwd),
-            state: record.state,
-            location,
-            target: None,
-            selected: false,
+        let context_path = match (&record.session_file, &record.context_path) {
+            (Some(file), Some(context))
+                if file.is_absolute()
+                    && context == &PathBuf::from(format!("{}.context.json", file.display())) =>
+            {
+                Some(context.clone())
+            }
+            _ => None,
+        };
+        sessions.push(LiveEntry {
+            session_id: record.session_id,
+            context_path,
+            session: PiSession {
+                name,
+                project: project_root(&record.cwd),
+                state: record.state,
+                location,
+                target: None,
+                selected: false,
+            },
         });
     }
     Ok(sessions)
@@ -261,4 +284,101 @@ fn ping(path: &Path, timeout: Duration) -> bool {
         }
     }
     false
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct PiContext {
+    pub plans: Vec<String>,
+    pub pull_requests: Vec<String>,
+    pub skills: Vec<String>,
+}
+
+const MAX_CONTEXT_BYTES: u64 = 256 * 1024;
+const MAX_ITEMS: usize = 16;
+
+pub(crate) fn read_context(path: &Path, session_id: &str) -> Option<PiContext> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    if !metadata.file_type().is_file() || metadata.len() > MAX_CONTEXT_BYTES {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .ok()?
+        .take(MAX_CONTEXT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() as u64 > MAX_CONTEXT_BYTES {
+        return None;
+    }
+    let value: Value = serde_json::from_slice(&bytes).ok()?;
+    if value.get("version")?.as_u64()? != 1 || value.get("sessionId")?.as_str()? != session_id {
+        return None;
+    }
+    let plans = value.get("plans")?.as_array()?;
+    let prs = value
+        .get("pullRequests")
+        .map(Value::as_array)
+        .unwrap_or(Some(&Vec::new()))
+        .cloned()?;
+    let skills = value
+        .get("skills")
+        .map(Value::as_array)
+        .unwrap_or(Some(&Vec::new()))
+        .cloned()?;
+    if plans.iter().any(|p| {
+        let id = p.get("id").and_then(Value::as_str);
+        let title = p.get("title").and_then(Value::as_str);
+        let plan_path = p.get("path").and_then(Value::as_str);
+        id.is_none_or(|id| id.len() != 24 || !id.bytes().all(|b| b.is_ascii_hexdigit()))
+            || title.is_none_or(str::is_empty)
+            || plan_path.is_none_or(str::is_empty)
+    }) || prs.iter().any(|p| {
+        p.as_str()
+            .is_none_or(|s| crate::pr_state::parse_url(s).is_none())
+    }) || skills.iter().any(|s| s.as_str().is_none())
+    {
+        return None;
+    }
+    Some(PiContext {
+        plans: plans
+            .iter()
+            .take(MAX_ITEMS)
+            .filter_map(|p| p.get("title")?.as_str().map(str::to_owned))
+            .collect(),
+        pull_requests: prs
+            .iter()
+            .take(MAX_ITEMS)
+            .filter_map(|p| p.as_str().map(str::to_owned))
+            .collect(),
+        skills: skills
+            .iter()
+            .take(MAX_ITEMS)
+            .filter_map(|s| s.as_str().map(str::to_owned))
+            .collect(),
+    })
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::*;
+    #[test]
+    fn reads_only_matching_regular_context_and_caps_entries() {
+        let dir = std::env::temp_dir().join(format!("starmux-context-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("session.context.json");
+        let value = serde_json::json!({
+            "version": 1, "sessionId": "session",
+            "plans": (0..20).map(|n| serde_json::json!({"id": format!("{n:024x}"), "title": format!("Plan {n}"), "path": format!("session.jsonl.plans/{n:024x}.md")})).collect::<Vec<_>>(),
+            "pullRequests": ["https://github.com/owner/repo/pull/42"], "skills": ["testing"]
+        });
+        fs::write(&path, value.to_string()).unwrap();
+        assert_eq!(read_context(&path, "session").unwrap().plans.len(), 16);
+        assert!(read_context(&path, "another").is_none());
+        let link = dir.join("link.context.json");
+        std::os::unix::fs::symlink(&path, &link).unwrap();
+        assert!(read_context(&link, "session").is_none());
+        fs::write(&path, "{").unwrap();
+        assert!(read_context(&path, "session").is_none());
+        fs::remove_dir_all(dir).unwrap();
+    }
 }
