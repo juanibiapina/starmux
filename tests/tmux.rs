@@ -1,6 +1,6 @@
 #[cfg(target_os = "macos")]
 #[test]
-fn attached_side_status_paints_before_and_after_provider() {
+fn attached_side_status_paints_navigation_rows() {
     use std::{
         fs,
         process::{Command, Stdio},
@@ -22,16 +22,19 @@ fn attached_side_status_paints_before_and_after_provider() {
         .replace(
             "starmux render-query",
             &format!(
-                "env STARMUX_CONFIG={} XDG_CACHE_HOME={} STARMUX_DEBUG_ARGS=1 {} render-query",
+                "env STARMUX_CONFIG={} {} render-query",
                 config_path.display(),
-                root.join("cache").display(),
                 binary
             ),
         )
         .replace(")'", &format!(" 2>>{})'", root.join("job.err").display()));
     let adapter_path = root.join("adapter.conf");
     fs::write(&adapter_path, adapter).unwrap();
-    fs::write(&config_path, "format = \"$sessions$divider$custom\"\n[provider.demo]\ncommand = [\"/bin/sh\", \"-c\", \"sleep 3; printf settled\"]\ncwd = \"/tmp\"\ndecoder = \"plain\"\ntimeout_ms = 4500\ncache = true\n[module.custom]\nprovider = \"demo\"\n").unwrap();
+    fs::write(
+        &config_path,
+        "[sessions]\nwindow_format = \" $index $indicator $name\"\n[sessions.window_options]\nstate = \"@agent_state\"\n[sessions.indicator]\nfallback = \".\"\n[[sessions.indicator.rules]]\nwhen = { state = \"working\" }\ntext = \"*\"\n",
+    )
+    .unwrap();
     let tmux = |args: &[&str]| {
         let output = Command::new("tmux")
             .args(["-L", &socket])
@@ -74,6 +77,14 @@ fn attached_side_status_paints_before_and_after_provider() {
     }
     tmux(&["new-window", "-d", "-t", "main:", "-n", "beta", "sleep 10"]);
     tmux(&[
+        "set-option",
+        "-w",
+        "-t",
+        "main:1",
+        "@agent_state",
+        "working",
+    ]);
+    tmux(&[
         "new-window",
         "-d",
         "-t",
@@ -90,6 +101,8 @@ fn attached_side_status_paints_before_and_after_provider() {
         config_path.to_str().unwrap(),
     ]);
     tmux(&["set", "-g", "status-interval", "1"]);
+    tmux(&["set", "-g", "side-status", "left"]);
+    tmux(&["set", "-g", "side-status-width", "30"]);
     tmux(&["source-file", adapter_path.to_str().unwrap()]);
     let capture = root.join("client.out");
     let output = fs::File::create(&capture).unwrap();
@@ -128,11 +141,9 @@ fn attached_side_status_paints_before_and_after_provider() {
         first.contains("a'b$#[]"),
         "literal window name was changed by tmux expansion"
     );
-    assert!(!first.contains("settled"), "provider delayed first paint");
-    let args = fs::read_to_string(root.join("job.err")).unwrap();
     assert!(
-        args.contains("--window-name=a'b$#[]"),
-        "q/s transport changed the window name: {args}"
+        first.contains("* beta"),
+        "configured option was not rendered"
     );
     let client_name = String::from_utf8(
         Command::new("tmux")
@@ -160,6 +171,7 @@ fn attached_side_status_paints_before_and_after_provider() {
     assert_eq!(parts.len(), 3);
     let query = [
         "render-query".to_string(),
+        "--width=30".to_string(),
         format!("--socket={}", parts[0]),
         format!("--client={}", client_name.trim()),
         format!("--current-session={}", parts[1]),
@@ -177,7 +189,7 @@ fn attached_side_status_paints_before_and_after_provider() {
     );
     assert!(String::from_utf8_lossy(&valid.stdout).contains("#[range=window|"));
     let mut stale = query;
-    stale[4] = "--current-window=@999999999".into();
+    stale[5] = "--current-window=@999999999".into();
     let rejected = Command::new(binary)
         .args(&stale)
         .env("STARMUX_CONFIG", &config_path)
@@ -185,14 +197,8 @@ fn attached_side_status_paints_before_and_after_provider() {
         .unwrap();
     assert!(!rejected.status.success());
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("tmux focus changed during query"));
-    thread::sleep(Duration::from_millis(4200));
-    let second = fs::read_to_string(&capture).unwrap();
     tmux(&["kill-server"]);
     let _ = client.wait();
-    assert!(
-        second.contains("settled"),
-        "provider snapshot did not replace the first: {second:?}"
-    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -218,7 +224,10 @@ fn clicking_foreign_window_switches_the_attached_client_to_that_window() {
     assert!(generated.status.success());
     let adapter = String::from_utf8(generated.stdout)
         .unwrap()
-        .replace("starmux render-query", &format!("{binary} render-query"))
+        .replace(
+            "starmux render-query",
+            &format!("env STARMUX_CONFIG=/dev/null {binary} render-query"),
+        )
         .replace("starmux activate", &format!("{binary} activate"));
     let adapter_path = root.join("adapter.conf");
     fs::write(&adapter_path, adapter).unwrap();
@@ -268,6 +277,8 @@ fn clicking_foreign_window_switches_the_attached_client_to_that_window() {
     tmux(&["new-window", "-d", "-t", "aux:", "-n", "delta", "sleep 60"]);
     tmux(&["set", "-g", "mouse", "on"]);
     tmux(&["set", "-g", "status-interval", "1"]);
+    tmux(&["set", "-g", "side-status", "left"]);
+    tmux(&["set", "-g", "side-status-width", "30"]);
     tmux(&["source-file", adapter_path.to_str().unwrap()]);
     let capture = root.join("client.out");
     let mut client = Command::new("script")
@@ -349,12 +360,12 @@ fn clicking_foreign_window_switches_the_attached_client_to_that_window() {
 
     tmux(&["link-window", "-s", "main:0", "-t", "aux:2"]);
     for _ in 0..30 {
-        if fs::read_to_string(&capture).unwrap().contains("2 | alpha") {
+        if fs::read_to_string(&capture).unwrap().contains("2: alpha") {
             break;
         }
         thread::sleep(Duration::from_millis(100));
     }
-    assert!(fs::read_to_string(&capture).unwrap().contains("2 | alpha"));
+    assert!(fs::read_to_string(&capture).unwrap().contains("2: alpha"));
     thread::sleep(Duration::from_millis(600));
     click(29, 7, &mut input);
     expect_focus(&target("aux:2"));
@@ -371,6 +382,7 @@ fn clicking_foreign_window_switches_the_attached_client_to_that_window() {
     let rendered = Command::new(binary)
         .args([
             "render-query",
+            "--width=30",
             &format!("--socket={socket_path}"),
             &format!("--client={client_name}"),
         ])

@@ -52,5 +52,5 @@ jobs:
         run: |
           target/release/starmux --version
           target/release/starmux check-config
-          target/release/starmux init tmux | grep -F 'render-query --socket='
+          target/release/starmux init tmux | grep -F 'render-query --width=#{side-status-width} --socket='
       - run: cargo package --locked

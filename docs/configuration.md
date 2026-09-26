@@ -1,87 +1,101 @@
 # Configuration
 
-The CLI reads `$XDG_CONFIG_HOME/starmux.toml`. If `XDG_CONFIG_HOME` is unset, it reads `~/.config/starmux.toml`. Set `STARMUX_CONFIG` to select another file. An absent or empty file uses the built-in defaults. The CLI merges a file with those defaults.
+Starmux reads `$XDG_CONFIG_HOME/starmux.toml`, falling back to `~/.config/starmux.toml`. Set `STARMUX_CONFIG` to select another file. An absent or empty file uses portable defaults.
 
-Run `starmux print-config` to see the effective values. Run `starmux check-config` to find an invalid field or module reference.
+Run `starmux print-config` to print the complete configuration. Run `starmux check-config` to validate module names, formats, styles, palettes, and tmux option aliases.
+
+## Modules
+
+`modules` is the ordered list of sidebar modules:
+
+```toml
+modules = ["sessions", "divider"]
+```
+
+The built-ins are `sessions` and `divider`. Unknown and duplicate names are errors.
+
+## Row formats
+
+Session and window rows use a safe formatter rather than raw tmux syntax:
+
+- `$variable` inserts escaped module data.
+- `(text $variable)` is included only when one of its variables is non-empty.
+- `[text $variable](fg=accent,bg=surface,bold)` applies a validated style.
+- `\` escapes the next formatter character.
+
+Available session variables are `$id` and `$name`. Window rows also provide `$index` and `$indicator`. The special `$style` value is valid only inside a styled group's style expression, where it selects the semantic style for that session or window state.
+
+```toml
+[sessions]
+session_format = "[ $name ]($style)"
+window_format = "[ $index: $name]($style)"
+```
+
+The styles accepted by Starmux are tmux color assignments (`fg=COLOR`, `bg=COLOR`) and supported text attributes such as `bold`, `dim`, `reverse`, and their `no…` forms. Data variables cannot emit tmux styles or click ranges.
+
+## Palettes
+
+Styles may refer to colors in the selected palette:
+
+```toml
+palette = "mine"
+
+[palettes.mine]
+text = "#c0caf5"
+accent = "#bb9af7"
+surface = "#24283b"
+
+[sessions]
+current_session_style = "fg=surface,bg=accent,bold"
+other_session_style = "fg=text,bold"
+```
+
+Without a selected palette, styles use terminal colors directly.
+
+## Window indicators
+
+The default sessions module does not request or display custom tmux options. A configuration can give user options safe aliases and derive one indicator from them:
+
+```toml
+[sessions]
+window_format = "[ $index ]($style)$indicator[ $name]($style)"
+
+[sessions.window_options]
+icon = "@project_icon"
+state = "@agent_state"
+
+[sessions.indicator]
+source = "icon"
+fallback = "|"
+style = "$style"
+
+[[sessions.indicator.rules]]
+when = { state = "working" }
+text = "*"
+style = "fg=yellow"
+
+[[sessions.indicator.rules]]
+when = { state = "notify" }
+text = "!"
+style = "fg=magenta"
+```
+
+Rules are checked in order. The first rule whose conditions all match wins. If no rule matches, Starmux uses the source option and then the fallback. Option names must start with `@`; option values are always escaped as data.
+
+## Divider
+
+The divider uses one visible grapheme and fills the available row width:
+
+```toml
+[divider]
+character = "-"
+style = "dim"
+```
+
+Set `disabled = true` in either `[sessions]` or `[divider]` to omit that module without changing the shared module order.
 
 ## Tmux integration
 
-`starmux init tmux` generates both `side-status-format` and the `MouseDown1Status` binding used to switch to windows in other sessions. Other status clicks retain tmux's default action.
+`starmux init tmux` generates the side-status render command and the `MouseDown1Status` binding used for foreign-window navigation. Position, width, and outer style remain ordinary tmux options.
 
-Regenerate the adapter after installing a new Starmux version. If you define `side-status-format` or `MouseDown1Status` yourself, load the generated adapter last or copy its foreign-window handling into your configuration. Add the generated config to a shared tmux setup only after Starmux is installed on every affected host.
-
-## Module order
-
-`format` is a sequence of `$module` references. It accepts no text outside those references. The default is:
-
-```toml
-format = "$sessions$divider"
-```
-
-The built-in modules are `sessions` and `divider`. No command providers run by default. Add a named module by linking it to a provider:
-
-```toml
-format = "$sessions$divider$clock"
-
-[provider.clock]
-command = ["date", "+%H:%M"]
-decoder = "plain"
-dependencies = []
-
-[module.clock]
-provider = "clock"
-```
-
-## Window markers
-
-A window shows `@window_icon`, or `|` if that option is empty. Set `@pi_win_state` to `working` or `notify` to replace the icon with a colored dot:
-
-```sh
-tmux set-option -w -t 'main:1' @window_icon ''
-tmux set-option -w -t 'main:1' @pi_win_state working
-```
-
-Unset `@pi_win_state` to show the icon again. These values do not change the window name or its click target.
-
-## Providers
-
-| Field | Meaning | Default |
-| --- | --- | --- |
-| `command` | Executable and arguments as an array. Required for a new provider. | None |
-| `cwd` | Working directory for the command. | `"{pane.path}"` |
-| `decoder` | `plain` or `json-v1`. | `"plain"` |
-| `timeout_ms` | Kill the provider after 1–60000 ms. | `150` |
-| `cache` | Store valid results for the next status interval. | `true` |
-| `dependencies` | Context fields in the cache key. Use `"pane.path"` and `"session.id"`. | `["pane.path"]` |
-| `failure` | `preserve` keeps the last cached result. `hide` removes it. | `"preserve"` |
-| `disabled` | Skip the provider. | `false` |
-| `shell` | Execute the joined command array with `SHELL -c`. | Not set |
-
-`command` arguments and `cwd` accept `{pane.path}` and `{session.id}`. The process receives `STARMUX_PANE_PATH`, `STARMUX_SESSION_ID`, and `STARMUX_PROVIDER`.
-
-The CLI runs `command` as direct arguments unless you set `shell`. **Do not use untrusted values with `shell`**. The CLI joins command arguments with spaces before it starts the shell.
-
-The generated adapter exits after its first snapshot. It refreshes providers in a separate process for the next tmux status interval. Keep `cache = true` for a provider that appears in this adapter. With `cache = false`, the background refresh cannot supply the next snapshot.
-
-The cache is under `$XDG_CACHE_HOME/starmux/providers/` or `~/.cache/starmux/providers/`. The key includes the provider configuration and its declared context dependencies. Invalid cache entries are ignored. Providers run again when tmux updates the status, even after a cache hit.
-
-## Output formats
-
-- `plain`: UTF-8 text. Each line becomes one sidebar row. The renderer treats `#[]` and other tmux syntax as literal text.
-- `json-v1`: UTF-8 JSON rows with semantic styles and optional fills. A provider cannot set tmux colors or click targets directly.
-
-A `json-v1` result looks like this:
-
-```json
-{
-  "version": 1,
-  "rows": [
-    { "segments": [
-      { "text": "ready", "style": "detail", "fill": "highlight" }
-    ] }
-  ],
-  "metadata": null
-}
-```
-
-`style` accepts `default`, `footer`, or `detail`. `fill` accepts `background`, `highlight`, `border`, or `current`. The renderer limits each provider's stdout to 65,536 bytes. It does not show provider stderr in the sidebar. A provider error leaves session and window navigation intact.
+The adapter passes `#{side-status-width}` as the explicit `--width` argument. Valid widths are 1–300 columns. Other status clicks retain tmux's default action.

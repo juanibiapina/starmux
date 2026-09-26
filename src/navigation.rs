@@ -1,5 +1,3 @@
-use std::process::Command;
-
 fn id(value: &str, prefix: char) -> Result<u32, String> {
     value
         .strip_prefix(prefix)
@@ -47,22 +45,4 @@ pub fn target(token: &str) -> Result<String, String> {
         return Err("invalid click target".into());
     }
     Ok(format!("${session}:@{window}"))
-}
-
-pub fn activate(socket: &str, client: &str, click: &str) -> Result<(), String> {
-    if socket.is_empty() || client.is_empty() {
-        return Err("missing tmux socket or client name".into());
-    }
-    let target = target(click)?;
-    let output = Command::new("tmux")
-        .args(["-S", socket, "switch-client", "-c", client, "-t", &target])
-        .output()
-        .map_err(|e| format!("tmux switch failed: {e}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "tmux switch failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    Ok(())
 }

@@ -2,61 +2,43 @@
 
 **A fast and configurable sidebar for tmux.**
 
-- **Navigate:** Click a session or window to switch to it.
-- **Stay oriented:** Follow the active window, even when the list exceeds the screen height.
-- **See context:** Show working and notification markers.
-- **Make it yours:** Order modules and add command-backed rows with TOML.
+- Navigate: click a session or window to switch to it.
+- Stay oriented: follow the active window when the list exceeds the screen height.
+- Compose: choose and order built-in sidebar modules.
+- Customize: format rows and colors without allowing tmux-format injection.
 
-[Installation](#installation) · [Configuration](docs/configuration.md)
+[Configuration](docs/configuration.md)
 
-## Installation
-
-### Requirements
+## Requirements
 
 - A build of [tmux PR #5468: Add a vertical (side) status line](https://github.com/tmux/tmux/pull/5468).
 
-### 1. Install Starmux
+## Installation
+
+Install Starmux:
 
 ```sh
 brew install juanibiapina/taps/starmux
 ```
 
-### 2. Configure tmux
-
-Create the Starmux configuration for tmux and load it:
+Generate the tmux adapter:
 
 ```sh
 mkdir -p "$HOME/.config/tmux"
 starmux init tmux > "$HOME/.config/tmux/starmux.conf"
-tmux source-file "$HOME/.config/tmux/starmux.conf"
 ```
 
-To load Starmux after a restart, add this to `.tmux.conf`:
+Choose the sidebar geometry and outer style in `.tmux.conf`, then load the adapter:
 
 ```tmux
+set -g side-status left
+set -g side-status-width 30
+set -g side-status-style default
 source-file ~/.config/tmux/starmux.conf
 ```
 
-If the sidebar is empty, make sure that tmux supports `side-status` and that `starmux` is on your `PATH`.
+The generated adapter reads `side-status-width` at render time, so tmux remains the source of truth for the width. Regenerate the adapter after installing a new Starmux version.
 
-### 3. Configure the sidebar
-
-The defaults work without a configuration file. To add a clock below the divider, create `~/.config/starmux.toml`:
-
-```toml
-format = "$sessions$divider$clock"
-
-[provider.clock]
-command = ["date", "+%H:%M"]
-decoder = "plain"
-dependencies = []
-
-[module.clock]
-provider = "clock"
-```
-
-Use `starmux check-config` to validate the configuration. Use `starmux print-config` to show the complete configuration.
-
-See the [configuration guide](docs/configuration.md) for providers, window markers, and output formats.
+The defaults need no Starmux configuration file. Run `starmux check-config` to validate a custom configuration and `starmux print-config` to inspect its effective values.
 
 Starmux is [MIT licensed](LICENSE).

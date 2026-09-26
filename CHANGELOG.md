@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+- Configure built-in sidebar modules with safe row formats, named palettes, and window-option indicator rules.
+
+### Changed
+- Use portable colors and ASCII output by default; personal themes, icons, and status markers now live in user configuration.
+- Read the sidebar width explicitly from tmux and leave sidebar geometry and outer styling in `.tmux.conf`.
+- Remove command-backed providers and the legacy argv adapter in favor of built-in modules.
+
 ## [0.1.0] - 2026-09-25
 
 ### Added

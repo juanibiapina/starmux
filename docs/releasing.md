@@ -16,7 +16,7 @@ cargo build --release --locked
 package_target="$(mktemp -d)"
 CARGO_TARGET_DIR="$package_target" cargo package --allow-dirty --locked
 rm -rf "$package_target"
-python3 bench/compare-query.py target/release/starmux 200
+cargo run --release --example render_bench -- 200 1000
 ```
 
 On a Mac with the [required tmux build](../README.md#requirements), require the attached-client test:
@@ -25,11 +25,11 @@ On a Mac with the [required tmux build](../README.md#requirements), require the 
 STARMUX_REQUIRE_SIDE_STATUS=1 cargo test --locked --test tmux
 ```
 
-The sibling dotfiles parity suite must be updated for the provider-free default before using it as a release gate. The attached-client test in this repository covers first paint, refresh, focus, and literal window names.
+The sibling dotfiles configuration must pass `starmux check-config`. The attached-client tests in this repository cover rendering, focus, clicks, and literal window names.
 
 ## Before a release
 
-- Update the sibling dotfiles parity suite for the current sidebar. Then run attached-client parity and cancellation checks with the required tmux build on Linux. CI uses stock tmux and cannot establish Linux sidebar parity.
+- Validate the sibling dotfiles configuration and run the attached-client tests with the required tmux build on Linux. CI uses stock tmux and cannot establish Linux sidebar parity.
 - Move the `[Unreleased]` notes in `CHANGELOG.md` into a dated version section and leave an empty `[Unreleased]` section above it.
 - Update the version in `Cargo.toml`, run `cargo check` to refresh `Cargo.lock`, then run `cargo check --locked` to confirm it is current.
 - Commit the release changes and repeat the local checks from a clean checkout.
