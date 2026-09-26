@@ -1,4 +1,4 @@
-use starmux::{Session, Sidebar, Snapshot, Window};
+use starmux::{PiSession, PiTarget, Session, Sidebar, Snapshot, Window};
 use std::collections::BTreeMap;
 
 fn snapshot() -> Snapshot {
@@ -184,6 +184,179 @@ character = "="
         .render(&input)
         .unwrap();
     assert_eq!(disabled.matches("#[nl]").count(), 2);
+}
+
+#[test]
+fn pi_live_rows_follow_module_order_and_escape_session_names() {
+    let sidebar = Sidebar::from_toml(
+        r##"
+modules = ["pi-live", "divider"]
+palette = "tokyo"
+[palettes.tokyo]
+warning = "#ffc777"
+muted = "#828bb8"
+[pi-live]
+format = " $state $name"
+working_style = "fg=warning"
+idle_style = "fg=muted"
+"##,
+    )
+    .unwrap();
+    let mut input = snapshot();
+    input.width = 50;
+    let rendered = sidebar
+        .render_with_pi_live(
+            &input,
+            &[
+                PiSession {
+                    state: "working".into(),
+                    project: "/projects/starmux".into(),
+                    name: "#[range=user|bad]#{oops}".into(),
+                    location: None,
+                    target: None,
+                    selected: false,
+                },
+                PiSession {
+                    state: "idle".into(),
+                    project: "/projects/starmux".into(),
+                    name: "waiting".into(),
+                    location: None,
+                    target: None,
+                    selected: false,
+                },
+            ],
+        )
+        .unwrap();
+    assert!(
+        rendered.contains("#[fg=#ffc777]●#[default] ##[range=user|bad]##{oops}"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("#[fg=#828bb8]●#[default] waiting"),
+        "{rendered}"
+    );
+    assert!(rendered.find("waiting").unwrap() < rendered.find("----------").unwrap());
+    assert!(!rendered.contains("#[range=user|bad]#{oops}"));
+    assert!(!rendered.contains("#[range=window|"));
+
+    for config in [
+        "modules = [\"pi-live\"]\n[pi-live]\nformat = \"$cwd\"",
+        "modules = [\"pi-live\"]\n[pi-live]\nworking_style = \"fg=#[bad]\"",
+        "modules = [\"pi-live\"]\n[pi-live]\ndata_dir = \"relative\"",
+    ] {
+        assert!(Sidebar::from_toml(config).is_err(), "accepted {config}");
+    }
+}
+
+#[test]
+fn pi_projects_stay_together_in_priority_order() {
+    let sidebar = Sidebar::from_toml("modules = [\"pi-live\"]").unwrap();
+    let session = |project: &str, name: &str, state: &str, selected: bool| PiSession {
+        name: name.into(),
+        project: format!("/projects/{project}"),
+        state: state.into(),
+        location: None,
+        target: selected.then(|| PiTarget {
+            pane: "%1".into(),
+            window: "@2".into(),
+        }),
+        selected,
+    };
+    let rendered = sidebar
+        .render_with_pi_live(
+            &snapshot(),
+            &[
+                session("idle", "only idle", "idle", false),
+                session("working", "doing work", "working", false),
+                session("alert", "later idle", "idle", false),
+                session("selected", "current idle", "idle", true),
+                session("alert", "needs attention", "notify", false),
+            ],
+        )
+        .unwrap();
+    let positions: Vec<_> = [
+        "#[bold] alert",
+        "needs attention",
+        "later idle",
+        "#[bold] working",
+        "doing work",
+        "#[bold] selected",
+        "current idle",
+        "#[bold] idle",
+        "only idle",
+    ]
+    .iter()
+    .map(|text| rendered.find(text).expect(text))
+    .collect();
+    assert!(
+        positions.windows(2).all(|pair| pair[0] < pair[1]),
+        "{rendered}"
+    );
+    assert!(rendered.contains("#[fg=magenta]●"), "{rendered}");
+    assert!(rendered.contains("#[range=user|sp"), "{rendered}");
+
+    let duplicates = sidebar
+        .render_with_pi_live(
+            &snapshot(),
+            &[
+                session("owner-a/app", "alpha", "idle", false),
+                session("owner-b/app", "beta", "idle", false),
+            ],
+        )
+        .unwrap();
+    assert!(duplicates.contains("owner-a/app"), "{duplicates}");
+    assert!(duplicates.contains("owner-b/app"), "{duplicates}");
+}
+
+#[test]
+fn selected_pi_background_does_not_fill_following_read_only_row() {
+    let sidebar = Sidebar::from_toml(
+        r##"
+modules = ["pi-live"]
+palette = "tokyo"
+[palettes.tokyo]
+accent = "#c099ff"
+border = "#3b4261"
+[pi-live]
+selected_style = "fg=accent,bg=border,bold"
+selected_fill = "border"
+"##,
+    )
+    .unwrap();
+    let rows = [
+        PiSession {
+            name: "selected".into(),
+            project: "/projects/starmux".into(),
+            state: "working".into(),
+            location: None,
+            target: Some(PiTarget {
+                pane: "%1".into(),
+                window: "@2".into(),
+            }),
+            selected: true,
+        },
+        PiSession {
+            name: "read only".into(),
+            project: "/projects/starmux".into(),
+            state: "idle".into(),
+            location: None,
+            target: None,
+            selected: false,
+        },
+    ];
+    let rendered = sidebar.render_with_pi_live(&snapshot(), &rows).unwrap();
+    let lines: Vec<_> = rendered.split("#[nl]").collect();
+    let selected = lines.iter().find(|line| line.contains("selected")).unwrap();
+    let read_only = lines
+        .iter()
+        .find(|line| line.contains("read only"))
+        .unwrap();
+    assert!(selected.contains("#[fill=#3b4261]"), "{rendered}");
+    assert!(read_only.contains("read only#[bg=default]"), "{rendered}");
+    assert!(
+        read_only.contains("          #[fill=default]"),
+        "{rendered}"
+    );
 }
 
 #[test]

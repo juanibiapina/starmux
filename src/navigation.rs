@@ -28,6 +28,21 @@ pub fn token(session: &str, window: &str) -> Result<String, String> {
     Ok(format!("sw{}", String::from_utf8(digits).unwrap()))
 }
 
+pub fn pane_token(pane: &str, window: &str) -> Result<String, String> {
+    let pane = id(pane, '%')?;
+    let window = id(window, '@')?;
+    let encoded = token(&format!("${pane}"), &format!("@{window}"))?;
+    Ok(format!("sp{}", &encoded[2..]))
+}
+
+pub fn pane_target(value: &str) -> Result<(String, String), String> {
+    let digits = value.strip_prefix("sp").ok_or("invalid click target")?;
+    let encoded = format!("sw{digits}");
+    let packed = target(&encoded)?;
+    let (pane, window) = packed.split_once(':').ok_or("invalid click target")?;
+    Ok((format!("%{}", &pane[1..]), window.to_owned()))
+}
+
 pub fn target(token: &str) -> Result<String, String> {
     let digits = token.strip_prefix("sw").ok_or("invalid click target")?;
     if digits.is_empty()

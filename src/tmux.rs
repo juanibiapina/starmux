@@ -37,7 +37,18 @@ impl Focus {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Pane {
+    pub id: String,
+    pub session: String,
+    pub session_name: String,
+    pub window: String,
+    pub state: String,
+}
+
 pub trait Tmux {
+    fn panes(&self, socket: &str) -> Result<Vec<Pane>, String>;
+
     fn snapshot(
         &self,
         socket: &str,
@@ -53,6 +64,28 @@ pub trait Tmux {
 pub struct ProcessTmux;
 
 impl Tmux for ProcessTmux {
+    fn panes(&self, socket: &str) -> Result<Vec<Pane>, String> {
+        if socket.is_empty() {
+            return Err("missing tmux socket".into());
+        }
+        let output = Command::new("tmux")
+            .args(["-S", socket, "list-panes", "-a", "-F"])
+            .arg("--pane-id=#{pane_id} --session-id=#{session_id} --session-name=#{q/s:session_name} --window-id=#{window_id} --state=#{q/s:@pi_state}")
+            .output()
+            .map_err(|error| format!("tmux panes query failed: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "tmux panes query failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        if output.stdout.len() > 128 * 1024 {
+            return Err("tmux panes query exceeds 128 KiB".into());
+        }
+        let text = String::from_utf8(output.stdout).map_err(|_| "tmux panes query is not UTF-8")?;
+        parse_panes(&words(&text)?)
+    }
+
     fn snapshot(
         &self,
         socket: &str,
@@ -86,19 +119,45 @@ impl Tmux for ProcessTmux {
         if socket.is_empty() || client.is_empty() {
             return Err("missing tmux socket or client name".into());
         }
-        let target = crate::navigation::target(token)?;
-        let output = Command::new("tmux")
-            .args(["-S", socket, "switch-client", "-c", client, "-t", &target])
-            .output()
-            .map_err(|error| format!("tmux switch failed: {error}"))?;
-        if output.status.success() {
-            Ok(())
-        } else {
-            Err(format!(
-                "tmux switch failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ))
+        if token.starts_with("sp") {
+            let (pane_id, window_id) = crate::navigation::pane_target(token)?;
+            let pane = self
+                .panes(socket)?
+                .into_iter()
+                .find(|pane| pane.id == pane_id && pane.window == window_id)
+                .ok_or("Pi pane click target is no longer present")?;
+            let target = format!("{}:{}", pane.session, pane.window);
+            tmux_switch(socket, client, &target)?;
+            let output = Command::new("tmux")
+                .args(["-S", socket, "select-pane", "-t", &pane.id])
+                .output()
+                .map_err(|error| format!("tmux pane selection failed: {error}"))?;
+            return if output.status.success() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "tmux pane selection failed: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ))
+            };
         }
+        let target = crate::navigation::target(token)?;
+        tmux_switch(socket, client, &target)
+    }
+}
+
+fn tmux_switch(socket: &str, client: &str, target: &str) -> Result<(), String> {
+    let output = Command::new("tmux")
+        .args(["-S", socket, "switch-client", "-c", client, "-t", target])
+        .output()
+        .map_err(|error| format!("tmux switch failed: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "tmux switch failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
     }
 }
 
@@ -106,6 +165,7 @@ impl Tmux for ProcessTmux {
 #[derive(Clone, Debug)]
 struct MemoryTmux {
     snapshot: Snapshot,
+    panes: Vec<Pane>,
     activations: Arc<Mutex<Vec<(String, String, String)>>>,
 }
 
@@ -114,8 +174,14 @@ impl MemoryTmux {
     fn new(snapshot: Snapshot) -> Self {
         Self {
             snapshot,
+            panes: Vec::new(),
             activations: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    fn with_panes(mut self, panes: Vec<Pane>) -> Self {
+        self.panes = panes;
+        self
     }
 
     fn activations(&self) -> Vec<(String, String, String)> {
@@ -125,6 +191,10 @@ impl MemoryTmux {
 
 #[cfg(test)]
 impl Tmux for MemoryTmux {
+    fn panes(&self, _socket: &str) -> Result<Vec<Pane>, String> {
+        Ok(self.panes.clone())
+    }
+
     fn snapshot(
         &self,
         _socket: &str,
@@ -147,7 +217,11 @@ impl Tmux for MemoryTmux {
     }
 
     fn activate(&self, socket: &str, client: &str, token: &str) -> Result<(), String> {
-        crate::navigation::target(token)?;
+        if token.starts_with("sp") {
+            crate::navigation::pane_target(token)?;
+        } else {
+            crate::navigation::target(token)?;
+        }
         self.activations.lock().unwrap().push((
             socket.to_owned(),
             client.to_owned(),
@@ -175,7 +249,48 @@ impl<T: Tmux> Application<T> {
         focus: Option<&Focus>,
     ) -> Result<String, String> {
         let snapshot = self.snapshot(socket, client, width, focus)?;
-        self.sidebar.render(&snapshot)
+        let pi_sessions = self.pi_sessions(socket, &snapshot)?;
+        self.sidebar.render_with_pi_live(&snapshot, &pi_sessions)
+    }
+
+    fn pi_sessions(
+        &self,
+        socket: &str,
+        snapshot: &Snapshot,
+    ) -> Result<Vec<crate::PiSession>, String> {
+        let Some(data_dir) = self.sidebar.pi_live_data_dir() else {
+            return Ok(Vec::new());
+        };
+        let path = if data_dir.is_empty() {
+            crate::pi_live::default_data_dir()?
+        } else {
+            std::path::PathBuf::from(data_dir)
+        };
+        let mut sessions = crate::pi_live::list(&path)?;
+        if sessions.iter().any(|session| session.location.is_some()) {
+            let panes = self.tmux.panes(socket)?;
+            for session in &mut sessions {
+                let Some(location) = &session.location else {
+                    continue;
+                };
+                let Some(pane) = panes.iter().find(|pane| {
+                    pane.id == location.pane && pane.session_name == location.session_name
+                }) else {
+                    continue;
+                };
+                session.target = Some(crate::PiTarget {
+                    pane: pane.id.clone(),
+                    window: pane.window.clone(),
+                });
+                session.selected = snapshot.current_pane == pane.id;
+                session.state = match pane.state.as_str() {
+                    "notify" => "notify".into(),
+                    "working" => "working".into(),
+                    _ => session.state.clone(),
+                };
+            }
+        }
+        Ok(sessions)
     }
 
     pub fn explain(
@@ -202,6 +317,14 @@ impl<T: Tmux> Application<T> {
                 ));
             }
         }
+        let mut pi_sessions = self.pi_sessions(socket, &snapshot)?;
+        crate::pi_live::sort_sessions(&mut pi_sessions);
+        for session in pi_sessions {
+            result.push_str(&format!(
+                "pi-live project={:?} {:?} {:?} target={:?} selected={}\n",
+                session.project, session.state, session.name, session.target, session.selected
+            ));
+        }
         Ok(result)
     }
 
@@ -214,8 +337,9 @@ impl<T: Tmux> Application<T> {
     ) -> Result<String, String> {
         let started = Instant::now();
         let snapshot = self.snapshot(socket, client, width, focus)?;
+        let pi_sessions = self.pi_sessions(socket, &snapshot)?;
         let queried = started.elapsed().as_micros();
-        self.sidebar.render(&snapshot)?;
+        self.sidebar.render_with_pi_live(&snapshot, &pi_sessions)?;
         Ok(format!(
             "{{\"query_us\":{queried},\"render_us\":{}}}",
             started.elapsed().as_micros().saturating_sub(queried)
@@ -332,6 +456,29 @@ fn valid_id(value: &str, prefix: char) -> bool {
     })
 }
 
+fn parse_panes(values: &[String]) -> Result<Vec<Pane>, String> {
+    if !values.len().is_multiple_of(5) || values.len() / 5 > 10000 {
+        return Err("invalid tmux panes query".into());
+    }
+    let mut fields = Fields { values, cursor: 0 };
+    let mut panes = Vec::new();
+    while fields.cursor < values.len() {
+        let id = fields.id("pane-id", '%')?;
+        let session = fields.id("session-id", '$')?;
+        let session_name = fields.take("session-name")?;
+        let window = fields.id("window-id", '@')?;
+        let state = fields.take("state")?;
+        panes.push(Pane {
+            id,
+            session,
+            session_name,
+            window,
+            state,
+        });
+    }
+    Ok(panes)
+}
+
 fn parse_snapshot(
     values: &[String],
     width: usize,
@@ -440,7 +587,7 @@ fn words(source: &str) -> Result<Vec<String>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{words, Application, Focus, MemoryTmux, Sidebar, Snapshot};
+    use super::{words, Application, Focus, MemoryTmux, Pane, Sidebar, Snapshot};
     use crate::{Session, Window};
     use std::collections::BTreeMap;
 
@@ -504,5 +651,121 @@ mod tests {
             tmux.activations(),
             vec![("socket".into(), "client".into(), "sw0".into())]
         );
+    }
+
+    #[test]
+    fn enabled_pi_live_renders_only_reachable_published_sessions() {
+        use std::{
+            fs,
+            io::{Read, Write},
+            os::unix::net::UnixListener,
+            thread,
+        };
+        let data_dir = std::env::temp_dir().join(format!(
+            "starmux-pi-live-{}-{:?}",
+            std::process::id(),
+            thread::current().id()
+        ));
+        fs::create_dir_all(data_dir.join("status")).unwrap();
+        fs::create_dir_all(data_dir.join("sockets")).unwrap();
+        let repo = data_dir.join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        fs::create_dir_all(repo.join("src")).unwrap();
+        let socket_path = data_dir.join("sockets/live.sock");
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        let responder = thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut socket, _) = listener.accept().unwrap();
+                let mut request = [0; 128];
+                let len = socket.read(&mut request).unwrap();
+                assert!(std::str::from_utf8(&request[..len])
+                    .unwrap()
+                    .contains("\"ping\""));
+                socket
+                    .write_all(b"{\"ok\":true,\"result\":{\"type\":\"pong\"}}\n")
+                    .unwrap();
+            }
+        });
+        let record = |id: &str, socket: &std::path::Path, name: &str, cwd: &std::path::Path| {
+            serde_json::json!({
+                "version": 1, "sessionId": id, "name": name, "pid": 1,
+                "cwd": cwd, "socketPath": socket, "startedAt": "2026-01-01T00:00:00Z",
+                "updatedAt": "2026-01-01T00:00:00Z", "state": "working"
+            })
+            .to_string()
+        };
+        let mut live: serde_json::Value = serde_json::from_str(&record(
+            "live",
+            &socket_path,
+            "#[fg=red]#{oops}",
+            &repo.join("src"),
+        ))
+        .unwrap();
+        live["state"] = "idle".into();
+        live["tmux"] = serde_json::json!({
+            "paneId": "%0", "sessionName": "main", "windowIndex": 5, "windowName": "old"
+        });
+        fs::write(data_dir.join("status/live.json"), live.to_string()).unwrap();
+        fs::write(
+            data_dir.join("status/unnamed.json"),
+            record("unnamed", &socket_path, "", &repo),
+        )
+        .unwrap();
+        fs::write(
+            data_dir.join("status/stale.json"),
+            record(
+                "stale",
+                &data_dir.join("sockets/stale.sock"),
+                "stale",
+                &repo,
+            ),
+        )
+        .unwrap();
+        fs::write(data_dir.join("status/broken.json"), "{bad json").unwrap();
+        let config = format!(
+            "modules = [\"sessions\", \"pi-live\"]\n[pi-live]\ndata_dir = {:?}\nformat = \"$name $state\"\n",
+            data_dir.to_str().unwrap()
+        );
+        let tmux = MemoryTmux::new(Snapshot {
+            width: 40,
+            client_width: 100,
+            client_height: 25,
+            current_session: "$0".into(),
+            current_pane: "%0".into(),
+            pane_path: "/tmp".into(),
+            sessions: vec![Session {
+                id: "$0".into(),
+                name: "main".into(),
+                windows: vec![],
+            }],
+        })
+        .with_panes(vec![Pane {
+            id: "%0".into(),
+            session: "$0".into(),
+            session_name: "main".into(),
+            window: "@9".into(),
+            state: "notify".into(),
+        }]);
+        let app = Application::new(Sidebar::from_toml(&config).unwrap(), tmux.clone());
+        let rendered = app.render_query("socket", "client", 40, None).unwrap();
+        responder.join().unwrap();
+        assert!(rendered.contains("#[bold] repo#[bg=default]"), "{rendered}");
+        assert!(rendered.contains("#[range=user|sp9 ]"), "{rendered}");
+        assert!(
+            rendered.contains(
+                "#[default,reverse,bold]##[fg=red]##{oops} #[default,fg=magenta,bg=default]●"
+            ),
+            "{rendered}"
+        );
+        assert!(rendered.contains("unnamed #[fg=yellow]●"), "{rendered}");
+        assert!(rendered.find("##[fg=red]").unwrap() < rendered.find("unnamed").unwrap());
+        assert!(!rendered.contains("stale"), "{rendered}");
+        assert_eq!(rendered.matches("#[range=").count(), 2);
+        app.activate("socket", "client", "sp9").unwrap();
+        assert_eq!(
+            tmux.activations(),
+            vec![("socket".into(), "client".into(), "sp9".into())]
+        );
+        fs::remove_dir_all(data_dir).unwrap();
     }
 }

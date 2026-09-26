@@ -12,7 +12,7 @@ Run `starmux print-config` to print the complete configuration. Run `starmux che
 modules = ["sessions", "divider"]
 ```
 
-The built-ins are `sessions` and `divider`. Unknown and duplicate names are errors.
+The built-ins are `sessions`, `divider`, and `pi-live`. Unknown and duplicate names are errors. `pi-live` is not enabled by default.
 
 ## Row formats
 
@@ -92,7 +92,32 @@ character = "-"
 style = "dim"
 ```
 
-Set `disabled = true` in either `[sessions]` or `[divider]` to omit that module without changing the shared module order.
+Set `disabled = true` in `[sessions]`, `[divider]`, or `[pi-live]` to omit that module without changing the shared module order.
+
+## Live Pi sessions
+
+Add `pi-live` to `modules` to show a state icon and the name of each reachable Pi session published by pi-live:
+
+```toml
+modules = ["sessions", "divider", "pi-live"]
+
+[pi-live]
+format = "   $state $name"
+project_style = "bold"
+idle_style = "fg=brightblack"
+working_style = "fg=yellow"
+notify_style = "fg=magenta"
+selected_style = "reverse,bold"
+selected_fill = "default"
+```
+
+Pi sessions are grouped by project. Starmux finds the nearest Git root above each published cwd; when there is no Git root, the cwd is the project. Each project gets one heading styled by `project_style`. Groups sort by their highest priority session: attention, working, selected idle, then idle. Sessions within a group use the same priority order, then name. A project heading adds one sidebar row.
+
+The row format supports `$state` (a `●` icon) and `$name`, optional groups, and validated styled groups. The three state styles color the icon; the name uses normal text styling unless its pane is selected. A Pi pane marked `@pi_state=notify` shows the magenta icon. The selected Pi pane uses `selected_style` and `selected_fill`. When a session has no name, `$name` shows the first eight characters of its session ID. Styles can use colors from the selected palette. Names and project headings are escaped as text and clipped to the sidebar width.
+
+A row with a pane on the current tmux server is clickable. Starmux resolves the pane's current window on click and selects the pane. A record without a matching pane remains visible without a click target or selected styling. With a custom tmux mouse binding, route `sp` user ranges to `starmux activate` as well as `sw` ranges; `starmux init tmux` emits the required binding.
+
+Starmux reads version 1 JSON records from `~/.local/share/pi/status` and checks each session's published Unix socket with pi-live's version 1 ping request. An absent directory, invalid records, unsupported versions, and unreachable sessions produce no rows for those records. A bad record does not hide healthy sessions. Starmux scans at most 256 directory entries and checks at most 32 records per render, with a 200 ms total query budget and a 40 ms ping timeout per session. Set `data_dir` to an absolute path under `[pi-live]` when pi-live publishes elsewhere; Starmux looks for `status/` and `sockets/` in that directory. Reading the files does not remove stale records.
 
 ## Tmux integration
 

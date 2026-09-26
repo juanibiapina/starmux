@@ -426,3 +426,240 @@ fn clicking_foreign_window_switches_the_attached_client_to_that_window() {
     let _ = client.wait();
     fs::remove_dir_all(root).unwrap();
 }
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn pi_attention_row_click_selects_its_pane() {
+    use std::{
+        fs,
+        io::{Read, Write},
+        os::unix::net::UnixListener,
+        process::{Command, Stdio},
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
+        thread,
+        time::Duration,
+    };
+    let root = std::env::temp_dir().join(format!("starmux-pi-click-{}", std::process::id()));
+    fs::create_dir_all(root.join("status")).unwrap();
+    fs::create_dir_all(root.join("sockets")).unwrap();
+    let socket = format!("starmux-pi-click-{}", std::process::id());
+    let binary = env!("CARGO_BIN_EXE_starmux");
+    let tmux = |args: &[&str]| -> String {
+        let output = Command::new("tmux")
+            .args(["-L", &socket])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "tmux {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    tmux(&[
+        "-f",
+        "/dev/null",
+        "new-session",
+        "-d",
+        "-s",
+        "main",
+        "-n",
+        "alpha",
+        "sleep 60",
+    ]);
+    let supported = Command::new("tmux")
+        .args(["-L", &socket, "show-options", "-gv", "side-status"])
+        .output()
+        .unwrap()
+        .status
+        .success();
+    if !supported {
+        tmux(&["kill-server"]);
+        fs::remove_dir_all(root).unwrap();
+        assert_ne!(
+            std::env::var_os("STARMUX_REQUIRE_SIDE_STATUS"),
+            Some("1".into()),
+            "tmux lacks side-status"
+        );
+        return;
+    }
+    let working = tmux(&["display-message", "-p", "-t", "main:0", "#{pane_id}"]);
+    tmux(&["new-window", "-d", "-t", "main:", "-n", "beta", "sleep 60"]);
+    let attention = tmux(&[
+        "split-window",
+        "-d",
+        "-t",
+        "main:1",
+        "-P",
+        "-F",
+        "#{pane_id}",
+        "sleep 60",
+    ]);
+    tmux(&["set-option", "-p", "-t", &attention, "@pi_state", "notify"]);
+    tmux(&["set-option", "-p", "-t", &working, "@pi_state", "working"]);
+    let pi_socket = root.join("sockets/pi.sock");
+    let listener = UnixListener::bind(&pi_socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let running = Arc::new(AtomicBool::new(true));
+    let listening = running.clone();
+    let responder = thread::spawn(move || {
+        while listening.load(Ordering::Relaxed) {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let mut request = [0; 128];
+                    if stream.read(&mut request).is_ok_and(|count| count > 0) {
+                        let _ = stream.write_all(b"{\"ok\":true,\"result\":{\"type\":\"pong\"}}\n");
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(10))
+                }
+                Err(error) => panic!("Pi test socket: {error}"),
+            }
+        }
+    });
+    for (id, name, pane, state) in [
+        ("attention", "attention", &attention, "idle"),
+        ("working", "working item", &working, "working"),
+    ] {
+        let status = serde_json::json!({
+            "version": 1, "sessionId": id, "name": name, "pid": 1,
+            "cwd": "/tmp", "socketPath": pi_socket, "startedAt": "2026-01-01T00:00:00Z",
+            "updatedAt": "2026-01-01T00:00:00Z", "state": state,
+            "tmux": {"paneId": pane, "sessionName": "main", "windowIndex": 0, "windowName": "old"}
+        });
+        fs::write(
+            root.join("status").join(format!("{id}.json")),
+            status.to_string(),
+        )
+        .unwrap();
+    }
+    let config = root.join("config.toml");
+    fs::write(
+        &config,
+        format!(
+            "modules = [\"sessions\", \"divider\", \"pi-live\"]\n[pi-live]\ndata_dir = {:?}\n",
+            root.to_str().unwrap()
+        ),
+    )
+    .unwrap();
+    let adapter = String::from_utf8(
+        Command::new(binary)
+            .args(["init", "tmux"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .replace(
+        "starmux render-query",
+        &format!(
+            "env STARMUX_CONFIG={} {binary} render-query",
+            config.display()
+        ),
+    )
+    .replace("starmux activate", &format!("{binary} activate"));
+    let adapter_path = root.join("adapter.conf");
+    fs::write(&adapter_path, adapter).unwrap();
+    tmux(&["set", "-g", "mouse", "on"]);
+    tmux(&["set", "-g", "status-interval", "1"]);
+    tmux(&["set", "-g", "side-status", "left"]);
+    tmux(&["set", "-g", "side-status-width", "30"]);
+    tmux(&["source-file", adapter_path.to_str().unwrap()]);
+    let capture = root.join("client.out");
+    let mut client = attached_client(&socket, "main")
+        .env("TERM", "xterm-256color")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::from(fs::File::create(&capture).unwrap()))
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut input = client.stdin.take().unwrap();
+    let mut client_name = String::new();
+    for _ in 0..40 {
+        client_name = tmux(&["list-clients", "-F", "#{client_name}"]);
+        if !client_name.is_empty() && fs::read_to_string(&capture).unwrap().contains("attention") {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert!(!client_name.is_empty() && fs::read_to_string(&capture).unwrap().contains("attention"));
+    let focus = || {
+        tmux(&[
+            "display-message",
+            "-p",
+            "-c",
+            &client_name,
+            "#{window_id}|#{pane_id}",
+        ])
+    };
+    let socket_path = tmux(&[
+        "display-message",
+        "-p",
+        "-c",
+        &client_name,
+        "#{socket_path}",
+    ]);
+    let rendered = Command::new(binary)
+        .args([
+            "render-query",
+            "--width=30",
+            &format!("--socket={socket_path}"),
+            &format!("--client={client_name}"),
+        ])
+        .env("STARMUX_CONFIG", &config)
+        .output()
+        .unwrap();
+    assert!(
+        rendered.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rendered.stderr)
+    );
+    let rendered = String::from_utf8(rendered.stdout).unwrap();
+    assert!(rendered.find("attention").unwrap() < rendered.find("working item").unwrap());
+    let row = rendered
+        .split("#[nl]")
+        .find(|row| row.contains("attention"))
+        .unwrap();
+    assert!(row.contains("#[fg=magenta]●"), "{row}");
+    assert!(row.contains("#[range=user|sp"), "{row}");
+    write!(input, "\x1b[<0;29;6M\x1b[<0;29;6m").unwrap();
+    input.flush().unwrap();
+    let target_window = tmux(&["display-message", "-p", "-t", &attention, "#{window_id}"]);
+    for _ in 0..30 {
+        if focus() == format!("{target_window}|{attention}") {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(focus(), format!("{target_window}|{attention}"));
+    let token = row
+        .split("#[range=user|")
+        .nth(1)
+        .unwrap()
+        .split(' ')
+        .next()
+        .unwrap();
+    tmux(&["kill-pane", "-t", &attention]);
+    let focus_after_close = focus();
+    let stale = Command::new(binary)
+        .args([
+            "activate",
+            &format!("--socket={socket_path}"),
+            &format!("--client={client_name}"),
+            &format!("--target={token}"),
+        ])
+        .output()
+        .unwrap();
+    assert!(!stale.status.success());
+    assert_eq!(focus(), focus_after_close);
+    tmux(&["kill-server"]);
+    let _ = client.wait();
+    running.store(false, Ordering::Relaxed);
+    responder.join().unwrap();
+    fs::remove_dir_all(root).unwrap();
+}

@@ -44,6 +44,8 @@ struct Config {
     palettes: BTreeMap<String, BTreeMap<String, String>>,
     sessions: SessionsConfig,
     divider: DividerConfig,
+    #[serde(rename = "pi-live")]
+    pi_live: PiLiveConfig,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -88,6 +90,21 @@ struct IndicatorRule {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
+struct PiLiveConfig {
+    disabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data_dir: Option<String>,
+    format: String,
+    project_style: String,
+    idle_style: String,
+    working_style: String,
+    notify_style: String,
+    selected_style: String,
+    selected_fill: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
 struct DividerConfig {
     disabled: bool,
     character: String,
@@ -102,6 +119,7 @@ impl Default for Config {
             palettes: BTreeMap::new(),
             sessions: SessionsConfig::default(),
             divider: DividerConfig::default(),
+            pi_live: PiLiveConfig::default(),
         }
     }
 }
@@ -149,6 +167,22 @@ impl Default for IndicatorRule {
     }
 }
 
+impl Default for PiLiveConfig {
+    fn default() -> Self {
+        Self {
+            disabled: false,
+            data_dir: None,
+            format: "   $state $name".into(),
+            project_style: "bold".into(),
+            idle_style: "fg=brightblack".into(),
+            working_style: "fg=yellow".into(),
+            notify_style: "fg=magenta".into(),
+            selected_style: "reverse,bold".into(),
+            selected_fill: "default".into(),
+        }
+    }
+}
+
 impl Default for DividerConfig {
     fn default() -> Self {
         Self {
@@ -179,6 +213,7 @@ pub struct Sidebar {
     config: Config,
     palette: BTreeMap<String, String>,
     sessions: CompiledSessions,
+    pi_live_format: Vec<Node>,
 }
 
 impl Sidebar {
@@ -196,7 +231,7 @@ impl Sidebar {
     }
 
     fn compile(config: Config) -> Result<Self, String> {
-        let known = ["sessions", "divider"];
+        let known = ["sessions", "divider", "pi-live"];
         let mut seen = BTreeSet::new();
         for name in &config.modules {
             if !known.contains(&name.as_str()) {
@@ -227,6 +262,16 @@ impl Sidebar {
             &["id", "index", "name", "indicator"],
             &palette,
         )?;
+        let pi_live_format = Parser::parse(&config.pi_live.format)?;
+        validate_format(&pi_live_format, &["name", "state"], &palette)?;
+        if config
+            .pi_live
+            .data_dir
+            .as_deref()
+            .is_some_and(|path| !std::path::Path::new(path).is_absolute())
+        {
+            return Err("pi-live data_dir must be an absolute path".into());
+        }
         for style in [
             &config.sessions.current_session_style,
             &config.sessions.other_session_style,
@@ -234,6 +279,11 @@ impl Sidebar {
             &config.sessions.selected_window_style,
             &config.sessions.other_window_style,
             &config.divider.style,
+            &config.pi_live.project_style,
+            &config.pi_live.idle_style,
+            &config.pi_live.working_style,
+            &config.pi_live.notify_style,
+            &config.pi_live.selected_style,
         ] {
             resolve_style(style, "default", &palette)?;
         }
@@ -243,6 +293,7 @@ impl Sidebar {
             &config.sessions.active_window_fill,
             &config.sessions.selected_window_fill,
             &config.sessions.other_window_fill,
+            &config.pi_live.selected_fill,
         ] {
             resolve_color(fill, &palette)?;
         }
@@ -272,6 +323,7 @@ impl Sidebar {
             config,
             palette,
             sessions,
+            pi_live_format,
         })
     }
 
@@ -291,7 +343,23 @@ impl Sidebar {
             .collect()
     }
 
+    pub(crate) fn pi_live_data_dir(&self) -> Option<&str> {
+        if self.config.pi_live.disabled || !self.config.modules.iter().any(|name| name == "pi-live")
+        {
+            return None;
+        }
+        Some(self.config.pi_live.data_dir.as_deref().unwrap_or(""))
+    }
+
     pub fn render(&self, snapshot: &Snapshot) -> Result<String, String> {
+        self.render_with_pi_live(snapshot, &[])
+    }
+
+    pub fn render_with_pi_live(
+        &self,
+        snapshot: &Snapshot,
+        pi_sessions: &[crate::PiSession],
+    ) -> Result<String, String> {
         validate_snapshot(snapshot)?;
         let mut rows = Vec::new();
         for name in &self.config.modules {
@@ -302,7 +370,10 @@ impl Sidebar {
                 "divider" if !self.config.divider.disabled => {
                     rows.push(self.render_divider(snapshot.width)?)
                 }
-                "sessions" | "divider" => {}
+                "pi-live" if !self.config.pi_live.disabled => {
+                    rows.extend(self.render_pi_live(pi_sessions)?)
+                }
+                "sessions" | "divider" | "pi-live" => {}
                 _ => return Err(format!("unknown module {name}")),
             }
         }
@@ -426,6 +497,106 @@ impl Sidebar {
                 style: resolve_style(&indicator.style, window_style, &self.palette)?,
             }])
         }
+    }
+
+    fn render_pi_live(&self, sessions: &[crate::PiSession]) -> Result<Vec<Row>, String> {
+        let mut ordered = sessions.to_vec();
+        crate::pi_live::sort_sessions(&mut ordered);
+        let mut labels: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+        for session in &ordered {
+            labels
+                .entry(crate::pi_live::project_label(&session.project))
+                .or_default()
+                .insert(&session.project);
+        }
+        let mut rows = Vec::new();
+        let mut previous = None;
+        for session in &ordered {
+            if previous != Some(session.project.as_str()) {
+                let mut title = crate::pi_live::project_label(&session.project).to_owned();
+                if labels[title.as_str()].len() > 1 {
+                    if let Some(parent) = std::path::Path::new(&session.project)
+                        .parent()
+                        .and_then(std::path::Path::file_name)
+                        .and_then(|name| name.to_str())
+                    {
+                        title = format!("{parent}/{title}");
+                    }
+                }
+                rows.push(Row {
+                    spans: vec![Span {
+                        text: format!(" {title}"),
+                        style: resolve_style(
+                            &self.config.pi_live.project_style,
+                            "default",
+                            &self.palette,
+                        )?,
+                    }],
+                    fill: Some("default".into()),
+                    range: None,
+                    focus: false,
+                    selected: false,
+                });
+                previous = Some(session.project.as_str());
+            }
+            rows.push(self.render_pi_session(session)?);
+        }
+        Ok(rows)
+    }
+
+    fn render_pi_session(&self, session: &crate::PiSession) -> Result<Row, String> {
+        let icon_style = match session.state.as_str() {
+            "notify" => &self.config.pi_live.notify_style,
+            "working" => &self.config.pi_live.working_style,
+            _ => &self.config.pi_live.idle_style,
+        };
+        let icon_style = resolve_style(icon_style, "default", &self.palette)?;
+        let selected_fill = resolve_color(&self.config.pi_live.selected_fill, &self.palette)?;
+        let icon_style = if session.selected {
+            format!("default,{icon_style},bg={selected_fill}")
+        } else {
+            icon_style
+        };
+        let row_style = if session.selected {
+            format!(
+                "default,{}",
+                resolve_style(
+                    &self.config.pi_live.selected_style,
+                    "default",
+                    &self.palette
+                )?
+            )
+        } else {
+            "default".into()
+        };
+        let values = BTreeMap::from([
+            ("name", Value::Text(session.name.clone())),
+            (
+                "state",
+                Value::Spans(vec![Span {
+                    text: "●".into(),
+                    style: icon_style,
+                }]),
+            ),
+        ]);
+        let range = session
+            .target
+            .as_ref()
+            .map(|target| {
+                crate::navigation::pane_token(&target.pane, &target.window).map(Range::PiPane)
+            })
+            .transpose()?;
+        Ok(Row {
+            spans: render_format(&self.pi_live_format, &values, &row_style, &self.palette)?,
+            fill: Some(if session.selected {
+                selected_fill
+            } else {
+                "default".into()
+            }),
+            range,
+            focus: session.selected,
+            selected: session.selected,
+        })
     }
 
     fn render_divider(&self, width: usize) -> Result<Row, String> {
@@ -870,6 +1041,7 @@ enum Range {
     Session(String),
     Window(usize),
     ForeignWindow(String),
+    PiPane(String),
 }
 
 fn escaped(text: &str) -> String {
@@ -911,7 +1083,9 @@ fn render_rows(rows: &[Row], width: usize) -> String {
                     "#[range=window|{index} {}]",
                     if row.focus { "list=focus " } else { "" }
                 )),
-                Range::ForeignWindow(token) => result.push_str(&format!("#[range=user|{token} ]")),
+                Range::ForeignWindow(token) | Range::PiPane(token) => {
+                    result.push_str(&format!("#[range=user|{token} ]"))
+                }
             }
         }
         for span in &row.spans {
@@ -926,18 +1100,16 @@ fn render_rows(rows: &[Row], width: usize) -> String {
             }
             result.push_str(&escaped(&text));
         }
-        if row.range.is_some() {
-            if let Some(fill) = &row.fill {
-                result.push_str(&format!("#[bg={fill}]"));
-            }
+        if let Some(fill) = &row.fill {
+            result.push_str(&format!("#[bg={fill}]"));
             result.push_str(&" ".repeat(remaining.saturating_sub(1)));
         }
         match row.range {
             Some(Range::Session(_)) => result.push_str("#[norange default]"),
-            Some(Range::Window(_) | Range::ForeignWindow(_)) if row.selected => {
+            Some(Range::Window(_) | Range::ForeignWindow(_) | Range::PiPane(_)) if row.selected => {
                 result.push_str("#[norange]#[list=on default]")
             }
-            Some(Range::Window(_) | Range::ForeignWindow(_)) => {
+            Some(Range::Window(_) | Range::ForeignWindow(_) | Range::PiPane(_)) => {
                 result.push_str("#[norange default]")
             }
             None => {}
