@@ -165,7 +165,13 @@ closed_style = "fg=red"
 unknown_style = "fg=brightblack"
 ```
 
-Only nonempty Plans, PRs, and Skills sections appear. `◇` marks a plan and `✦` marks a loaded skill. A PR row shows `owner/repo#number` with Nerd Font Codicon icons: green `` for open, muted `` for draft, purple `` for merged, and red `` for closed. Unknown state uses a muted ``. Draft and closed rows include a word when space permits. Click a PR row to open its GitHub page. Click a plan to open its Markdown file or a skill to open its `SKILL.md` with the system's file handler. Clicks resolve the selected Pi session again and reject stale or missing targets. Pi-live records skill paths for newly loaded skills, including cached GitHub skills. Older skill records use `~/.agents/skills/<name>/SKILL.md` or `~/.pi/agent/skills/<name>/SKILL.md` when present; other older records have no file target until the skill is loaded again. Text is escaped and clipped to the sidebar width. Styles accept palette colors. Use `disabled = true` to hide the module.
+Only nonempty Plans, PRs, and Skills sections appear. `◇` marks a plan and `✦` marks a loaded skill. A PR row shows `owner/repo#number` with Nerd Font Codicon icons: green `` for open, muted `` for draft, purple `` for merged, and red `` for closed. Unknown state uses a muted ``. Draft and closed rows include a word when space permits. Click a PR row to open its GitHub page. Click a plan to open its Markdown file or a skill to open its `SKILL.md` with the system's file handler. Set `open_command` under `[pi-context]` to override that handler:
+
+```toml
+open_command = ["dev", "tmux", "edit", "{file}", "{pane}", "{socket}"]
+```
+
+Starmux passes each array item as a separate process argument without a shell. `{file}` is required exactly once; `{pane}` is the selected tmux pane ID and `{socket}` is the current tmux server socket. This example opens the file in that pane's tmux session's Neovim editor window. The command runs only for plan and skill rows. Clicks resolve the selected Pi session again and reject stale or missing targets. Pi-live records skill paths for newly loaded skills, including cached GitHub skills. Older skill records use `~/.agents/skills/<name>/SKILL.md` or `~/.pi/agent/skills/<name>/SKILL.md` when present; other older records have no file target until the skill is loaded again. Text is escaped and clipped to the sidebar width. Styles accept palette colors. Use `disabled = true` to hide the module.
 
 The module reads the selected reachable session's version 1 context file through its pi-live status record. Switching panes updates the rows. No selected Pi session, an empty context, a missing file, or an invalid file produces no context rows. The Pi status scan is shared with `pi-live` when both modules are enabled. It shows at most 16 entries in each category.
 

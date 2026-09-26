@@ -57,6 +57,8 @@ struct Config {
 #[serde(default, deny_unknown_fields)]
 struct PiContextConfig {
     disabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    open_command: Option<Vec<String>>,
     category_style: String,
     text_style: String,
     plan_style: String,
@@ -72,6 +74,7 @@ impl Default for PiContextConfig {
     fn default() -> Self {
         Self {
             disabled: false,
+            open_command: None,
             category_style: "dim".into(),
             text_style: "default".into(),
             plan_style: "fg=magenta".into(),
@@ -409,6 +412,28 @@ impl Sidebar {
         {
             return Err("pi-live data_dir must be an absolute path".into());
         }
+        if let Some(command) = &config.pi_context.open_command {
+            if command.is_empty()
+                || command.len() > 16
+                || command[0].is_empty()
+                || command[0].contains('{')
+                || command[0].contains('}')
+                || command
+                    .iter()
+                    .any(|arg| arg.len() > 1024 || arg.contains('\0'))
+                || command
+                    .iter()
+                    .filter(|arg| arg.as_str() == "{file}")
+                    .count()
+                    != 1
+                || command.iter().skip(1).any(|arg| {
+                    (arg.contains('{') || arg.contains('}'))
+                        && !matches!(arg.as_str(), "{file}" | "{pane}" | "{socket}")
+                })
+            {
+                return Err("pi-context open_command must be argv with one {file} argument and optional {pane} and {socket} arguments".into());
+            }
+        }
         for style in [
             &config.sessions.current_session_style,
             &config.sessions.other_session_style,
@@ -515,6 +540,25 @@ impl Sidebar {
     pub(crate) fn pi_context_enabled(&self) -> bool {
         !self.config.pi_context.disabled
             && self.config.modules.iter().any(|name| name == "pi-context")
+    }
+
+    pub(crate) fn file_open_args(
+        &self,
+        file: &std::path::Path,
+        pane: &str,
+        socket: &str,
+    ) -> Option<Vec<std::ffi::OsString>> {
+        self.config.pi_context.open_command.as_ref().map(|command| {
+            command
+                .iter()
+                .map(|arg| match arg.as_str() {
+                    "{file}" => file.as_os_str().to_owned(),
+                    "{pane}" => pane.into(),
+                    "{socket}" => socket.into(),
+                    _ => arg.into(),
+                })
+                .collect()
+        })
     }
 
     pub(crate) fn gob_enabled(&self) -> bool {

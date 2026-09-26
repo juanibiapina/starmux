@@ -857,6 +857,27 @@ source = "icon"
 }
 
 #[test]
+fn pi_context_open_command_requires_one_file_argument_and_separate_placeholders() {
+    for command in [
+        "[]",
+        "[\"dev\", \"tmux\", \"edit\"]",
+        "[\"{file}\"]",
+        "[\"dev\", \"{file}\", \"{file}\"]",
+        "[\"dev\", \"--file={file}\"]",
+        "[\"dev\", \"{file}\", \"{unknown}\"]",
+    ] {
+        assert!(
+            Sidebar::from_toml(&format!(
+                "modules = [\"pi-context\"]\n[pi-context]\nopen_command = {command}"
+            ))
+            .is_err(),
+            "{command}"
+        );
+    }
+    assert!(Sidebar::from_toml("modules = [\"pi-context\"]\n[pi-context]\nopen_command = [\"dev\", \"tmux\", \"edit\", \"{file}\", \"{pane}\", \"{socket}\"]").is_ok());
+}
+
+#[test]
 fn pi_context_pr_state_icons_use_distinct_styles() {
     let sidebar = Sidebar::from_toml("modules = [\"pi-context\"]").unwrap();
     let context = starmux::PiContext {

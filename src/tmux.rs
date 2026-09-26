@@ -61,7 +61,11 @@ pub trait Tmux {
 
     fn open_url(&self, url: &str) -> Result<(), String>;
 
-    fn open_file(&self, path: &std::path::Path) -> Result<(), String>;
+    fn open_file(
+        &self,
+        path: &std::path::Path,
+        command: Option<&[std::ffi::OsString]>,
+    ) -> Result<(), String>;
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -123,7 +127,23 @@ impl Tmux for ProcessTmux {
         open_browser_target(std::ffi::OsStr::new(url))
     }
 
-    fn open_file(&self, path: &std::path::Path) -> Result<(), String> {
+    fn open_file(
+        &self,
+        path: &std::path::Path,
+        command: Option<&[std::ffi::OsString]>,
+    ) -> Result<(), String> {
+        if let Some(command) = command {
+            let (executable, args) = command.split_first().ok_or("empty file opener command")?;
+            let status = Command::new(executable)
+                .args(args)
+                .status()
+                .map_err(|error| format!("file opener failed: {error}"))?;
+            return if status.success() {
+                Ok(())
+            } else {
+                Err(format!("file opener exited with {status}"))
+            };
+        }
         open_browser_target(path.as_os_str())
     }
 
@@ -208,6 +228,7 @@ struct MemoryTmux {
     activations: Arc<Mutex<Vec<(String, String, String)>>>,
     opened_urls: Arc<Mutex<Vec<String>>>,
     opened_files: Arc<Mutex<Vec<std::path::PathBuf>>>,
+    file_commands: Arc<Mutex<Vec<Option<Vec<std::ffi::OsString>>>>>,
 }
 
 #[cfg(test)]
@@ -219,6 +240,7 @@ impl MemoryTmux {
             activations: Arc::new(Mutex::new(Vec::new())),
             opened_urls: Arc::new(Mutex::new(Vec::new())),
             opened_files: Arc::new(Mutex::new(Vec::new())),
+            file_commands: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -238,12 +260,24 @@ impl MemoryTmux {
     fn opened_files(&self) -> Vec<std::path::PathBuf> {
         self.opened_files.lock().unwrap().clone()
     }
+
+    fn file_commands(&self) -> Vec<Option<Vec<std::ffi::OsString>>> {
+        self.file_commands.lock().unwrap().clone()
+    }
 }
 
 #[cfg(test)]
 impl Tmux for MemoryTmux {
-    fn open_file(&self, path: &std::path::Path) -> Result<(), String> {
+    fn open_file(
+        &self,
+        path: &std::path::Path,
+        command: Option<&[std::ffi::OsString]>,
+    ) -> Result<(), String> {
         self.opened_files.lock().unwrap().push(path.to_owned());
+        self.file_commands
+            .lock()
+            .unwrap()
+            .push(command.map(<[_]>::to_vec));
         Ok(())
     }
 
@@ -543,7 +577,10 @@ impl<T: Tmux> Application<T> {
             {
                 return Err("file click target is no longer present".into());
             }
-            return self.tmux.open_file(path);
+            let command = self
+                .sidebar
+                .file_open_args(path, &snapshot.current_pane, socket);
+            return self.tmux.open_file(path, command.as_deref());
         }
         if token.starts_with("sr") {
             if !self.sidebar.pi_context_enabled() {
@@ -971,7 +1008,7 @@ mod tests {
         .unwrap();
         fs::write(data_dir.join("status/broken.json"), "{bad json").unwrap();
         let config = format!(
-            "modules = [\"sessions\", \"pi-live\", \"pi-context\"]\n[pi-live]\ndata_dir = {:?}\nformat = \"$name $state\"\n",
+            "modules = [\"sessions\", \"pi-live\", \"pi-context\"]\n[pi-live]\ndata_dir = {:?}\nformat = \"$name $state\"\n[pi-context]\nopen_command = [\"dev\", \"tmux\", \"edit\", \"{{file}}\", \"{{pane}}\", \"{{socket}}\"]\n",
             data_dir.to_str().unwrap()
         );
         let tmux = MemoryTmux::new(Snapshot {
@@ -1029,7 +1066,28 @@ mod tests {
             .unwrap();
         app.activate("/tmp/starmux-current.sock", "client", &skill_token)
             .unwrap();
-        assert_eq!(tmux.opened_files(), [plan_path.clone(), skill_path]);
+        assert_eq!(tmux.opened_files(), [plan_path.clone(), skill_path.clone()]);
+        assert_eq!(
+            tmux.file_commands(),
+            [
+                Some(vec![
+                    "dev".into(),
+                    "tmux".into(),
+                    "edit".into(),
+                    plan_path.as_os_str().to_owned(),
+                    "%0".into(),
+                    "/tmp/starmux-current.sock".into()
+                ]),
+                Some(vec![
+                    "dev".into(),
+                    "tmux".into(),
+                    "edit".into(),
+                    skill_path.as_os_str().to_owned(),
+                    "%0".into(),
+                    "/tmp/starmux-current.sock".into()
+                ]),
+            ]
+        );
         fs::remove_file(&plan_path).unwrap();
         assert!(app
             .activate("/tmp/starmux-current.sock", "client", &plan_token)

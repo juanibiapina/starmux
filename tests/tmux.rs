@@ -769,7 +769,7 @@ fn pi_attention_row_click_selects_its_pane() {
     fs::write(
         &config,
         format!(
-            "modules = [\"sessions\", \"divider\", \"pi-live\", \"divider\", \"pi-context\"]\n[pi-live]\ndata_dir = {:?}\n",
+            "modules = [\"sessions\", \"divider\", \"pi-live\", \"divider\", \"pi-context\"]\n[pi-live]\ndata_dir = {:?}\n[pi-context]\nopen_command = [\"dev\", \"tmux\", \"edit\", \"{{file}}\", \"{{pane}}\", \"{{socket}}\"]\n",
             root.to_str().unwrap()
         ),
     )
@@ -831,24 +831,36 @@ fn pi_attention_row_click_selects_its_pane() {
         &client_name,
         "#{socket_path}",
     ]);
-    let rendered = Command::new(binary)
-        .args([
-            "render-query",
-            "--width=30",
-            &format!("--socket={socket_path}"),
-            &format!("--client={client_name}"),
-        ])
-        .env("STARMUX_CONFIG", &config)
-        .output()
-        .unwrap();
-    assert!(
-        rendered.status.success(),
-        "{}",
-        String::from_utf8_lossy(&rendered.stderr)
-    );
-    let rendered = String::from_utf8(rendered.stdout).unwrap();
+    let mut rendered = String::new();
+    for _ in 0..10 {
+        let output = Command::new(binary)
+            .args([
+                "render-query",
+                "--width=30",
+                &format!("--socket={socket_path}"),
+                &format!("--client={client_name}"),
+            ])
+            .env("STARMUX_CONFIG", &config)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        rendered = String::from_utf8(output.stdout).unwrap();
+        if rendered.contains("attention") && rendered.contains("working item") {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
     assert!(!rendered.contains("foreign pi"), "{rendered}");
-    assert!(rendered.find("attention").unwrap() < rendered.find("working item").unwrap());
+    assert!(
+        rendered.find("attention").is_some_and(|position| rendered
+            .find("working item")
+            .is_some_and(|other| position < other)),
+        "{rendered}"
+    );
     let row = rendered
         .split("#[nl]")
         .find(|row| row.contains("attention"))
@@ -865,18 +877,29 @@ fn pi_attention_row_click_selects_its_pane() {
         thread::sleep(Duration::from_millis(100));
     }
     assert_eq!(focus(), format!("{target_window}|{attention}"));
-    let selected_context = Command::new(binary)
-        .args([
-            "render-query",
-            "--width=30",
-            &format!("--socket={socket_path}"),
-            &format!("--client={client_name}"),
-        ])
-        .env("STARMUX_CONFIG", &config)
-        .output()
-        .unwrap();
-    assert!(selected_context.status.success());
-    let selected_context = String::from_utf8(selected_context.stdout).unwrap();
+    let mut selected_context = String::new();
+    for _ in 0..10 {
+        let output = Command::new(binary)
+            .args([
+                "render-query",
+                "--width=30",
+                &format!("--socket={socket_path}"),
+                &format!("--client={client_name}"),
+            ])
+            .env("STARMUX_CONFIG", &config)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        selected_context = String::from_utf8(output.stdout).unwrap();
+        if selected_context.contains("attention plan") && selected_context.contains("✦") {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
     assert!(
         selected_context.contains("attention plan") && selected_context.contains("✦"),
         "{selected_context}"
@@ -886,11 +909,7 @@ fn pi_attention_row_click_selects_its_pane() {
         "{selected_context}"
     );
     use std::os::unix::fs::PermissionsExt;
-    let opener = root.join(if cfg!(target_os = "macos") {
-        "open"
-    } else {
-        "xdg-open"
-    });
+    let opener = root.join("dev");
     fs::write(
         &opener,
         "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$STARMUX_TEST_ARGS\"\n",
@@ -935,7 +954,12 @@ fn pi_attention_row_click_selects_its_pane() {
         );
         assert_eq!(
             fs::read_to_string(&opened).unwrap().trim(),
-            expected.to_str().unwrap()
+            format!(
+                "tmux\nedit\n{}\n{}\n{}",
+                expected.display(),
+                attention,
+                socket_path
+            )
         );
     }
     let token = row
