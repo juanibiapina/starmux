@@ -949,7 +949,9 @@ fn pi_attention_row_click_selects_its_pane() {
             .unwrap();
         assert!(
             output.status.success(),
-            "{}",
+            "kind={kind} target={target} expected={} focus={} context={selected_context}: {}",
+            expected.display(),
+            focus(),
             String::from_utf8_lossy(&output.stderr)
         );
         assert_eq!(
