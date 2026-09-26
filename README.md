@@ -2,6 +2,8 @@
 
 A fast and configurable sidebar for tmux.
 
+![Starmux sidebar showing sessions and windows](docs/images/sidebar.png)
+
 [Configuration](docs/configuration.md)
 
 ## Requirements
