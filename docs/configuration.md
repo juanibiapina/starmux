@@ -12,7 +12,7 @@ Run `starmux print-config` to print the complete configuration. Run `starmux che
 modules = ["sessions", "divider"]
 ```
 
-The built-ins are `sessions`, `divider`, `pi-live`, and `usage`. Unknown names and duplicate names other than `divider` are errors. Repeat `divider` to separate multiple sections, for example `modules = ["sessions", "divider", "pi-live", "divider", "usage"]`. Each divider uses the same `[divider]` settings. `pi-live` and `usage` are not enabled by default.
+The built-ins are `sessions`, `divider`, `pi-live`, `usage`, and `gob`. Unknown names and duplicate names other than `divider` are errors. Repeat `divider` to separate multiple sections, for example `modules = ["sessions", "divider", "pi-live", "divider", "usage", "divider", "gob"]`. Each divider uses the same `[divider]` settings. `pi-live`, `usage`, and `gob` are not enabled by default.
 
 ## Row formats
 
@@ -92,7 +92,7 @@ character = "-"
 style = "dim"
 ```
 
-Set `disabled = true` in `[sessions]`, `[divider]`, `[pi-live]`, or `[usage]` to omit that module without changing the shared module order.
+Set `disabled = true` in `[sessions]`, `[divider]`, `[pi-live]`, `[usage]`, or `[gob]` to omit that module without changing the shared module order.
 
 ## Provider usage
 
@@ -143,6 +143,25 @@ The row format supports `$state` (a `●` icon) and `$name`, optional groups, an
 Only Pi sessions published with the current tmux server's socket path appear in its sidebar. Sessions outside tmux and older records without the server socket path are hidden until Pi restarts with an updated pi-live publisher. A row with a matching pane on that server is clickable. Starmux resolves the pane's current window on click and selects the pane. A record without a matching pane remains visible without a click target or selected styling. With a custom tmux mouse binding, route `sp` user ranges to `starmux activate` as well as `sw` ranges; `starmux init tmux` emits the required binding.
 
 Starmux reads version 1 JSON records from `~/.local/share/pi/status` and checks each session's published Unix socket with pi-live's version 1 ping request. An absent directory, invalid records, unsupported versions, and unreachable sessions produce no rows for those records. A bad record does not hide healthy sessions. Starmux scans at most 256 directory entries and checks at most 32 records matching the current tmux socket per render, with a 200 ms total query budget and a 40 ms ping timeout per session. Set `data_dir` to an absolute path under `[pi-live]` when pi-live publishes elsewhere; Starmux looks for `status/` and `sockets/` in that directory. Reading the files does not remove stale records.
+
+## Gob jobs
+
+Add `gob` after a divider to show running jobs for the selected tmux pane's current directory:
+
+```toml
+modules = ["sessions", "divider", "gob"]
+
+[gob]
+format = "  $state $name"
+heading_style = "bold"
+running_style = "fg=green"
+progress_style = "fg=green"
+bar_track_color = "colour238"
+```
+
+The section shows `Jobs`, then a green dot and description for each running job. If a job has no description, `$name` shows its command or job ID. The format also accepts `$id`. A job with a previous successful-run average gets a second row with a green five-block bar and a percentage, such as `███▁  63%`. Gob calculates that percentage from elapsed time divided by its previous average and caps it at 100%; a job can still be running at 100%. When history or a valid start time is absent, there is no progress row. Narrow widths remove bar cells before the percentage. Rows do not have click targets. All job text is escaped and clipped.
+
+Starmux runs `gob list --json` from the selected pane's `pane_current_path`. Gob matches the workdir exactly: a job started in a nested directory appears only when the pane is in that directory. Switching panes can change the list. If gob is missing or the directory has no running jobs, the section has no rows. Gob starts its daemon when `list` runs and the daemon is absent. Starmux bounds the command to 1.5 seconds and 2 MiB of output; unexpected errors are reported with context.
 
 ## Tmux integration
 

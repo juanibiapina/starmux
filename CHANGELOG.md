@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Show running gob jobs for the current pane's directory with green status dots and progress bars when past run times are available.
 - Show subscription usage for selected providers in aligned columns, with quota warning colors, reset countdowns, and cache age after 30 minutes.
 - Place dividers between multiple sidebar sections by listing `divider` more than once.
 

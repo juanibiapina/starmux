@@ -1,4 +1,6 @@
+mod gob;
 mod navigation;
+pub use gob::GobJob;
 mod pi_live;
 mod sidebar;
 mod tmux;

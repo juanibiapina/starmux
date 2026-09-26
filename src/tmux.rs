@@ -251,8 +251,9 @@ impl<T: Tmux> Application<T> {
         let snapshot = self.snapshot(socket, client, width, focus)?;
         let pi_sessions = self.pi_sessions(socket, &snapshot)?;
         let usage = self.usage_rows(true)?;
+        let jobs = self.gob_jobs(&snapshot)?;
         self.sidebar
-            .render_with_usage(&snapshot, &pi_sessions, &usage)
+            .render_with_modules(&snapshot, &pi_sessions, &usage, &jobs)
     }
 
     fn pi_sessions(
@@ -293,6 +294,13 @@ impl<T: Tmux> Application<T> {
             }
         }
         Ok(sessions)
+    }
+
+    fn gob_jobs(&self, snapshot: &Snapshot) -> Result<Vec<crate::GobJob>, String> {
+        if !self.sidebar.gob_enabled() {
+            return Ok(Vec::new());
+        }
+        crate::gob::list(std::path::Path::new(&snapshot.pane_path))
     }
 
     fn usage_rows(&self, spawn: bool) -> Result<Vec<crate::usage::UsageRow>, String> {
@@ -350,6 +358,14 @@ impl<T: Tmux> Application<T> {
                 usage.windows.len()
             ));
         }
+        for job in self.gob_jobs(&snapshot)? {
+            result.push_str(&format!(
+                "gob id={:?} name={:?} progress={:?}\n",
+                job.id,
+                job.name,
+                job.percent(time::OffsetDateTime::now_utc())
+            ));
+        }
         Ok(result)
     }
 
@@ -366,14 +382,16 @@ impl<T: Tmux> Application<T> {
         let queried = started.elapsed().as_micros();
         let usage = self.usage_rows(false)?;
         let usage_us = started.elapsed().as_micros().saturating_sub(queried);
+        let jobs = self.gob_jobs(&snapshot)?;
+        let gob_us = started
+            .elapsed()
+            .as_micros()
+            .saturating_sub(queried + usage_us);
         self.sidebar
-            .render_with_usage(&snapshot, &pi_sessions, &usage)?;
+            .render_with_modules(&snapshot, &pi_sessions, &usage, &jobs)?;
         Ok(format!(
-            "{{\"query_us\":{queried},\"usage_us\":{usage_us},\"render_us\":{}}}",
-            started
-                .elapsed()
-                .as_micros()
-                .saturating_sub(queried + usage_us)
+            "{{\"query_us\":{queried},\"usage_us\":{usage_us},\"gob_us\":{gob_us},\"render_us\":{}}}",
+            started.elapsed().as_micros().saturating_sub(queried + usage_us + gob_us)
         ))
     }
 

@@ -47,6 +47,18 @@ struct Config {
     #[serde(rename = "pi-live")]
     pi_live: PiLiveConfig,
     usage: UsageConfig,
+    gob: GobConfig,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+struct GobConfig {
+    disabled: bool,
+    format: String,
+    heading_style: String,
+    running_style: String,
+    progress_style: String,
+    bar_track_color: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -139,6 +151,20 @@ impl Default for Config {
             divider: DividerConfig::default(),
             pi_live: PiLiveConfig::default(),
             usage: UsageConfig::default(),
+            gob: GobConfig::default(),
+        }
+    }
+}
+
+impl Default for GobConfig {
+    fn default() -> Self {
+        Self {
+            disabled: false,
+            format: "  $state $name".into(),
+            heading_style: "bold".into(),
+            running_style: "fg=green".into(),
+            progress_style: "fg=green".into(),
+            bar_track_color: "colour238".into(),
         }
     }
 }
@@ -254,6 +280,7 @@ pub struct Sidebar {
     sessions: CompiledSessions,
     pi_live_format: Vec<Node>,
     usage_format: Vec<Node>,
+    gob_format: Vec<Node>,
 }
 
 impl Sidebar {
@@ -271,7 +298,7 @@ impl Sidebar {
     }
 
     fn compile(config: Config) -> Result<Self, String> {
-        let known = ["sessions", "divider", "pi-live", "usage"];
+        let known = ["sessions", "divider", "pi-live", "usage", "gob"];
         let mut seen = BTreeSet::new();
         for name in &config.modules {
             if !known.contains(&name.as_str()) {
@@ -304,6 +331,8 @@ impl Sidebar {
         )?;
         let pi_live_format = Parser::parse(&config.pi_live.format)?;
         validate_format(&pi_live_format, &["name", "state"], &palette)?;
+        let gob_format = Parser::parse(&config.gob.format)?;
+        validate_format(&gob_format, &["id", "name", "state"], &palette)?;
         let usage_format = Parser::parse(&config.usage.format)?;
         validate_format(
             &usage_format,
@@ -353,10 +382,14 @@ impl Sidebar {
             &config.usage.critical_bar_style,
             &config.usage.stale_style,
             &config.usage.unavailable_style,
+            &config.gob.heading_style,
+            &config.gob.running_style,
+            &config.gob.progress_style,
         ] {
             resolve_style(style, "default", &palette)?;
         }
         validate_color(&config.usage.bar_track_color, &palette)?;
+        validate_color(&config.gob.bar_track_color, &palette)?;
         for fill in [
             &config.sessions.current_session_fill,
             &config.sessions.other_session_fill,
@@ -395,6 +428,7 @@ impl Sidebar {
             sessions,
             pi_live_format,
             usage_format,
+            gob_format,
         })
     }
 
@@ -420,6 +454,10 @@ impl Sidebar {
             return None;
         }
         Some(self.config.pi_live.data_dir.as_deref().unwrap_or(""))
+    }
+
+    pub(crate) fn gob_enabled(&self) -> bool {
+        !self.config.gob.disabled && self.config.modules.iter().any(|name| name == "gob")
     }
 
     pub(crate) fn usage_options(&self) -> Option<(&[String], Option<&str>)> {
@@ -450,6 +488,16 @@ impl Sidebar {
         pi_sessions: &[crate::PiSession],
         usage_rows: &[crate::usage::UsageRow],
     ) -> Result<String, String> {
+        self.render_with_modules(snapshot, pi_sessions, usage_rows, &[])
+    }
+
+    pub fn render_with_modules(
+        &self,
+        snapshot: &Snapshot,
+        pi_sessions: &[crate::PiSession],
+        usage_rows: &[crate::usage::UsageRow],
+        gob_jobs: &[crate::gob::GobJob],
+    ) -> Result<String, String> {
         validate_snapshot(snapshot)?;
         let mut rows = Vec::new();
         for name in &self.config.modules {
@@ -466,7 +514,10 @@ impl Sidebar {
                 "usage" if !self.config.usage.disabled => {
                     rows.extend(self.render_usage(usage_rows, snapshot.width)?)
                 }
-                "sessions" | "divider" | "pi-live" | "usage" => {}
+                "gob" if !self.config.gob.disabled => {
+                    rows.extend(self.render_gob(gob_jobs, snapshot.width)?)
+                }
+                "sessions" | "divider" | "pi-live" | "usage" | "gob" => {}
                 _ => return Err(format!("unknown module {name}")),
             }
         }
@@ -789,6 +840,89 @@ impl Sidebar {
                         &window_style,
                         &self.palette,
                     )?,
+                    fill: None,
+                    range: None,
+                    focus: false,
+                    selected: false,
+                });
+            }
+        }
+        Ok(rows)
+    }
+
+    fn render_gob(&self, jobs: &[crate::gob::GobJob], width: usize) -> Result<Vec<Row>, String> {
+        if jobs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let heading = resolve_style(&self.config.gob.heading_style, "default", &self.palette)?;
+        let green = resolve_style(&self.config.gob.running_style, "default", &self.palette)?;
+        let progress = resolve_style(&self.config.gob.progress_style, "default", &self.palette)?;
+        let track = resolve_color(&self.config.gob.bar_track_color, &self.palette)?;
+        let mut rows = vec![Row {
+            spans: vec![Span {
+                text: " Jobs".into(),
+                style: heading,
+            }],
+            fill: None,
+            range: None,
+            focus: false,
+            selected: false,
+        }];
+        let mut ordered = jobs.to_vec();
+        ordered.sort_by(|a, b| {
+            a.name
+                .to_lowercase()
+                .cmp(&b.name.to_lowercase())
+                .then(a.id.cmp(&b.id))
+        });
+        for job in ordered {
+            let values = BTreeMap::from([
+                ("id", Value::Text(job.id.clone())),
+                ("name", Value::Text(job.name.clone())),
+                (
+                    "state",
+                    Value::Spans(vec![Span {
+                        text: "●".into(),
+                        style: green.clone(),
+                    }]),
+                ),
+            ]);
+            rows.push(Row {
+                spans: render_format(&self.gob_format, &values, "default", &self.palette)?,
+                fill: None,
+                range: None,
+                focus: false,
+                selected: false,
+            });
+            if let Some(percent) = job.percent(time::OffsetDateTime::now_utc()) {
+                let label = format!("{percent:.0}%");
+                let mut spans = vec![Span {
+                    text: "    ".into(),
+                    style: "default".into(),
+                }];
+                if width >= 4 + 5 + 1 + label.len() {
+                    let mut bar = BTreeMap::from([(
+                        "bar",
+                        Value::Spans(vec![Span {
+                            text: progress_blocks(percent, 5).concat(),
+                            style: progress.clone(),
+                        }]),
+                    )]);
+                    shade_usage_bar(&mut bar, &progress, &track, "default");
+                    if let Some(Value::Spans(glyphs)) = bar.remove("bar") {
+                        spans.extend(glyphs);
+                    }
+                    spans.push(Span {
+                        text: " ".into(),
+                        style: "default".into(),
+                    });
+                }
+                spans.push(Span {
+                    text: label,
+                    style: "default".into(),
+                });
+                rows.push(Row {
+                    spans,
                     fill: None,
                     range: None,
                     focus: false,
