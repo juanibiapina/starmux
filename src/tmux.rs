@@ -250,7 +250,9 @@ impl<T: Tmux> Application<T> {
     ) -> Result<String, String> {
         let snapshot = self.snapshot(socket, client, width, focus)?;
         let pi_sessions = self.pi_sessions(socket, &snapshot)?;
-        self.sidebar.render_with_pi_live(&snapshot, &pi_sessions)
+        let usage = self.usage_rows(true)?;
+        self.sidebar
+            .render_with_usage(&snapshot, &pi_sessions, &usage)
     }
 
     fn pi_sessions(
@@ -293,6 +295,20 @@ impl<T: Tmux> Application<T> {
         Ok(sessions)
     }
 
+    fn usage_rows(&self, spawn: bool) -> Result<Vec<crate::usage::UsageRow>, String> {
+        let Some((providers, data_dir)) = self.sidebar.usage_options() else {
+            return Ok(Vec::new());
+        };
+        if providers.is_empty() {
+            return Ok(Vec::new());
+        }
+        let dir = match data_dir {
+            Some(path) => std::path::PathBuf::from(path),
+            None => crate::usage::default_dir()?,
+        };
+        Ok(crate::usage::resolve(providers, &dir, spawn))
+    }
+
     pub fn explain(
         &self,
         socket: &str,
@@ -325,6 +341,15 @@ impl<T: Tmux> Application<T> {
                 session.project, session.state, session.name, session.target, session.selected
             ));
         }
+        for usage in self.usage_rows(false)? {
+            result.push_str(&format!(
+                "usage provider={} stale={} unavailable={} windows={}\n",
+                usage.provider,
+                usage.stale,
+                usage.unavailable,
+                usage.windows.len()
+            ));
+        }
         Ok(result)
     }
 
@@ -339,10 +364,16 @@ impl<T: Tmux> Application<T> {
         let snapshot = self.snapshot(socket, client, width, focus)?;
         let pi_sessions = self.pi_sessions(socket, &snapshot)?;
         let queried = started.elapsed().as_micros();
-        self.sidebar.render_with_pi_live(&snapshot, &pi_sessions)?;
+        let usage = self.usage_rows(false)?;
+        let usage_us = started.elapsed().as_micros().saturating_sub(queried);
+        self.sidebar
+            .render_with_usage(&snapshot, &pi_sessions, &usage)?;
         Ok(format!(
-            "{{\"query_us\":{queried},\"render_us\":{}}}",
-            started.elapsed().as_micros().saturating_sub(queried)
+            "{{\"query_us\":{queried},\"usage_us\":{usage_us},\"render_us\":{}}}",
+            started
+                .elapsed()
+                .as_micros()
+                .saturating_sub(queried + usage_us)
         ))
     }
 

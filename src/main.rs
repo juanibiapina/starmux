@@ -90,6 +90,21 @@ fn run() -> Result<(), String> {
             _ => Err("usage: starmux init tmux".into()),
         };
     }
+    if command == "usage-refresh" {
+        let parsed = flags(&args[1..])?;
+        if parsed.len() != 2 {
+            return Err("usage: starmux usage-refresh --provider=NAME --data-dir=PATH".into());
+        }
+        let provider = parsed.get("provider").ok_or("missing --provider")?;
+        let dir = parsed.get("data-dir").ok_or("missing --data-dir")?;
+        let mut token = String::new();
+        use std::io::Read;
+        std::io::stdin()
+            .take(128)
+            .read_to_string(&mut token)
+            .map_err(|error| error.to_string())?;
+        return starmux::usage::refresh(provider, std::path::Path::new(dir), &token);
+    }
     if command == "activate" {
         let parsed = flags(&args[1..])?;
         if parsed.len() != 3 {

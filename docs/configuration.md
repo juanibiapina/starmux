@@ -12,7 +12,7 @@ Run `starmux print-config` to print the complete configuration. Run `starmux che
 modules = ["sessions", "divider"]
 ```
 
-The built-ins are `sessions`, `divider`, and `pi-live`. Unknown and duplicate names are errors. `pi-live` is not enabled by default.
+The built-ins are `sessions`, `divider`, `pi-live`, and `usage`. Unknown names and duplicate names other than `divider` are errors. Repeat `divider` to separate multiple sections, for example `modules = ["sessions", "divider", "pi-live", "divider", "usage"]`. Each divider uses the same `[divider]` settings. `pi-live` and `usage` are not enabled by default.
 
 ## Row formats
 
@@ -92,7 +92,32 @@ character = "-"
 style = "dim"
 ```
 
-Set `disabled = true` in `[sessions]`, `[divider]`, or `[pi-live]` to omit that module without changing the shared module order.
+Set `disabled = true` in `[sessions]`, `[divider]`, `[pi-live]`, or `[usage]` to omit that module without changing the shared module order.
+
+## Provider usage
+
+Add `usage` to `modules` to show the current usage windows for selected providers:
+
+```toml
+modules = ["sessions", "divider", "usage"]
+
+[usage]
+providers = ["anthropic", "codex", "gemini"]
+format = "  $name( $remaining) $bar $percent"
+provider_style = "bold"
+window_style = "default"
+warning_bar_style = "fg=colour208"
+critical_bar_style = "fg=red"
+bar_track_color = "colour238"
+stale_style = "dim"
+unavailable_style = "dim"
+```
+
+Available providers are `anthropic`, `copilot`, `gemini`, `antigravity`, `codex`, `kiro`, `zai`, and `xai`. By default, none are selected. Set `providers` explicitly to start fetching usage. Providers appear in the listed order. Each provider gets a heading and one row per available usage window. When no cached usage exists, its heading shows `(unavailable)`. The default window row shows its duration, time until reset, progress bar, and used percentage. When multiple windows are visible, these fields align across providers. In a narrow sidebar, the bars lose their spaces first so the percentage remains visible. Custom `format` values render as written. For windows lasting more than 24 hours and at most seven days, `$name` shows the duration in days and `$bar` has one block per day. The blocks divide the total window usage into visual steps; they do not represent usage on individual calendar days. Partial blocks fill from the bottom over the same background track as empty blocks. Only the bar turns red at 80% used. For multiday plans, it turns orange when usage exceeds the allocation through the current day (one day's share per day). Red takes priority. The day comparison requires both a known window duration and a future reset time. Set `critical_bar_style`, `warning_bar_style`, and `bar_track_color` to change the colors. Shorter windows use five progress blocks. Windows without a known duration use their provider label and a ten-cell bar. `$remaining` shows the time until reset when the provider supplies a reset timestamp; otherwise the optional group omits it. Window formats support `$name`, `$remaining`, `$percent`, and `$bar`, plus optional and styled groups. Cached usage older than 30 minutes shows its age, such as `(31m old)`, and uses `stale_style`. More recent cached usage keeps the normal colors and format, including during a failed refresh or retry delay. An unavailable provider is marked `(unavailable)` and uses `unavailable_style`. Usage text is escaped and clipped; these rows have no click targets.
+
+For GPT subscription usage alone, set `providers = ["codex"]`. Starmux reads Pi's `~/.pi/agent/auth.json` or Codex's auth file for Codex credentials; it does not require Pi or pi-usage to run. A foreground sidebar render returns cached usage immediately and starts a refresh worker when data is absent or at least 60 seconds old. One Starmux worker per provider holds the lease, so concurrent clients do not multiply requests. Failed requests preserve last-good usage and delay retries using the provider's `Retry-After` header or a 60-second fallback. The next tmux redraw shows a completed refresh. Starmux's cache and locks are separate from pi-usage; if both run, each may make a request within the same minute.
+
+Set `cache_dir` to an absolute path under `[usage]` to change the usage cache location. The default is `~/Library/Caches/starmux/usage` on macOS or `${XDG_CACHE_HOME:-~/.cache}/starmux/usage` elsewhere. Styles accept palette colors and the same validated attributes as other modules.
 
 ## Live Pi sessions
 

@@ -46,6 +46,24 @@ struct Config {
     divider: DividerConfig,
     #[serde(rename = "pi-live")]
     pi_live: PiLiveConfig,
+    usage: UsageConfig,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+struct UsageConfig {
+    disabled: bool,
+    providers: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_dir: Option<String>,
+    format: String,
+    provider_style: String,
+    window_style: String,
+    warning_bar_style: String,
+    critical_bar_style: String,
+    bar_track_color: String,
+    stale_style: String,
+    unavailable_style: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -120,6 +138,27 @@ impl Default for Config {
             sessions: SessionsConfig::default(),
             divider: DividerConfig::default(),
             pi_live: PiLiveConfig::default(),
+            usage: UsageConfig::default(),
+        }
+    }
+}
+
+const DEFAULT_USAGE_FORMAT: &str = "  $name( $remaining) $bar $percent";
+
+impl Default for UsageConfig {
+    fn default() -> Self {
+        Self {
+            disabled: false,
+            providers: Vec::new(),
+            cache_dir: None,
+            format: DEFAULT_USAGE_FORMAT.into(),
+            provider_style: "bold".into(),
+            window_style: "default".into(),
+            warning_bar_style: "fg=colour208".into(),
+            critical_bar_style: "fg=red".into(),
+            bar_track_color: "colour238".into(),
+            stale_style: "dim".into(),
+            unavailable_style: "dim".into(),
         }
     }
 }
@@ -214,6 +253,7 @@ pub struct Sidebar {
     palette: BTreeMap<String, String>,
     sessions: CompiledSessions,
     pi_live_format: Vec<Node>,
+    usage_format: Vec<Node>,
 }
 
 impl Sidebar {
@@ -231,13 +271,13 @@ impl Sidebar {
     }
 
     fn compile(config: Config) -> Result<Self, String> {
-        let known = ["sessions", "divider", "pi-live"];
+        let known = ["sessions", "divider", "pi-live", "usage"];
         let mut seen = BTreeSet::new();
         for name in &config.modules {
             if !known.contains(&name.as_str()) {
                 return Err(format!("unknown module {name}"));
             }
-            if !seen.insert(name) {
+            if name != "divider" && !seen.insert(name) {
                 return Err(format!("duplicate module {name}"));
             }
         }
@@ -264,6 +304,29 @@ impl Sidebar {
         )?;
         let pi_live_format = Parser::parse(&config.pi_live.format)?;
         validate_format(&pi_live_format, &["name", "state"], &palette)?;
+        let usage_format = Parser::parse(&config.usage.format)?;
+        validate_format(
+            &usage_format,
+            &["name", "remaining", "percent", "bar"],
+            &palette,
+        )?;
+        let mut providers = BTreeSet::new();
+        for provider in &config.usage.providers {
+            if !crate::usage::PROVIDERS.contains(&provider.as_str()) {
+                return Err(format!("unknown usage provider {provider}"));
+            }
+            if !providers.insert(provider) {
+                return Err(format!("duplicate usage provider {provider}"));
+            }
+        }
+        if config
+            .usage
+            .cache_dir
+            .as_deref()
+            .is_some_and(|path| !std::path::Path::new(path).is_absolute())
+        {
+            return Err("usage cache_dir must be an absolute path".into());
+        }
         if config
             .pi_live
             .data_dir
@@ -284,9 +347,16 @@ impl Sidebar {
             &config.pi_live.working_style,
             &config.pi_live.notify_style,
             &config.pi_live.selected_style,
+            &config.usage.provider_style,
+            &config.usage.window_style,
+            &config.usage.warning_bar_style,
+            &config.usage.critical_bar_style,
+            &config.usage.stale_style,
+            &config.usage.unavailable_style,
         ] {
             resolve_style(style, "default", &palette)?;
         }
+        validate_color(&config.usage.bar_track_color, &palette)?;
         for fill in [
             &config.sessions.current_session_fill,
             &config.sessions.other_session_fill,
@@ -324,6 +394,7 @@ impl Sidebar {
             palette,
             sessions,
             pi_live_format,
+            usage_format,
         })
     }
 
@@ -351,14 +422,33 @@ impl Sidebar {
         Some(self.config.pi_live.data_dir.as_deref().unwrap_or(""))
     }
 
+    pub(crate) fn usage_options(&self) -> Option<(&[String], Option<&str>)> {
+        if self.config.usage.disabled || !self.config.modules.iter().any(|name| name == "usage") {
+            return None;
+        }
+        Some((
+            &self.config.usage.providers,
+            self.config.usage.cache_dir.as_deref(),
+        ))
+    }
+
     pub fn render(&self, snapshot: &Snapshot) -> Result<String, String> {
-        self.render_with_pi_live(snapshot, &[])
+        self.render_with_usage(snapshot, &[], &[])
     }
 
     pub fn render_with_pi_live(
         &self,
         snapshot: &Snapshot,
         pi_sessions: &[crate::PiSession],
+    ) -> Result<String, String> {
+        self.render_with_usage(snapshot, pi_sessions, &[])
+    }
+
+    pub fn render_with_usage(
+        &self,
+        snapshot: &Snapshot,
+        pi_sessions: &[crate::PiSession],
+        usage_rows: &[crate::usage::UsageRow],
     ) -> Result<String, String> {
         validate_snapshot(snapshot)?;
         let mut rows = Vec::new();
@@ -373,7 +463,10 @@ impl Sidebar {
                 "pi-live" if !self.config.pi_live.disabled => {
                     rows.extend(self.render_pi_live(pi_sessions)?)
                 }
-                "sessions" | "divider" | "pi-live" => {}
+                "usage" if !self.config.usage.disabled => {
+                    rows.extend(self.render_usage(usage_rows, snapshot.width)?)
+                }
+                "sessions" | "divider" | "pi-live" | "usage" => {}
                 _ => return Err(format!("unknown module {name}")),
             }
         }
@@ -597,6 +690,113 @@ impl Sidebar {
             focus: session.selected,
             selected: session.selected,
         })
+    }
+
+    fn render_usage(
+        &self,
+        usage_rows: &[crate::usage::UsageRow],
+        width: usize,
+    ) -> Result<Vec<Row>, String> {
+        let mut rows = Vec::new();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let columns = (self.config.usage.format == DEFAULT_USAGE_FORMAT)
+            .then(|| {
+                let values: Vec<_> = self
+                    .config
+                    .usage
+                    .providers
+                    .iter()
+                    .filter_map(|provider| usage_rows.iter().find(|row| &row.provider == provider))
+                    .flat_map(|row| row.windows.iter())
+                    .filter(|window| {
+                        window.used_percent.is_finite()
+                            && (0.0..=100.0).contains(&window.used_percent)
+                    })
+                    .map(|window| usage_values(window, now.as_secs(), "default"))
+                    .collect();
+                (values.len() > 1).then(|| UsageColumns::from_values(&values, width))
+            })
+            .flatten();
+        for provider in &self.config.usage.providers {
+            let Some(usage) = usage_rows.iter().find(|row| &row.provider == provider) else {
+                continue;
+            };
+            let heading_style = if usage.unavailable {
+                &self.config.usage.unavailable_style
+            } else if usage.stale {
+                &self.config.usage.stale_style
+            } else {
+                &self.config.usage.provider_style
+            };
+            let suffix = if usage.unavailable {
+                " (unavailable)".to_owned()
+            } else if usage.stale {
+                usage.fetched_at.map_or_else(String::new, |fetched_at| {
+                    format!(
+                        " ({} old)",
+                        format_usage_age((now.as_millis() as u64).saturating_sub(fetched_at))
+                    )
+                })
+            } else {
+                String::new()
+            };
+            rows.push(Row {
+                spans: vec![Span {
+                    text: format!(" {}{suffix}", usage.display_name),
+                    style: usage_normal_style(&resolve_style(
+                        heading_style,
+                        "default",
+                        &self.palette,
+                    )?),
+                }],
+                fill: None,
+                range: None,
+                focus: false,
+                selected: false,
+            });
+            let window_style = if usage.stale {
+                &self.config.usage.stale_style
+            } else {
+                &self.config.usage.window_style
+            };
+            let window_style = resolve_style(window_style, "default", &self.palette)?;
+            let window_style = usage_normal_style(&window_style);
+            for window in &usage.windows {
+                if !window.used_percent.is_finite() || !(0.0..=100.0).contains(&window.used_percent)
+                {
+                    continue;
+                }
+                let bar_style = if window.used_percent >= 80.0 {
+                    &self.config.usage.critical_bar_style
+                } else if quota_behind_time(window, now.as_secs()) {
+                    &self.config.usage.warning_bar_style
+                } else {
+                    &window_style
+                };
+                let bar_style = resolve_style(bar_style, &window_style, &self.palette)?;
+                let mut values = usage_values(window, now.as_secs(), &bar_style);
+                if let Some(columns) = &columns {
+                    columns.align(&mut values, &window_style);
+                }
+                let track = resolve_color(&self.config.usage.bar_track_color, &self.palette)?;
+                shade_usage_bar(&mut values, &bar_style, &track, &window_style);
+                rows.push(Row {
+                    spans: render_format(
+                        &self.usage_format,
+                        &values,
+                        &window_style,
+                        &self.palette,
+                    )?,
+                    fill: None,
+                    range: None,
+                    focus: false,
+                    selected: false,
+                });
+            }
+        }
+        Ok(rows)
     }
 
     fn render_divider(&self, width: usize) -> Result<Row, String> {
@@ -928,6 +1128,276 @@ impl Parser {
             Ok(nodes)
         }
     }
+}
+
+fn format_usage_age(age_ms: u64) -> String {
+    let minutes = age_ms / 60_000;
+    if minutes < 60 {
+        format!("{minutes}m")
+    } else if minutes < 1440 {
+        let hours = minutes / 60;
+        let rest = minutes % 60;
+        if rest == 0 {
+            format!("{hours}h")
+        } else {
+            format!("{hours}h{rest}m")
+        }
+    } else {
+        let days = minutes / 1440;
+        let hours = minutes % 1440 / 60;
+        if hours == 0 {
+            format!("{days}d")
+        } else {
+            format!("{days}d{hours}h")
+        }
+    }
+}
+
+fn quota_behind_time(window: &crate::usage::UsageWindow, now: u64) -> bool {
+    let (Some(duration), Some(reset)) = (window.duration_seconds, window.reset_at) else {
+        return false;
+    };
+    if duration <= 86_400 || reset <= now {
+        return false;
+    }
+    let total_days = duration.div_ceil(86_400);
+    let time_left = reset.saturating_sub(now).min(duration);
+    let elapsed_days = (duration - time_left) / 86_400;
+    let current_day = (elapsed_days + 1).min(total_days);
+    window.used_percent > current_day as f64 / total_days as f64 * 100.0
+}
+
+fn usage_normal_style(style: &str) -> String {
+    if style.split(',').any(|part| part.starts_with("bg=")) {
+        style.to_owned()
+    } else if style == "default" {
+        "default".into()
+    } else {
+        format!("{style},bg=default")
+    }
+}
+
+fn shade_usage_bar(values: &mut BTreeMap<&str, Value>, color: &str, track: &str, normal: &str) {
+    let Some(Value::Spans(spans)) = values.get_mut("bar") else {
+        return;
+    };
+    let Some(first) = spans.first() else {
+        return;
+    };
+    let glyphs = first.text.clone();
+    let foreground = color
+        .split(',')
+        .filter(|part| !part.starts_with("bg="))
+        .collect::<Vec<_>>()
+        .join(",");
+    let used_style = if foreground.is_empty() {
+        format!("bg={track}")
+    } else {
+        format!("{foreground},bg={track}")
+    };
+    let empty_style = format!("bg={track}");
+    let mut shaded = Vec::new();
+    for glyph in glyphs.chars() {
+        let (text, style) = match glyph {
+            ' ' => (" ".to_owned(), normal.to_owned()),
+            '░' => (" ".to_owned(), empty_style.clone()),
+            _ => (glyph.to_string(), used_style.clone()),
+        };
+        shaded.push(Span { text, style });
+    }
+    shaded.extend(spans.drain(1..));
+    *spans = shaded;
+}
+
+fn usage_field_text<'a>(value: &'a BTreeMap<&str, Value>, key: &str) -> &'a str {
+    match value.get(key) {
+        Some(Value::Text(text)) => text,
+        Some(Value::Spans(spans)) => spans.first().map_or("", |span| span.text.as_str()),
+        None => "",
+    }
+}
+
+struct UsageColumns {
+    name: usize,
+    remaining: usize,
+    bar: usize,
+    percent: usize,
+    compact_bar: bool,
+}
+
+impl UsageColumns {
+    fn from_values(values: &[BTreeMap<&str, Value>], width: usize) -> Self {
+        let maximum = |key| {
+            values
+                .iter()
+                .map(|value| UnicodeWidthStr::width(usage_field_text(value, key)))
+                .max()
+                .unwrap_or(0)
+        };
+        let mut columns = Self {
+            name: maximum("name").min(width.saturating_sub(16).max(2)).max(2),
+            remaining: maximum("remaining").min(7),
+            bar: maximum("bar"),
+            percent: maximum("percent"),
+            compact_bar: false,
+        };
+        if columns.total() > width {
+            columns.compact_bar = true;
+            columns.bar = values
+                .iter()
+                .map(|value| {
+                    UnicodeWidthStr::width(usage_field_text(value, "bar").replace(' ', "").as_str())
+                })
+                .max()
+                .unwrap_or(0);
+        }
+        while columns.total() > width && columns.name > 2 {
+            columns.name -= 1;
+        }
+        while columns.total() > width && columns.remaining > 2 {
+            columns.remaining -= 1;
+        }
+        while columns.total() > width && columns.bar > 1 {
+            columns.bar -= 1;
+        }
+        while columns.total() > width && columns.remaining > 0 {
+            columns.remaining -= 1;
+        }
+        while columns.total() > width && columns.name > 1 {
+            columns.name -= 1;
+        }
+        columns
+    }
+
+    fn total(&self) -> usize {
+        2 + self.name
+            + 1
+            + self.bar
+            + 1
+            + self.percent
+            + if self.remaining > 0 {
+                1 + self.remaining
+            } else {
+                0
+            }
+    }
+
+    fn align(&self, values: &mut BTreeMap<&str, Value>, window_style: &str) {
+        let format_cell = |value: &mut Value, width: usize, right: bool| {
+            let Value::Text(text) = value else {
+                return;
+            };
+            let mut remaining = width;
+            let clipped = clipped(text, &mut remaining);
+            *text = if right {
+                format!("{}{}", " ".repeat(remaining), clipped)
+            } else {
+                format!("{}{}", clipped, " ".repeat(remaining))
+            };
+        };
+        format_cell(values.get_mut("name").unwrap(), self.name, false);
+        if self.remaining > 0 {
+            format_cell(values.get_mut("remaining").unwrap(), self.remaining, true);
+        } else {
+            values.insert("remaining", Value::Text(String::new()));
+        }
+        format_cell(values.get_mut("percent").unwrap(), self.percent, true);
+        if let Some(Value::Spans(spans)) = values.get_mut("bar") {
+            let text = &mut spans[0].text;
+            if self.compact_bar {
+                text.retain(|character| character != ' ');
+            }
+            let mut remaining = self.bar;
+            *text = clipped(text, &mut remaining);
+            if remaining > 0 {
+                spans.push(Span {
+                    text: " ".repeat(remaining),
+                    style: window_style.to_owned(),
+                });
+            }
+        }
+    }
+}
+
+fn usage_values(
+    window: &crate::usage::UsageWindow,
+    now: u64,
+    bar_style: &str,
+) -> BTreeMap<&'static str, Value> {
+    let duration = window.duration_seconds;
+    let name = match duration {
+        Some(seconds) if seconds > 86_400 => {
+            let days = seconds as f64 / 86_400.0;
+            if seconds % 86_400 == 0 {
+                format!("{}d", seconds / 86_400)
+            } else {
+                format!("{days:.1}d")
+            }
+        }
+        _ => window.label.clone(),
+    };
+    let remaining = window.reset_at.map_or_else(String::new, |reset| {
+        let minutes = reset.saturating_sub(now) / 60;
+        if reset <= now {
+            "now".into()
+        } else if minutes < 60 {
+            format!("{minutes}m")
+        } else if minutes < 1440 {
+            format!(
+                "{}h{}",
+                minutes / 60,
+                if minutes % 60 == 0 {
+                    String::new()
+                } else {
+                    format!("{}m", minutes % 60)
+                }
+            )
+        } else {
+            format!(
+                "{}d{}",
+                minutes / 1440,
+                if minutes % 1440 < 60 {
+                    String::new()
+                } else {
+                    format!("{}h", minutes % 1440 / 60)
+                }
+            )
+        }
+    });
+    let bar = match duration {
+        Some(seconds) if seconds > 86_400 && seconds <= 7 * 86_400 => {
+            let count = seconds.div_ceil(86_400) as usize;
+            progress_blocks(window.used_percent, count).join(" ")
+        }
+        Some(seconds) if seconds <= 86_400 => progress_blocks(window.used_percent, 5).join(" "),
+        _ => progress_blocks(window.used_percent, 10).concat(),
+    };
+    BTreeMap::from([
+        ("name", Value::Text(name)),
+        ("remaining", Value::Text(remaining)),
+        (
+            "bar",
+            Value::Spans(vec![Span {
+                text: bar,
+                style: bar_style.to_owned(),
+            }]),
+        ),
+        (
+            "percent",
+            Value::Text(format!("{:.0}%", window.used_percent)),
+        ),
+    ])
+}
+
+fn progress_blocks(percent: f64, count: usize) -> Vec<&'static str> {
+    let filled = percent.clamp(0.0, 100.0) / 100.0 * count as f64;
+    const PARTIAL: [&str; 9] = ["░", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
+    (0..count)
+        .map(|index| {
+            let eighths = ((filled - index as f64).clamp(0.0, 1.0) * 8.0).round() as usize;
+            PARTIAL[eighths]
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug)]

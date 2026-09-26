@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+- Show subscription usage for selected providers in aligned columns, with quota warning colors, reset countdowns, and cache age after 30 minutes.
+- Place dividers between multiple sidebar sections by listing `divider` more than once.
+
 ### Fixed
 - Show live Pi sessions only in the sidebar of their own tmux server.
 
