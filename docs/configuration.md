@@ -123,7 +123,7 @@ Set `cache_dir` to an absolute path under `[usage]` to change the usage cache lo
 
 ## Live Pi sessions
 
-Add `pi-live` to `modules` to show a state icon and the name of each reachable Pi session published by pi-live:
+Add `pi-live` to `modules` to show a state icon and the name of each reachable Pi session published by Pi Workbench:
 
 ```toml
 modules = ["sessions", "divider", "pi-live"]
@@ -142,13 +142,13 @@ Pi sessions are grouped by project. Starmux finds the nearest Git root above eac
 
 The row format supports `$state` (a `●` icon) and `$name`, optional groups, and validated styled groups. The three state styles color the icon; the name uses normal text styling unless its pane is selected. A Pi pane marked `@pi_state=notify` shows the magenta icon. The selected Pi pane uses `selected_style` and `selected_fill`. When a session has no name, `$name` shows the first eight characters of its session ID. Styles can use colors from the selected palette. Names and project headings are escaped as text and clipped to the sidebar width.
 
-Only Pi sessions published with the current tmux server's socket path appear in its sidebar. Sessions outside tmux and older records without the server socket path are hidden until Pi restarts with an updated pi-live publisher. A row with a matching pane on that server is clickable. Starmux resolves the pane's current window on click and selects the pane. A record without a matching pane remains visible without a click target or selected styling. With a custom tmux mouse binding, route `sp` user ranges to `starmux activate` as well as `sw` ranges; `starmux init tmux` emits the required binding.
+The `pi-tmux` namespace identifies the tmux server and pane. Sessions with a different tmux server socket do not appear in this sidebar. A row with a matching pane on that server is clickable. Starmux resolves the pane's current window on click and selects the pane. A record without a matching pane remains visible without a click target or selected styling. With a custom tmux mouse binding, route `sp` user ranges to `starmux activate` as well as `sw` ranges; `starmux init tmux` emits the required binding.
 
-Starmux reads version 1 JSON records from `~/.local/share/pi/status` and checks each session's published Unix socket with pi-live's version 1 ping request. An absent directory, invalid records, unsupported versions, and unreachable sessions produce no rows for those records. A bad record does not hide healthy sessions. Starmux scans at most 256 directory entries and checks at most 32 records matching the current tmux socket per render, with a 200 ms total query budget and a 40 ms ping timeout per session. Set `data_dir` to an absolute path under `[pi-live]` when pi-live publishes elsewhere; Starmux looks for `status/` and `sockets/` in that directory. Reading the files does not remove stale records.
+Starmux reads version 2 JSON records from `~/.local/share/pi/status`. It gets the endpoint from `pi-socket` and checks each session's Unix socket with the socket protocol's version 1 ping request. An absent directory, invalid records, unsupported versions, and unreachable sessions produce no rows for those records. A bad record does not hide healthy sessions. Starmux scans at most 256 directory entries and checks at most 32 records matching the current tmux socket per render, with a 200 ms total query budget and a 40 ms ping timeout per session. Set `data_dir` to an absolute path under `[pi-live]` when pi-live publishes elsewhere; Starmux looks for `status/` and `sockets/` in that directory. Reading the files does not remove stale records.
 
 ## Selected Pi context
 
-Add `pi-context` to show the plans, pull requests, and loaded skills recorded by pi-live for the Pi session in the selected tmux pane. It can be placed independently of `pi-live`:
+Add `pi-context` to show the plans, pull requests, and loaded skills recorded by Pi Workbench for the Pi session in the selected tmux pane. It can be placed independently of `pi-live`:
 
 ```toml
 modules = ["sessions", "divider", "pi-live", "divider", "pi-context"]
@@ -171,9 +171,9 @@ Only nonempty Plans, PRs, and Skills sections appear. `◇` marks a plan and `�
 open_command = ["dev", "tmux", "edit", "{file}", "{pane}", "{socket}"]
 ```
 
-Starmux passes each array item as a separate process argument without a shell. `{file}` is required exactly once; `{pane}` is the selected tmux pane ID and `{socket}` is the current tmux server socket. This example opens the file in that pane's tmux session's Neovim editor window. The command runs only for plan and skill rows. Clicks resolve the selected Pi session again and reject stale or missing targets. Pi-live records skill paths for newly loaded skills, including cached GitHub skills. Older skill records use `~/.agents/skills/<name>/SKILL.md` or `~/.pi/agent/skills/<name>/SKILL.md` when present; other older records have no file target until the skill is loaded again. Text is escaped and clipped to the sidebar width. Styles accept palette colors. Use `disabled = true` to hide the module.
+Starmux passes each array item as a separate process argument without a shell. `{file}` is required exactly once; `{pane}` is the selected tmux pane ID and `{socket}` is the current tmux server socket. This example opens the file in that pane's tmux session's Neovim editor window. The command runs only for plan and skill rows. Clicks resolve the selected Pi session again and reject stale or missing targets. The `pi-skills` namespace records paths for loaded skills, including cached GitHub skills. A skill without a recorded path uses `~/.agents/skills/<name>/SKILL.md` or `~/.pi/agent/skills/<name>/SKILL.md` when present. Text is escaped and clipped to the sidebar width. Styles accept palette colors. Use `disabled = true` to hide the module.
 
-The module reads the selected reachable session's version 1 context file through its pi-live status record. Switching panes updates the rows. No selected Pi session, an empty context, a missing file, or an invalid file produces no context rows. The Pi status scan is shared with `pi-live` when both modules are enabled. It shows at most 16 entries in each category.
+The module reads the selected reachable session's version 2 namespaced context file through its Pi status record. Switching panes updates the rows. No selected Pi session, an empty context, a missing file, or an invalid file produces no context rows. The Pi status scan is shared with `pi-live` when both modules are enabled. It shows at most 16 entries in each category.
 
 PR states come from authenticated `gh api` requests in a background worker. A sidebar render uses the cached result immediately and refreshes eligible PRs after five minutes. At most 16 PRs can start a refresh per render, matching the displayed PR limit. Concurrent clients share a lease per PR. Failed lookups retry after one minute, preserve the last known state for up to 30 minutes, then show a muted ``. A missing `gh` command or GitHub authentication leaves the association visible with unknown state. The cache lives under `${XDG_CACHE_HOME:-~/.cache}/starmux/pr-state`.
 

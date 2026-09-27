@@ -1054,9 +1054,10 @@ mod tests {
         });
         let record = |id: &str, socket: &std::path::Path, name: &str, cwd: &std::path::Path| {
             serde_json::json!({
-                "version": 1, "sessionId": id, "name": name, "pid": 1,
-                "cwd": cwd, "socketPath": socket, "startedAt": "2026-01-01T00:00:00Z",
-                "updatedAt": "2026-01-01T00:00:00Z", "state": "working"
+                "version": 2, "sessionId": id, "name": name, "pid": 1,
+                "cwd": cwd, "startedAt": "2026-01-01T00:00:00Z",
+                "updatedAt": "2026-01-01T00:00:00Z", "state": "working",
+                "extensions": {"pi-socket": {"version": 1, "data": {"socketPath": socket}}}
             })
             .to_string()
         };
@@ -1091,21 +1092,16 @@ mod tests {
             .to_string(),
         )
         .unwrap();
-        live["version"] = 2.into();
-        live.as_object_mut().unwrap().remove("socketPath");
-        live["extensions"] = serde_json::json!({
-            "pi-socket": {"version": 1, "data": {"socketPath": socket_path}},
-            "pi-tmux": {"version": 1, "data": {
-                "paneId": "%0", "sessionName": "main", "windowIndex": 5, "windowName": "old",
-                "socketPath": "/tmp/starmux-current.sock"
-            }}
-        });
+        live["extensions"]["pi-tmux"] = serde_json::json!({"version": 1, "data": {
+            "paneId": "%0", "sessionName": "main", "windowIndex": 5, "windowName": "old",
+            "socketPath": "/tmp/starmux-current.sock"
+        }});
         fs::write(data_dir.join("status/live.json"), live.to_string()).unwrap();
         let mut unnamed: serde_json::Value =
             serde_json::from_str(&record("unnamed", &socket_path, "", &repo)).unwrap();
-        unnamed["tmux"] = serde_json::json!({
+        unnamed["extensions"]["pi-tmux"] = serde_json::json!({"version": 1, "data": {
             "paneId": "%1", "sessionName": "main", "socketPath": "/tmp/starmux-current.sock"
-        });
+        }});
         fs::write(data_dir.join("status/unnamed.json"), unnamed.to_string()).unwrap();
         fs::write(
             data_dir.join("status/stale.json"),
@@ -1287,10 +1283,13 @@ mod tests {
         });
         let record = |id: &str, tmux: serde_json::Value| {
             serde_json::json!({
-                "version": 1, "sessionId": id, "name": id, "pid": 1,
-                "cwd": "/tmp", "socketPath": pi_socket,
+                "version": 2, "sessionId": id, "name": id, "pid": 1,
+                "cwd": "/tmp",
                 "startedAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z",
-                "state": "idle", "tmux": tmux
+                "state": "idle", "extensions": {
+                    "pi-socket": {"version": 1, "data": {"socketPath": pi_socket}},
+                    "pi-tmux": {"version": 1, "data": tmux}
+                }
             })
             .to_string()
         };
@@ -1302,10 +1301,10 @@ mod tests {
         }
         fs::write(
             data_dir.join("status/legacy.json"),
-            record(
-                "legacy",
-                serde_json::json!({"paneId": "%0", "sessionName": "main"}),
-            ),
+            serde_json::json!({"version": 1, "sessionId": "legacy", "name": "legacy", "pid": 1,
+                "cwd": "/tmp", "socketPath": pi_socket, "startedAt": "2026-01-01T00:00:00Z",
+                "updatedAt": "2026-01-01T00:00:00Z", "state": "idle",
+                "tmux": {"paneId": "%0", "sessionName": "main", "socketPath": "/tmp/current-tmux.sock"}}).to_string(),
         )
         .unwrap();
         fs::write(

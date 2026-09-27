@@ -56,15 +56,12 @@ struct Record {
     name: Option<String>,
     pid: u64,
     cwd: String,
-    #[serde(rename = "socketPath")]
-    socket_path: Option<PathBuf>,
     #[serde(rename = "startedAt")]
     started_at: String,
     #[serde(rename = "updatedAt")]
     updated_at: String,
     state: String,
-    tmux: Option<TmuxLocation>,
-    extensions: Option<Value>,
+    extensions: Value,
     #[serde(rename = "sessionFile")]
     session_file: Option<PathBuf>,
     #[serde(rename = "contextPath")]
@@ -131,31 +128,13 @@ pub(crate) fn list(data_dir: &Path, tmux_socket: &Path) -> Result<Vec<LiveEntry>
         let Ok(record) = serde_json::from_slice::<Record>(&bytes) else {
             continue;
         };
-        let (socket_path, tmux) = if record.version == 1 {
-            (record.socket_path.as_deref(), record.tmux.as_ref())
-        } else {
-            (
-                record
-                    .extensions
-                    .as_ref()
-                    .and_then(|extensions| extension_data(extensions, "pi-socket"))
-                    .and_then(|data| data.get("socketPath"))
-                    .and_then(Value::as_str)
-                    .map(Path::new),
-                None,
-            )
-        };
-        let v2_tmux = if record.version == 2 {
-            record
-                .extensions
-                .as_ref()
-                .and_then(|extensions| extension_data(extensions, "pi-tmux"))
-                .and_then(|data| serde_json::from_value::<TmuxLocation>(data.clone()).ok())
-        } else {
-            None
-        };
-        let tmux = tmux.or(v2_tmux.as_ref());
-        if !matches!(record.version, 1 | 2)
+        let socket_path = extension_data(&record.extensions, "pi-socket")
+            .and_then(|data| data.get("socketPath"))
+            .and_then(Value::as_str)
+            .map(Path::new);
+        let tmux = extension_data(&record.extensions, "pi-tmux")
+            .and_then(|data| serde_json::from_value::<TmuxLocation>(data.clone()).ok());
+        if record.version != 2
             || record.session_id != id
             || record.pid == 0
             || record.cwd.is_empty()
@@ -163,7 +142,7 @@ pub(crate) fn list(data_dir: &Path, tmux_socket: &Path) -> Result<Vec<LiveEntry>
             || record.updated_at.is_empty()
             || !matches!(record.state.as_str(), "idle" | "working")
             || socket_path.and_then(Path::parent) != Some(data_dir.join("sockets").as_path())
-            || tmux.is_none_or(|tmux| {
+            || tmux.as_ref().is_none_or(|tmux| {
                 tmux.socket_path.as_deref() != Some(tmux_socket)
                     || !tmux_socket.is_absolute()
                     || !valid_tmux_id(&tmux.pane_id, '%')
@@ -194,8 +173,8 @@ pub(crate) fn list(data_dir: &Path, tmux_socket: &Path) -> Result<Vec<LiveEntry>
             .filter(|name| !name.trim().is_empty())
             .unwrap_or_else(|| record.session_id.chars().take(8).collect());
         let location = tmux.map(|tmux| PiLocation {
-            pane: tmux.pane_id.clone(),
-            session_name: tmux.session_name.clone(),
+            pane: tmux.pane_id,
+            session_name: tmux.session_name,
         });
         let context_path = match (&record.session_file, &record.context_path) {
             (Some(file), Some(context))
@@ -266,7 +245,10 @@ fn project_root(cwd: &str) -> String {
 }
 
 fn extension_data<'a>(extensions: &'a Value, name: &str) -> Option<&'a Value> {
-    let entry = extensions.get(name)?;
+    entry_data(extensions.get(name)?)
+}
+
+fn entry_data(entry: &Value) -> Option<&Value> {
     (entry.get("version")?.as_u64()? == 1).then_some(entry.get("data")?)
 }
 
@@ -356,33 +338,19 @@ pub(crate) fn read_context(path: &Path, session_id: &str) -> Option<PiContext> {
         return None;
     }
     let value: Value = serde_json::from_slice(&bytes).ok()?;
-    let version = value.get("version")?.as_u64()?;
-    if !matches!(version, 1 | 2) || value.get("sessionId")?.as_str()? != session_id {
+    if value.get("version")?.as_u64()? != 2 || value.get("sessionId")?.as_str()? != session_id {
         return None;
     }
     let session_file = path.file_name()?.to_str()?.strip_suffix(".context.json")?;
     let directory = path.parent()?;
-    let namespaces = value.get("extensions");
-    let plans_data = if version == 1 {
-        Some(&value)
-    } else {
-        namespaces.and_then(|value| extension_data(value, "pi-plans"))
-    };
-    let github_data = if version == 1 {
-        Some(&value)
-    } else {
-        namespaces.and_then(|value| extension_data(value, "pi-github"))
-    };
-    let skills_data = if version == 1 {
-        Some(&value)
-    } else {
-        namespaces.and_then(|value| extension_data(value, "pi-skills"))
-    };
+    let namespaces = value.get("extensions")?.as_object()?;
+    let plans_data = namespaces.get("pi-plans").and_then(entry_data);
+    let github_data = namespaces.get("pi-github").and_then(entry_data);
+    let skills_data = namespaces.get("pi-skills").and_then(entry_data);
     let empty = Vec::new();
     let plans = plans_data
-        .and_then(|data| data.get("plans"))
-        .and_then(Value::as_array)
-        .or_else(|| (version == 2).then_some(&empty))?;
+        .map(|data| data.get("plans").and_then(Value::as_array))
+        .unwrap_or(Some(&empty))?;
     let prs = github_data
         .and_then(|data| data.get("pullRequests"))
         .map(Value::as_array)
@@ -513,12 +481,18 @@ mod context_tests {
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("session.jsonl.context.json");
         let value = serde_json::json!({
-            "version": 1, "sessionId": "session",
-            "plans": (0..20).map(|n| serde_json::json!({"id": format!("{n:024x}"), "title": format!("Plan {n}"), "path": format!("session.jsonl.plans/{n:024x}.md")})).collect::<Vec<_>>(),
-            "pullRequests": ["https://github.com/owner/repo/pull/42"], "skills": ["testing"]
+            "version": 2, "sessionId": "session",
+            "extensions": {
+                "pi-plans": {"version": 1, "data": {"plans": (0..20).map(|n| serde_json::json!({"id": format!("{n:024x}"), "title": format!("Plan {n}"), "path": format!("session.jsonl.plans/{n:024x}.md")})).collect::<Vec<_>>() }},
+                "pi-github": {"version": 1, "data": {"pullRequests": ["https://github.com/owner/repo/pull/42"]}},
+                "pi-skills": {"version": 1, "data": {"skills": ["testing"]}}
+            }
         });
         fs::write(&path, value.to_string()).unwrap();
         assert_eq!(read_context(&path, "session").unwrap().plans.len(), 16);
+        fs::write(&path, r#"{"version":1,"sessionId":"session","plans":[]}"#).unwrap();
+        assert!(read_context(&path, "session").is_none());
+        fs::write(&path, value.to_string()).unwrap();
         assert!(read_context(&path, "another").is_none());
         let link = dir.join("link.context.json");
         std::os::unix::fs::symlink(&path, &link).unwrap();

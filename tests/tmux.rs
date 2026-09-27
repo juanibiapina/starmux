@@ -738,16 +738,20 @@ fn pi_attention_row_click_selects_its_pane() {
         fs::create_dir_all(skill_path.parent().unwrap()).unwrap();
         fs::write(&skill_path, "# Testing").unwrap();
         fs::write(&context_path, serde_json::json!({
-            "version": 1, "sessionId": id,
-            "plans": [{"id": "0123456789abcdef01234567", "title": format!("{id} plan"), "path": plan_relative}],
-            "pullRequests": [], "skills": ["testing"], "skillPaths": {"testing": skill_path}
+            "version": 2, "sessionId": id, "extensions": {
+                "pi-plans": {"version": 1, "data": {"plans": [{"id": "0123456789abcdef01234567", "title": format!("{id} plan"), "path": plan_relative}]}},
+                "pi-skills": {"version": 1, "data": {"skills": ["testing"], "skillPaths": {"testing": skill_path}}}
+            }
         }).to_string()).unwrap();
         let status = serde_json::json!({
-            "version": 1, "sessionId": id, "name": name, "pid": 1,
-            "cwd": "/tmp", "socketPath": pi_socket, "sessionFile": session_file,
+            "version": 2, "sessionId": id, "name": name, "pid": 1,
+            "cwd": "/tmp", "sessionFile": session_file,
             "contextPath": context_path, "startedAt": "2026-01-01T00:00:00Z",
             "updatedAt": "2026-01-01T00:00:00Z", "state": state,
-            "tmux": {"paneId": pane, "sessionName": "main", "windowIndex": 0, "windowName": "old", "socketPath": server_socket}
+            "extensions": {
+                "pi-socket": {"version": 1, "data": {"socketPath": pi_socket}},
+                "pi-tmux": {"version": 1, "data": {"paneId": pane, "sessionName": "main", "windowIndex": 0, "windowName": "old", "socketPath": server_socket}}
+            }
         });
         fs::write(
             root.join("status").join(format!("{id}.json")),
@@ -758,11 +762,13 @@ fn pi_attention_row_click_selects_its_pane() {
     fs::write(
         root.join("status/foreign.json"),
         serde_json::json!({
-            "version": 1, "sessionId": "foreign", "name": "foreign pi", "pid": 1,
-            "cwd": "/tmp", "socketPath": pi_socket,
+            "version": 2, "sessionId": "foreign", "name": "foreign pi", "pid": 1,
+            "cwd": "/tmp",
             "startedAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z",
-            "state": "idle",
-            "tmux": {"paneId": foreign_pane, "sessionName": "main", "socketPath": foreign_server_socket}
+            "state": "idle", "extensions": {
+                "pi-socket": {"version": 1, "data": {"socketPath": pi_socket}},
+                "pi-tmux": {"version": 1, "data": {"paneId": foreign_pane, "sessionName": "main", "socketPath": foreign_server_socket}}
+            }
         }).to_string(),
     ).unwrap();
     let config = root.join("config.toml");
