@@ -350,13 +350,17 @@ impl<T: Tmux> Application<T> {
         let states = self.pr_states(context.as_ref(), true);
         let usage = self.usage_rows(true)?;
         let jobs = self.gob_jobs(&snapshot)?;
-        self.sidebar.render_with_context(
+        let (commands, _) = self.commands(&snapshot);
+        self.sidebar.render_with_inputs(
             &snapshot,
-            &pi_sessions,
-            &usage,
-            &jobs,
-            context.as_ref(),
-            &states,
+            crate::RenderInputs {
+                pi_sessions: &pi_sessions,
+                usage_rows: &usage,
+                gob_jobs: &jobs,
+                context: context.as_ref(),
+                states: &states,
+                commands: &commands,
+            },
         )
     }
 
@@ -433,6 +437,21 @@ impl<T: Tmux> Application<T> {
             .iter()
             .map(|url| crate::pr_state::resolve(url, &dir, spawn))
             .collect()
+    }
+
+    fn commands(&self, snapshot: &Snapshot) -> (BTreeMap<String, String>, Vec<String>) {
+        let mut rows = BTreeMap::new();
+        let mut errors = Vec::new();
+        for (name, argv) in self.sidebar.command_options() {
+            match crate::command::run(argv, std::path::Path::new(&snapshot.pane_path)) {
+                Ok(Some(text)) => {
+                    rows.insert(name.to_owned(), text);
+                }
+                Ok(None) => {}
+                Err(error) => errors.push(format!("{name}: {error}")),
+            }
+        }
+        (rows, errors)
     }
 
     fn gob_jobs(&self, snapshot: &Snapshot) -> Result<Vec<crate::GobJob>, String> {
@@ -513,6 +532,13 @@ impl<T: Tmux> Application<T> {
                 job.percent(time::OffsetDateTime::now_utc())
             ));
         }
+        let (commands, errors) = self.commands(&snapshot);
+        for (name, output) in commands {
+            result.push_str(&format!("{name} output={output:?}\n"));
+        }
+        for error in errors {
+            result.push_str(&format!("{error}\n"));
+        }
         Ok(result)
     }
 
@@ -535,17 +561,25 @@ impl<T: Tmux> Application<T> {
             .elapsed()
             .as_micros()
             .saturating_sub(queried + usage_us);
-        self.sidebar.render_with_context(
+        let (commands, _) = self.commands(&snapshot);
+        let command_us = started
+            .elapsed()
+            .as_micros()
+            .saturating_sub(queried + usage_us + gob_us);
+        self.sidebar.render_with_inputs(
             &snapshot,
-            &pi_sessions,
-            &usage,
-            &jobs,
-            context.as_ref(),
-            &states,
+            crate::RenderInputs {
+                pi_sessions: &pi_sessions,
+                usage_rows: &usage,
+                gob_jobs: &jobs,
+                context: context.as_ref(),
+                states: &states,
+                commands: &commands,
+            },
         )?;
         Ok(format!(
-            "{{\"query_us\":{queried},\"usage_us\":{usage_us},\"gob_us\":{gob_us},\"render_us\":{}}}",
-            started.elapsed().as_micros().saturating_sub(queried + usage_us + gob_us)
+            "{{\"query_us\":{queried},\"usage_us\":{usage_us},\"gob_us\":{gob_us},\"command_us\":{command_us},\"render_us\":{}}}",
+            started.elapsed().as_micros().saturating_sub(queried + usage_us + gob_us + command_us)
         ))
     }
 
@@ -856,6 +890,49 @@ mod tests {
     use super::{words, Application, Focus, MemoryTmux, Pane, Sidebar, Snapshot};
     use crate::{Session, Window};
     use std::collections::BTreeMap;
+
+    #[test]
+    fn named_commands_follow_the_selected_pane_and_fail_independently() {
+        use std::{fs, time::Instant};
+        let root = std::env::temp_dir().join(format!("starmux-commands-{}", std::process::id()));
+        fs::create_dir_all(root.join("first")).unwrap();
+        fs::create_dir_all(root.join("second")).unwrap();
+        let config = "modules = [\"command.cwd\", \"command.slow\"]\n[commands.cwd]\nargv = [\"/bin/pwd\"]\n[commands.slow]\nargv = [\"sleep\", \"2\"]\n";
+        let sidebar = Sidebar::from_toml(config).unwrap();
+        for (path, expected) in [
+            (root.join("first"), "first"),
+            (root.join("second"), "second"),
+        ] {
+            let snapshot = Snapshot {
+                width: 30,
+                client_width: 100,
+                client_height: 25,
+                status_lines: 1,
+                current_session: "$0".into(),
+                current_pane: "%0".into(),
+                pane_path: path.to_str().unwrap().into(),
+                sessions: vec![Session {
+                    id: "$0".into(),
+                    name: "main".into(),
+                    windows: vec![],
+                }],
+            };
+            let app = Application::new(sidebar.clone(), MemoryTmux::new(snapshot));
+            let started = Instant::now();
+            let rendered = app.render_query("socket", "client", 300, None).unwrap();
+            assert!(
+                rendered.contains(&format!("/{expected}")),
+                "{rendered}; {}",
+                app.explain("socket", "client", 30, None).unwrap()
+            );
+            assert!(started.elapsed().as_millis() < 1200);
+            assert!(app
+                .explain("socket", "client", 30, None)
+                .unwrap()
+                .contains("command.slow: command timed out"));
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn shell_quoted_snapshot_values_remain_literal() {

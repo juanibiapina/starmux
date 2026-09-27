@@ -12,7 +12,7 @@ Run `starmux print-config` to print the complete configuration. Run `starmux che
 modules = ["sessions", "divider"]
 ```
 
-The built-ins are `sessions`, `divider`, `pi-live`, `pi-context`, `usage`, `gob`, `spacer`, and `blank`. Unknown names and duplicate names other than `divider` and `blank` are errors. Repeat `divider` to separate multiple sections, for example `modules = ["sessions", "divider", "pi-live", "divider", "usage", "divider", "gob"]`. Each divider uses the same `[divider]` settings. `pi-live`, `pi-context`, `usage`, and `gob` are not enabled by default.
+The built-ins are `sessions`, `divider`, `pi-live`, `pi-context`, `usage`, `gob`, `spacer`, and `blank`. Named external commands use `command.<name>`. Unknown names and duplicate names other than `divider` and `blank` are errors. Repeat `divider` to separate multiple sections, for example `modules = ["sessions", "divider", "pi-live", "divider", "usage", "divider", "gob"]`. Each divider uses the same `[divider]` settings. `pi-live`, `pi-context`, `usage`, and `gob` are not enabled by default.
 
 Place one `spacer` between modules to push the following rows to the bottom of the sidebar. For example, `modules = ["sessions", "spacer", "divider", "usage"]` keeps sessions at the top and usage at the bottom. The spacer takes only the rows left after all other modules render. It adds no rows if the sidebar is full, and it has no style or click target. Its size updates when the client is resized. Add `blank` after `usage` to leave one empty row below it: `modules = ["sessions", "spacer", "divider", "usage", "blank"]`. Each `blank` entry adds one empty row without a style or click target; repeat it for more space.
 
@@ -195,6 +195,27 @@ bar_track_color = "colour238"
 The section shows `Jobs`, then a green dot and description for each running job. If a job has no description, `$name` shows its command or job ID. The format also accepts `$id`. A job with a previous successful-run average gets a second row with a green five-block bar and a percentage, such as `███▁  63%`. Gob calculates that percentage from elapsed time divided by its previous average and caps it at 100%; a job can still be running at 100%. When history or a valid start time is absent, there is no progress row. Narrow widths remove bar cells before the percentage. Rows do not have click targets. All job text is escaped and clipped.
 
 Starmux runs `gob list --json` from the selected pane's `pane_current_path`. Gob matches the workdir exactly: a job started in a nested directory appears only when the pane is in that directory. Switching panes can change the list. If gob is missing or the directory has no running jobs, the section has no rows. Gob starts its daemon when `list` runs and the daemon is absent. Starmux bounds the command to 1.5 seconds and 2 MiB of output; unexpected errors are reported with context.
+
+## External commands
+
+Place up to four named commands anywhere in `modules`. Each `command.<name>` entry needs a matching `[commands.<name>]` table. Names contain only ASCII letters, digits, `_`, or `-` and are at most 32 characters long. For example:
+
+```toml
+modules = ["sessions", "divider", "command.gitmux", "divider", "command.build"]
+
+[commands.gitmux]
+argv = ["gitmux", "-cfg", "~/.gitmux.conf"]
+output = "tmux-styles"
+prefix = " "
+
+[commands.build]
+argv = ["my-status", "--short"]
+style = "fg=green"
+```
+
+Starmux runs each argument array directly, without a shell, from the selected pane's current directory. A leading `~/` in an argument expands to the user's `HOME` directory; other shell expansions are not performed. Gitmux uses the pane directory by default. Commands run in module order on each sidebar redraw. Each command has a 500 ms deadline; four commands can take up to two seconds if all stall. Stdout is limited to 16 KiB and only its first line is displayed as one row when nonempty. A missing executable, invalid directory, empty output, failure, or timeout adds no row. `starmux explain` reports command failures; `starmux timings` includes `command_us`. `starmux check-config` validates names, references, arguments, modes, and styles. A command may have at most 16 arguments, each at most 1024 bytes.
+
+`prefix` adds literal text before the output; it defaults to empty and accepts up to 64 bytes without control characters. The default `output = "text"` escapes command output and applies `style` (default `default`). Set `output = "tmux-styles"` for gitmux's colored output. This mode accepts only `#[none]` and validated tmux text styles such as `#[fg=green,bold]`. All other directives and tmux formats remain literal text. Command rows have no click target. Output is clipped to the sidebar width.
 
 ## Tmux integration
 

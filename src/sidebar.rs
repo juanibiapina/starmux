@@ -49,6 +49,8 @@ struct Config {
     pi_live: PiLiveConfig,
     usage: UsageConfig,
     gob: GobConfig,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    commands: BTreeMap<String, CommandConfig>,
     #[serde(rename = "pi-context")]
     pi_context: PiContextConfig,
 }
@@ -97,6 +99,26 @@ struct GobConfig {
     running_style: String,
     progress_style: String,
     bar_track_color: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+struct CommandConfig {
+    argv: Vec<String>,
+    output: String,
+    style: String,
+    prefix: String,
+}
+
+impl Default for CommandConfig {
+    fn default() -> Self {
+        Self {
+            argv: Vec::new(),
+            output: "text".into(),
+            style: "default".into(),
+            prefix: String::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -190,6 +212,7 @@ impl Default for Config {
             pi_live: PiLiveConfig::default(),
             usage: UsageConfig::default(),
             gob: GobConfig::default(),
+            commands: BTreeMap::new(),
             pi_context: PiContextConfig::default(),
         }
     }
@@ -312,6 +335,15 @@ struct CompiledSessions {
     window_format: Vec<Node>,
 }
 
+pub struct RenderInputs<'a> {
+    pub pi_sessions: &'a [crate::PiSession],
+    pub usage_rows: &'a [crate::usage::UsageRow],
+    pub gob_jobs: &'a [crate::gob::GobJob],
+    pub context: Option<&'a crate::PiContext>,
+    pub states: &'a [crate::pr_state::PrState],
+    pub commands: &'a BTreeMap<String, String>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Sidebar {
     config: Config,
@@ -348,12 +380,40 @@ impl Sidebar {
             "blank",
         ];
         let mut seen = BTreeSet::new();
+        if config.commands.len() > 4 {
+            return Err("at most 4 commands may be configured".into());
+        }
         for name in &config.modules {
-            if !known.contains(&name.as_str()) {
+            if let Some(id) = name.strip_prefix("command.") {
+                if !valid_command_name(id) || !config.commands.contains_key(id) {
+                    return Err(format!("unknown command module {name}"));
+                }
+            } else if !known.contains(&name.as_str()) {
                 return Err(format!("unknown module {name}"));
             }
             if name != "divider" && name != "blank" && !seen.insert(name) {
                 return Err(format!("duplicate module {name}"));
+            }
+        }
+        for (name, command) in &config.commands {
+            if !valid_command_name(name) || !seen.contains(&format!("command.{name}")) {
+                return Err(format!("unused or invalid command {name}"));
+            }
+            if command.argv.is_empty()
+                || command.argv.len() > 16
+                || command
+                    .argv
+                    .iter()
+                    .any(|arg| arg.len() > 1024 || arg.contains('\0'))
+                || command.argv[0].is_empty()
+            {
+                return Err(format!("command.{name} argv must have 1–16 nonempty executable arguments of at most 1024 bytes"));
+            }
+            if !matches!(command.output.as_str(), "text" | "tmux-styles") {
+                return Err(format!("invalid command.{name} output mode"));
+            }
+            if command.prefix.len() > 64 || command.prefix.chars().any(char::is_control) {
+                return Err(format!("invalid command.{name} prefix"));
             }
         }
         let palette = match &config.palette {
@@ -467,6 +527,10 @@ impl Sidebar {
         ] {
             resolve_style(style, "default", &palette)?;
         }
+        for (name, command) in &config.commands {
+            resolve_style(&command.style, "default", &palette)
+                .map_err(|error| format!("command.{name} style: {error}"))?;
+        }
         validate_color(&config.usage.bar_track_color, &palette)?;
         validate_color(&config.gob.bar_track_color, &palette)?;
         for fill in [
@@ -575,6 +639,17 @@ impl Sidebar {
         ))
     }
 
+    pub(crate) fn command_options(&self) -> Vec<(&str, &[String])> {
+        self.config
+            .modules
+            .iter()
+            .filter_map(|name| {
+                let id = name.strip_prefix("command.")?;
+                Some((name.as_str(), self.config.commands.get(id)?.argv.as_slice()))
+            })
+            .collect()
+    }
+
     pub fn render(&self, snapshot: &Snapshot) -> Result<String, String> {
         self.render_with_usage(snapshot, &[], &[])
     }
@@ -615,6 +690,32 @@ impl Sidebar {
         context: Option<&crate::PiContext>,
         states: &[crate::pr_state::PrState],
     ) -> Result<String, String> {
+        self.render_with_inputs(
+            snapshot,
+            RenderInputs {
+                pi_sessions,
+                usage_rows,
+                gob_jobs,
+                context,
+                states,
+                commands: &BTreeMap::new(),
+            },
+        )
+    }
+
+    pub fn render_with_inputs(
+        &self,
+        snapshot: &Snapshot,
+        input: RenderInputs<'_>,
+    ) -> Result<String, String> {
+        let RenderInputs {
+            pi_sessions,
+            usage_rows,
+            gob_jobs,
+            context,
+            states,
+            commands,
+        } = input;
         validate_snapshot(snapshot)?;
         let mut rows = Vec::new();
         let mut spacer = None;
@@ -644,6 +745,11 @@ impl Sidebar {
                 }
                 "gob" if !self.config.gob.disabled => {
                     rows.extend(self.render_gob(gob_jobs, snapshot.width)?)
+                }
+                name if name.starts_with("command.") => {
+                    if let Some(text) = commands.get(name) {
+                        rows.push(self.render_command(name, text)?);
+                    }
                 }
                 "spacer" => spacer = Some(rows.len()),
                 "blank" => rows.push(Row::blank()),
@@ -1008,6 +1114,33 @@ impl Sidebar {
         Ok(rows)
     }
 
+    fn render_command(&self, name: &str, text: &str) -> Result<Row, String> {
+        let config = &self.config.commands[name.strip_prefix("command.").unwrap()];
+        let style = resolve_style(&config.style, "default", &self.palette)?;
+        let mut spans = Vec::new();
+        if !config.prefix.is_empty() {
+            spans.push(Span {
+                text: config.prefix.clone(),
+                style: style.clone(),
+            });
+        }
+        if config.output == "tmux-styles" {
+            spans.extend(command_spans(text, &style, &self.palette));
+        } else {
+            spans.push(Span {
+                text: text.into(),
+                style,
+            });
+        }
+        Ok(Row {
+            spans,
+            fill: None,
+            range: None,
+            focus: false,
+            selected: false,
+        })
+    }
+
     fn render_gob(&self, jobs: &[crate::gob::GobJob], width: usize) -> Result<Vec<Row>, String> {
         if jobs.is_empty() {
             return Ok(Vec::new());
@@ -1283,6 +1416,14 @@ fn validate_snapshot(snapshot: &Snapshot) -> Result<(), String> {
         return Err("current session not present".into());
     }
     Ok(())
+}
+
+fn valid_command_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 32
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 
 fn valid_tmux_option(value: &str) -> bool {
@@ -1954,6 +2095,53 @@ enum Range {
     UsagePage(String),
     PullRequest(String),
     File(String),
+}
+
+fn command_spans(text: &str, base: &str, palette: &BTreeMap<String, String>) -> Vec<Span> {
+    let mut spans = Vec::new();
+    let mut literal = String::new();
+    let mut style = base.to_owned();
+    let mut rest = text;
+    while !rest.is_empty() {
+        if rest.starts_with("##") {
+            literal.push_str("##");
+            rest = &rest[2..];
+            continue;
+        }
+        if let Some(tail) = rest.strip_prefix("#[") {
+            if let Some(end) = tail.find(']') {
+                let directive = &tail[..end];
+                let next = if directive == "none" {
+                    Some(base.to_owned())
+                } else if directive.contains('#') || directive.contains('[') {
+                    None
+                } else {
+                    resolve_style(directive, base, palette).ok()
+                };
+                if let Some(next) = next {
+                    if !literal.is_empty() {
+                        spans.push(Span {
+                            text: std::mem::take(&mut literal),
+                            style,
+                        });
+                    }
+                    style = next;
+                    rest = &tail[end + 1..];
+                    continue;
+                }
+            }
+        }
+        let character = rest.chars().next().unwrap();
+        literal.push(character);
+        rest = &rest[character.len_utf8()..];
+    }
+    if !literal.is_empty() {
+        spans.push(Span {
+            text: literal,
+            style,
+        });
+    }
+    coalesce(spans)
 }
 
 fn escaped(text: &str) -> String {

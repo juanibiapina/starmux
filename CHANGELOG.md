@@ -4,6 +4,7 @@
 
 ### Added
 - Show available Codex resets beside the usage heading.
+- Show output from multiple configured commands in the sidebar, including colored gitmux status for the selected pane's directory.
 
 ## [0.3.0] - 2026-09-27
 

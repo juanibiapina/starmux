@@ -1037,3 +1037,68 @@ fn pi_context_icons_and_clipping_work_at_narrow_widths() {
     assert!(rendered.contains("…##4242"), "{rendered}");
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn named_commands_keep_order_and_render_only_validated_styles() {
+    let sidebar = Sidebar::from_toml(
+        "modules = [\"command.gitmux\", \"divider\", \"command.other\"]\n\
+         [commands.gitmux]\nargv = [\"gitmux\"]\noutput = \"tmux-styles\"\nprefix = \" \"\n\
+         [commands.other]\nargv = [\"status\"]\nstyle = \"fg=green\"\n",
+    )
+    .unwrap();
+    let commands = BTreeMap::from([
+        (
+            "command.gitmux".into(),
+            "#[none]#[fg=white,bold]⎇ main #[range=user|bad]#{pane_id} ##[fg=red]".into(),
+        ),
+        ("command.other".into(), "second #[fg=red]#{pane_id}".into()),
+    ]);
+    let mut input = snapshot();
+    input.width = 100;
+    let rendered = sidebar
+        .render_with_inputs(
+            &input,
+            starmux::RenderInputs {
+                pi_sessions: &[],
+                usage_rows: &[],
+                gob_jobs: &[],
+                context: None,
+                states: &[],
+                commands: &commands,
+            },
+        )
+        .unwrap();
+    assert!(
+        rendered.contains("#[default] #[fg=white,bold]⎇ main"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("##[range=user|bad]##{pane_id} ####[fg=red]"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("#[fg=green]second ##[fg=red]##{pane_id}"),
+        "{rendered}"
+    );
+    assert!(rendered.find("⎇ main").unwrap() < rendered.find("----------------").unwrap());
+    assert!(rendered.find("----------------").unwrap() < rendered.find("second").unwrap());
+    assert_eq!(rendered.matches("##[range=user|bad]").count(), 1);
+    let printed = sidebar.print_config().unwrap();
+    assert!(printed.contains("[commands.gitmux]"));
+    Sidebar::from_toml(&printed).unwrap();
+}
+
+#[test]
+fn command_instances_require_exact_valid_references() {
+    for config in [
+        "modules = [\"command.gitmux\"]",
+        "modules = [\"command.gitmux\", \"command.gitmux\"]\n[commands.gitmux]\nargv = [\"gitmux\"]",
+        "modules = []\n[commands.gitmux]\nargv = [\"gitmux\"]",
+        "modules = [\"command.bad.name\"]\n[commands.\"bad.name\"]\nargv = [\"gitmux\"]",
+        "modules = [\"command.gitmux\"]\n[commands.gitmux]\nargv = []",
+        "modules = [\"command.gitmux\"]\n[commands.gitmux]\nargv = [\"gitmux\"]\noutput = \"raw\"",
+        "modules = [\"command.gitmux\"]\n[commands.gitmux]\nargv = [\"gitmux\"]\nstyle = \"range=user|bad\"",
+    ] {
+        assert!(Sidebar::from_toml(config).is_err(), "{config}");
+    }
+}
