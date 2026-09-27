@@ -1081,18 +1081,24 @@ mod tests {
         fs::write(
             &context_path,
             serde_json::json!({
-                "version": 1, "sessionId": "live",
-                "plans": [{"id": "0123456789abcdef01234567", "title": "#[fg=red] Build search", "path": "live.jsonl.plans/0123456789abcdef01234567.md"}],
-                "pullRequests": [],
-                "skills": ["testing"],
-                "skillPaths": {"testing": skill_path}
+                "version": 2, "sessionId": "live",
+                "extensions": {
+                    "pi-plans": {"version": 1, "data": {"plans": [{"id": "0123456789abcdef01234567", "title": "#[fg=red] Build search", "path": "live.jsonl.plans/0123456789abcdef01234567.md"}]}},
+                    "pi-github": {"version": 1, "data": {"pullRequests": []}},
+                    "pi-skills": {"version": 1, "data": {"skills": ["testing"], "skillPaths": {"testing": skill_path}}}
+                }
             })
             .to_string(),
         )
         .unwrap();
-        live["tmux"] = serde_json::json!({
-            "paneId": "%0", "sessionName": "main", "windowIndex": 5, "windowName": "old",
-            "socketPath": "/tmp/starmux-current.sock"
+        live["version"] = 2.into();
+        live.as_object_mut().unwrap().remove("socketPath");
+        live["extensions"] = serde_json::json!({
+            "pi-socket": {"version": 1, "data": {"socketPath": socket_path}},
+            "pi-tmux": {"version": 1, "data": {
+                "paneId": "%0", "sessionName": "main", "windowIndex": 5, "windowName": "old",
+                "socketPath": "/tmp/starmux-current.sock"
+            }}
         });
         fs::write(data_dir.join("status/live.json"), live.to_string()).unwrap();
         let mut unnamed: serde_json::Value =
@@ -1202,7 +1208,8 @@ mod tests {
         let second_url = "https://github.com/owner/another/pull/47";
         let mut updated_context: serde_json::Value =
             serde_json::from_slice(&fs::read(&context_path).unwrap()).unwrap();
-        updated_context["pullRequests"] = serde_json::json!([pr_url, second_url]);
+        updated_context["extensions"]["pi-github"]["data"]["pullRequests"] =
+            serde_json::json!([pr_url, second_url]);
         fs::write(&context_path, updated_context.to_string()).unwrap();
         let token = crate::navigation::pr_token("%0", pr_url, 0).unwrap();
         let second_token = crate::navigation::pr_token("%0", second_url, 1).unwrap();
@@ -1214,7 +1221,7 @@ mod tests {
         assert!(other_app
             .activate("/tmp/starmux-current.sock", "client", &token)
             .is_err());
-        updated_context["pullRequests"] = serde_json::json!([]);
+        updated_context["extensions"]["pi-github"]["data"]["pullRequests"] = serde_json::json!([]);
         fs::write(&context_path, updated_context.to_string()).unwrap();
         assert!(app
             .activate("/tmp/starmux-current.sock", "client", &token)

@@ -57,13 +57,14 @@ struct Record {
     pid: u64,
     cwd: String,
     #[serde(rename = "socketPath")]
-    socket_path: PathBuf,
+    socket_path: Option<PathBuf>,
     #[serde(rename = "startedAt")]
     started_at: String,
     #[serde(rename = "updatedAt")]
     updated_at: String,
     state: String,
     tmux: Option<TmuxLocation>,
+    extensions: Option<Value>,
     #[serde(rename = "sessionFile")]
     session_file: Option<PathBuf>,
     #[serde(rename = "contextPath")]
@@ -130,15 +131,39 @@ pub(crate) fn list(data_dir: &Path, tmux_socket: &Path) -> Result<Vec<LiveEntry>
         let Ok(record) = serde_json::from_slice::<Record>(&bytes) else {
             continue;
         };
-        if record.version != 1
+        let (socket_path, tmux) = if record.version == 1 {
+            (record.socket_path.as_deref(), record.tmux.as_ref())
+        } else {
+            (
+                record
+                    .extensions
+                    .as_ref()
+                    .and_then(|extensions| extension_data(extensions, "pi-socket"))
+                    .and_then(|data| data.get("socketPath"))
+                    .and_then(Value::as_str)
+                    .map(Path::new),
+                None,
+            )
+        };
+        let v2_tmux = if record.version == 2 {
+            record
+                .extensions
+                .as_ref()
+                .and_then(|extensions| extension_data(extensions, "pi-tmux"))
+                .and_then(|data| serde_json::from_value::<TmuxLocation>(data.clone()).ok())
+        } else {
+            None
+        };
+        let tmux = tmux.or(v2_tmux.as_ref());
+        if !matches!(record.version, 1 | 2)
             || record.session_id != id
             || record.pid == 0
             || record.cwd.is_empty()
             || record.started_at.is_empty()
             || record.updated_at.is_empty()
             || !matches!(record.state.as_str(), "idle" | "working")
-            || record.socket_path.parent() != Some(data_dir.join("sockets").as_path())
-            || record.tmux.as_ref().is_none_or(|tmux| {
+            || socket_path.and_then(Path::parent) != Some(data_dir.join("sockets").as_path())
+            || tmux.is_none_or(|tmux| {
                 tmux.socket_path.as_deref() != Some(tmux_socket)
                     || !tmux_socket.is_absolute()
                     || !valid_tmux_id(&tmux.pane_id, '%')
@@ -150,7 +175,10 @@ pub(crate) fn list(data_dir: &Path, tmux_socket: &Path) -> Result<Vec<LiveEntry>
             break;
         }
         matching_records += 1;
-        let Ok(socket_metadata) = fs::symlink_metadata(&record.socket_path) else {
+        let Some(socket_path) = socket_path else {
+            continue;
+        };
+        let Ok(socket_metadata) = fs::symlink_metadata(socket_path) else {
             continue;
         };
         if !socket_metadata.file_type().is_socket() {
@@ -158,16 +186,16 @@ pub(crate) fn list(data_dir: &Path, tmux_socket: &Path) -> Result<Vec<LiveEntry>
         }
         let remaining = QUERY_BUDGET.saturating_sub(started.elapsed());
         let timeout = PING_TIMEOUT.min(remaining);
-        if timeout.is_zero() || !ping(&record.socket_path, timeout) {
+        if timeout.is_zero() || !ping(socket_path, timeout) {
             continue;
         }
         let name = record
             .name
             .filter(|name| !name.trim().is_empty())
             .unwrap_or_else(|| record.session_id.chars().take(8).collect());
-        let location = record.tmux.map(|tmux| PiLocation {
-            pane: tmux.pane_id,
-            session_name: tmux.session_name,
+        let location = tmux.map(|tmux| PiLocation {
+            pane: tmux.pane_id.clone(),
+            session_name: tmux.session_name.clone(),
         });
         let context_path = match (&record.session_file, &record.context_path) {
             (Some(file), Some(context))
@@ -235,6 +263,11 @@ fn project_root(cwd: &str) -> String {
         }
     }
     cwd.to_owned()
+}
+
+fn extension_data<'a>(extensions: &'a Value, name: &str) -> Option<&'a Value> {
+    let entry = extensions.get(name)?;
+    (entry.get("version")?.as_u64()? == 1).then_some(entry.get("data")?)
 }
 
 fn valid_id(id: &str) -> bool {
@@ -323,24 +356,45 @@ pub(crate) fn read_context(path: &Path, session_id: &str) -> Option<PiContext> {
         return None;
     }
     let value: Value = serde_json::from_slice(&bytes).ok()?;
-    if value.get("version")?.as_u64()? != 1 || value.get("sessionId")?.as_str()? != session_id {
+    let version = value.get("version")?.as_u64()?;
+    if !matches!(version, 1 | 2) || value.get("sessionId")?.as_str()? != session_id {
         return None;
     }
     let session_file = path.file_name()?.to_str()?.strip_suffix(".context.json")?;
     let directory = path.parent()?;
-    let plans = value.get("plans")?.as_array()?;
-    let prs = value
-        .get("pullRequests")
+    let namespaces = value.get("extensions");
+    let plans_data = if version == 1 {
+        Some(&value)
+    } else {
+        namespaces.and_then(|value| extension_data(value, "pi-plans"))
+    };
+    let github_data = if version == 1 {
+        Some(&value)
+    } else {
+        namespaces.and_then(|value| extension_data(value, "pi-github"))
+    };
+    let skills_data = if version == 1 {
+        Some(&value)
+    } else {
+        namespaces.and_then(|value| extension_data(value, "pi-skills"))
+    };
+    let empty = Vec::new();
+    let plans = plans_data
+        .and_then(|data| data.get("plans"))
+        .and_then(Value::as_array)
+        .or_else(|| (version == 2).then_some(&empty))?;
+    let prs = github_data
+        .and_then(|data| data.get("pullRequests"))
         .map(Value::as_array)
         .unwrap_or(Some(&Vec::new()))
         .cloned()?;
-    let skills = value
-        .get("skills")
+    let skills = skills_data
+        .and_then(|data| data.get("skills"))
         .map(Value::as_array)
         .unwrap_or(Some(&Vec::new()))
         .cloned()?;
-    let skill_paths = value
-        .get("skillPaths")
+    let skill_paths = skills_data
+        .and_then(|data| data.get("skillPaths"))
         .map(Value::as_object)
         .unwrap_or(Some(&serde_json::Map::new()))
         .cloned()?;
@@ -435,6 +489,24 @@ fn local_skill_path(name: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod context_tests {
     use super::*;
+    #[test]
+    fn namespaced_context_allows_missing_features() {
+        let dir = std::env::temp_dir().join(format!("starmux-context-v2-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("session.jsonl.context.json");
+        fs::write(
+            &path,
+            r#"{"version":2,"sessionId":"session","extensions":{}}"#,
+        )
+        .unwrap();
+        let context = read_context(&path, "session").unwrap();
+        assert!(
+            context.plans.is_empty()
+                && context.pull_requests.is_empty()
+                && context.skills.is_empty()
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn reads_only_matching_regular_context_and_caps_entries() {
         let dir = std::env::temp_dir().join(format!("starmux-context-{}", std::process::id()));
