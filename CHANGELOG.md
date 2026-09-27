@@ -8,7 +8,7 @@
 
 ### Fixed
 
-- Keep the rest of the sidebar visible when Gob times out or returns an error.
+- Keep the sidebar visible when Gob fails, and avoid input errors during session switches.
 
 ## [0.4.0] - 2026-09-27
 

@@ -302,4 +302,4 @@ The first redraw shows `last --`. Each completed redraw records its measurement 
 
 `starmux init tmux` generates the side-status render command and the `MouseDown1Status` binding used for foreign-window navigation. Position, width, and outer style remain ordinary tmux options.
 
-The adapter passes `#{side-status-width}` as the explicit `--width` argument. Valid widths are 1–300 columns. Other status clicks retain tmux's default action.
+The adapter passes `#{side-status-width}` as the explicit `--width` argument. Valid widths are 1–300 columns. If the client switches sessions or windows during a redraw, Starmux discards that stale render; the next redraw shows the new focus. Other status clicks retain tmux's default action.

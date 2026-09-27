@@ -330,15 +330,53 @@ fn attached_side_status_paints_navigation_rows() {
         String::from_utf8_lossy(&valid.stderr)
     );
     assert!(String::from_utf8_lossy(&valid.stdout).contains("#[range=window|"));
-    let mut stale = query.clone();
-    stale[5] = "--current-window=@999999999".into();
-    let rejected = Command::new(binary)
-        .args(&stale)
+    tmux(&["switch-client", "-c", client_name.trim(), "-t", "aux"]);
+    let stale = Command::new(binary)
+        .args(&query)
         .env("STARMUX_CONFIG", &config_path)
         .output()
         .unwrap();
-    assert!(!rejected.status.success());
-    assert!(String::from_utf8_lossy(&rejected.stderr).contains("tmux focus changed during query"));
+    assert!(stale.status.success());
+    assert!(stale.stderr.is_empty());
+    assert!(String::from_utf8_lossy(&stale.stdout).trim().is_empty());
+    let explained = Command::new(binary)
+        .arg("explain")
+        .args(&query[1..])
+        .env("STARMUX_CONFIG", &config_path)
+        .output()
+        .unwrap();
+    assert!(!explained.status.success());
+    assert!(String::from_utf8_lossy(&explained.stderr).contains("tmux focus changed during query"));
+    let current = Command::new("tmux")
+        .args([
+            "-L",
+            &socket,
+            "display-message",
+            "-p",
+            "-c",
+            client_name.trim(),
+            "#{session_id}|#{window_id}",
+        ])
+        .output()
+        .unwrap();
+    assert!(current.status.success());
+    let focus: Vec<_> = String::from_utf8(current.stdout)
+        .unwrap()
+        .trim()
+        .split('|')
+        .map(str::to_owned)
+        .collect();
+    let mut fresh = query.clone();
+    fresh[4] = format!("--current-session={}", focus[0]);
+    fresh[5] = format!("--current-window={}", focus[1]);
+    let rendered = Command::new(binary)
+        .args(&fresh)
+        .env("STARMUX_CONFIG", &config_path)
+        .output()
+        .unwrap();
+    assert!(rendered.status.success());
+    assert!(String::from_utf8_lossy(&rendered.stdout).contains("gamma"));
+    tmux(&["switch-client", "-c", client_name.trim(), "-t", "main"]);
 
     fs::write(&config_path, "modules = [\"spacer\", \"divider\"]\n").unwrap();
     for (status, expected_status_rows) in [("on", 1), ("off", 0), ("2", 2)] {

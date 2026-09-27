@@ -5,6 +5,7 @@ use std::{collections::BTreeMap, process::Command, time::Instant};
 use std::sync::{Arc, Mutex};
 
 const MAX_WIDTH: usize = 300;
+const FOCUS_CHANGED: &str = "tmux focus changed during query";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Focus {
@@ -31,7 +32,7 @@ impl Focus {
         if snapshot.current_session != self.session
             || selected.is_none_or(|window| window.id != self.window)
         {
-            return Err("tmux focus changed during query".into());
+            return Err(FOCUS_CHANGED.into());
         }
         Ok(())
     }
@@ -354,7 +355,11 @@ impl<T: Tmux> Application<T> {
             .as_deref()
             .and_then(|dir| crate::debug::read(dir, socket, client));
         let (rendered, diagnostics) =
-            self.measured_render(socket, client, width, focus, previous.as_ref(), true)?;
+            match self.measured_render(socket, client, width, focus, previous.as_ref(), true) {
+                Ok(result) => result,
+                Err(error) if error == FOCUS_CHANGED => return Ok(String::new()),
+                Err(error) => return Err(error),
+            };
         if let Some(dir) = dir {
             let _ = crate::debug::write(&dir, socket, client, &diagnostics);
         }
@@ -1090,14 +1095,13 @@ mod tests {
             )
             .unwrap();
         assert!(rendered.contains("code"));
-        assert!(app
-            .render_query(
-                "socket",
-                "client",
-                18,
-                Some(&Focus::new("$0", "@1").unwrap()),
-            )
-            .is_err());
+        let stale = Focus::new("$0", "@1").unwrap();
+        assert_eq!(
+            app.render_query("socket", "client", 18, Some(&stale)),
+            Ok(String::new())
+        );
+        assert!(app.explain("socket", "client", 18, Some(&stale)).is_err());
+        assert!(app.timings("socket", "client", 18, Some(&stale)).is_err());
         app.activate("socket", "client", "sw0").unwrap();
         assert_eq!(
             tmux.activations(),
