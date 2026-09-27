@@ -903,6 +903,16 @@ impl Sidebar {
         snapshot: &Snapshot,
         input: RenderInputs<'_>,
     ) -> Result<String, String> {
+        self.render_scrolled(snapshot, input, 0)
+            .map(|(text, _, _)| text)
+    }
+
+    pub fn render_scrolled(
+        &self,
+        snapshot: &Snapshot,
+        input: RenderInputs<'_>,
+        offset: usize,
+    ) -> Result<(String, usize, usize), String> {
         let RenderInputs {
             pi_sessions,
             usage_rows,
@@ -974,10 +984,17 @@ impl Sidebar {
             .colorscheme
             .as_ref()
             .and_then(|_| self.palette.get("text"));
-        Ok(render_rows(
-            &rows,
-            snapshot.width,
-            text_color.map(String::as_str),
+        let height = snapshot.client_height.saturating_sub(snapshot.status_lines);
+        let max_offset = rows.len().saturating_sub(height);
+        let offset = offset.min(max_offset);
+        Ok((
+            render_rows(
+                &rows[offset..rows.len().min(offset.saturating_add(height))],
+                snapshot.width,
+                text_color.map(String::as_str),
+            ),
+            offset,
+            max_offset,
         ))
     }
 
@@ -1044,7 +1061,9 @@ impl Sidebar {
                     &self.palette,
                 )?,
                 fill: Some(resolve_color(fill, &self.palette)?),
-                range: Some(Range::Session(session.id.clone())),
+                range: Some(Range::Session(crate::navigation::session_token(
+                    &session.id,
+                )?)),
                 focus: false,
                 selected: false,
             });
@@ -1083,11 +1102,10 @@ impl Sidebar {
                         &self.palette,
                     )?,
                     fill: Some(resolve_color(fill, &self.palette)?),
-                    range: Some(if current {
-                        Range::Window(window.index)
-                    } else {
-                        Range::ForeignWindow(crate::navigation::token(&session.id, &window.id)?)
-                    }),
+                    range: Some(Range::Window(crate::navigation::token(
+                        &session.id,
+                        &window.id,
+                    )?)),
                     focus: active,
                     selected: window.selected,
                 });
@@ -2416,8 +2434,7 @@ impl Row {
 #[derive(Clone, Debug)]
 enum Range {
     Session(String),
-    Window(usize),
-    ForeignWindow(String),
+    Window(String),
     PiPane(String),
     UsagePage(String),
     PullRequest(String),
@@ -2509,25 +2526,26 @@ fn render_rows(rows: &[Row], width: usize, text_color: Option<&str>) -> String {
     let mut result = String::from(
         "#[list=on]#[list=left-marker]#[acs]-#[noacs]#[nl]#[list=right-marker]#[acs].#[noacs]#[nl]",
     );
-    for row in rows {
+    for (index, row) in rows.iter().enumerate() {
         let mut remaining = width;
         if row.spans.is_empty() && row.range.is_none() && row.fill.is_none() {
             result.push_str("#[default]");
         }
-        if let Some(range) = &row.range {
-            match range {
-                Range::Session(id) => result.push_str(&format!("#[range=session|{id} ]")),
-                Range::Window(index) => result.push_str(&format!(
-                    "#[range=window|{index} {}]",
-                    if row.focus { "list=focus " } else { "" }
-                )),
-                Range::ForeignWindow(token)
+        let token = match &row.range {
+            Some(
+                Range::Session(token)
+                | Range::Window(token)
                 | Range::PiPane(token)
                 | Range::UsagePage(token)
                 | Range::PullRequest(token)
-                | Range::File(token) => result.push_str(&format!("#[range=user|{token} ]")),
-            }
-        }
+                | Range::File(token),
+            ) => token.as_str(),
+            None => "sv",
+        };
+        result.push_str(&format!(
+            "#[range=user|{token} {}]",
+            if row.focus { "list=focus " } else { "" }
+        ));
         for span in &row.spans {
             let text = clipped(&span.text, &mut remaining);
             if text.is_empty() {
@@ -2546,28 +2564,18 @@ fn render_rows(rows: &[Row], width: usize, text_color: Option<&str>) -> String {
         }
         if let Some(fill) = &row.fill {
             result.push_str(&format!("#[bg={fill}]"));
-            result.push_str(&" ".repeat(remaining.saturating_sub(1)));
         }
-        match row.range {
-            Some(Range::Session(_)) => result.push_str("#[norange default]"),
-            Some(Range::Window(_) | Range::ForeignWindow(_) | Range::PiPane(_)) if row.selected => {
-                result.push_str("#[norange]#[list=on default]")
-            }
-            Some(
-                Range::Window(_)
-                | Range::ForeignWindow(_)
-                | Range::PiPane(_)
-                | Range::UsagePage(_)
-                | Range::PullRequest(_)
-                | Range::File(_),
-            ) => result.push_str("#[norange default]"),
-            None => {}
+        result.push_str(&" ".repeat(remaining.saturating_sub(1)));
+        if row.selected {
+            result.push_str("#[norange]#[list=on default]");
+        } else {
+            result.push_str("#[norange default]");
         }
         if let Some(fill) = &row.fill {
             result.push_str(&format!("#[fill={fill}]"));
         }
         result.push_str("#[nl]");
-        if row.fill.is_some() {
+        if row.fill.is_some() && index + 1 < rows.len() {
             result.push_str("#[fill=default]");
         }
     }

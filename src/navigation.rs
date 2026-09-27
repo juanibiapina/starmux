@@ -61,6 +61,20 @@ pub fn file_index(token: &str) -> Result<usize, String> {
     usize::from_str_radix(&token[2..4], 16).map_err(|_| "invalid file click target".into())
 }
 
+pub fn session_token(session: &str) -> Result<String, String> {
+    Ok(format!("st{}", id(session, '$')?))
+}
+
+pub fn session_target(token: &str) -> Result<String, String> {
+    let digits = token.strip_prefix("st").ok_or("invalid click target")?;
+    let id = id(&format!("${digits}"), '$')?;
+    let target = format!("${id}");
+    if session_token(&target)? != token {
+        return Err("invalid click target".into());
+    }
+    Ok(target)
+}
+
 fn id(value: &str, prefix: char) -> Result<u32, String> {
     value
         .strip_prefix(prefix)

@@ -329,7 +329,7 @@ fn attached_side_status_paints_navigation_rows() {
         "{}",
         String::from_utf8_lossy(&valid.stderr)
     );
-    assert!(String::from_utf8_lossy(&valid.stdout).contains("#[range=window|"));
+    assert!(String::from_utf8_lossy(&valid.stdout).contains("#[range=user|sw"));
     tmux(&["switch-client", "-c", client_name.trim(), "-t", "aux"]);
     let stale = Command::new(binary)
         .args(&query)
@@ -414,7 +414,7 @@ fn attached_side_status_paints_navigation_rows() {
             padded.matches("#[nl]").count(),
             height - expected_status_rows + 2
         );
-        assert!(padded.contains("----------------------------#[nl]"));
+        assert!(padded.contains("----------------------------"));
     }
     tmux(&["kill-server"]);
     let _ = client.wait();
@@ -1160,5 +1160,319 @@ fn pi_attention_row_click_selects_its_pane() {
     let _ = client.wait();
     running.store(false, Ordering::Relaxed);
     responder.join().unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn wheel_scrolls_all_sidebar_rows_without_switching_windows() {
+    use std::{
+        fs,
+        io::Write,
+        process::{Command, Stdio},
+        thread,
+        time::Duration,
+    };
+
+    let root = std::env::temp_dir().join(format!("starmux-wheel-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let socket = format!("starmux-wheel-{}", std::process::id());
+    let binary = env!("CARGO_BIN_EXE_starmux");
+    let config = root.join("config.toml");
+    fs::write(
+        &config,
+        "modules = [\"sessions\", \"divider\", \"blank\", \"command.slow\"]\n[commands.slow]\nargv = [\"sleep\", \"0.07\"]\n",
+    )
+    .unwrap();
+    let generated = Command::new(binary)
+        .args(["init", "tmux"])
+        .output()
+        .unwrap();
+    assert!(generated.status.success());
+    let adapter = String::from_utf8(generated.stdout)
+        .unwrap()
+        .replace("starmux render-query", &format!("{binary} render-query"))
+        .replace("starmux scroll", &format!("{binary} scroll"))
+        .replace("starmux activate", &format!("{binary} activate"));
+    let adapter_path = root.join("adapter.conf");
+    fs::write(&adapter_path, adapter).unwrap();
+    let tmux = |args: &[&str]| {
+        let output = Command::new("tmux")
+            .args(["-L", &socket])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "tmux {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    tmux(&[
+        "-f",
+        "/dev/null",
+        "new-session",
+        "-d",
+        "-s",
+        "main",
+        "-n",
+        "first",
+        "sleep 60",
+    ]);
+    let supported = Command::new("tmux")
+        .args(["-L", &socket, "show-options", "-gv", "side-status"])
+        .output()
+        .unwrap()
+        .status
+        .success();
+    if !supported {
+        tmux(&["kill-server"]);
+        fs::remove_dir_all(root).unwrap();
+        assert_ne!(
+            std::env::var_os("STARMUX_REQUIRE_SIDE_STATUS"),
+            Some("1".into()),
+            "tmux lacks side-status"
+        );
+        return;
+    }
+    for index in 1..28 {
+        tmux(&[
+            "new-window",
+            "-d",
+            "-t",
+            "main:",
+            "-n",
+            &format!("row{index:02}"),
+            "sleep 60",
+        ]);
+    }
+    tmux(&[
+        "set-environment",
+        "-g",
+        "STARMUX_CONFIG",
+        config.to_str().unwrap(),
+    ]);
+    tmux(&[
+        "set-environment",
+        "-g",
+        "XDG_CACHE_HOME",
+        root.to_str().unwrap(),
+    ]);
+    tmux(&["set", "-g", "mouse", "on"]);
+    tmux(&["set", "-g", "status-interval", "1"]);
+    tmux(&["set", "-g", "side-status", "left"]);
+    tmux(&["set", "-g", "side-status-width", "30"]);
+    tmux(&["source-file", adapter_path.to_str().unwrap()]);
+    let capture = root.join("client.out");
+    let mut client = attached_client(&socket, "main")
+        .env("TERM", "xterm-256color")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::from(fs::File::create(&capture).unwrap()))
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut input = client.stdin.take().unwrap();
+    let mut name = String::new();
+    for _ in 0..40 {
+        name = tmux(&["list-clients", "-F", "#{client_name}"]);
+        if !name.is_empty() && fs::read_to_string(&capture).unwrap().contains("row01") {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert!(!name.is_empty());
+    let socket_path = tmux(&["display-message", "-p", "-c", &name, "#{socket_path}"]);
+    let focus = || tmux(&["display-message", "-p", "-c", &name, "#{window_id}"]);
+    let initial_focus = focus();
+    let render = || {
+        let output = Command::new(binary)
+            .args([
+                "render-query",
+                "--width=30",
+                &format!("--socket={socket_path}"),
+                &format!("--client={name}"),
+            ])
+            .env("STARMUX_CONFIG", &config)
+            .env("XDG_CACHE_HOME", &root)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let first = render();
+    assert!(
+        first.contains("first") && !first.contains("row27"),
+        "{first}"
+    );
+    thread::sleep(Duration::from_millis(350));
+    let wheel = |button: u8, x: u8, y: u8, input: &mut std::process::ChildStdin| {
+        write!(input, "\x1b[<{button};{x};{y}M").unwrap();
+        input.flush().unwrap();
+    };
+    // Wheel over a clickable window row, then over a blank part of a row.
+    wheel(65, 5, 3, &mut input);
+    for _ in 0..30 {
+        if !render().contains("#[range=user|st0 ") {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        !render().contains("#[range=user|st0 "),
+        "wheel did not scroll"
+    );
+    assert_eq!(focus(), initial_focus);
+    wheel(65, 25, 4, &mut input);
+    for _ in 0..30 {
+        if !render().contains("first") {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert!(!render().contains("first"), "blank space did not scroll");
+    assert_eq!(focus(), initial_focus);
+
+    let mut second_client = attached_client(&socket, "main")
+        .env("TERM", "xterm-256color")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let _second_input = second_client.stdin.take();
+    let mut other_name = String::new();
+    for _ in 0..30 {
+        other_name = tmux(&["list-clients", "-F", "#{client_name}"])
+            .lines()
+            .find(|candidate| *candidate != name)
+            .unwrap_or_default()
+            .to_owned();
+        if !other_name.is_empty() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert!(!other_name.is_empty());
+    let other_render = Command::new(binary)
+        .args([
+            "render-query",
+            "--width=30",
+            &format!("--socket={socket_path}"),
+            &format!("--client={other_name}"),
+        ])
+        .env("STARMUX_CONFIG", &config)
+        .env("XDG_CACHE_HOME", &root)
+        .output()
+        .unwrap();
+    assert!(other_render.status.success());
+    assert!(String::from_utf8(other_render.stdout)
+        .unwrap()
+        .contains("#[range=user|st0 "));
+    assert!(!render().contains("#[range=user|st0 "));
+
+    wheel(64, 25, 4, &mut input);
+    for _ in 0..30 {
+        if render().contains("first") {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert!(render().contains("first"));
+    assert_eq!(focus(), initial_focus);
+
+    write!(input, "\x1b[<0;5;2M\x1b[<0;5;2m").unwrap();
+    input.flush().unwrap();
+    let second_window = tmux(&["display-message", "-p", "-t", "main:1", "#{window_id}"]);
+    for _ in 0..30 {
+        if focus() == second_window {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(
+        focus(),
+        second_window,
+        "click on scrolled row did not select it"
+    );
+    let height: u8 = tmux(&["display-message", "-p", "-c", &name, "#{client_height}"])
+        .parse()
+        .unwrap();
+    wheel(64, 40, height, &mut input);
+    for _ in 0..30 {
+        if focus() == initial_focus {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(
+        focus(),
+        initial_focus,
+        "ordinary status wheel did not select a window"
+    );
+
+    for index in 0..32 {
+        wheel(65, 25, 4, &mut input);
+        thread::sleep(Duration::from_millis(35));
+        if index == 20 {
+            assert!(
+                fs::read_to_string(&capture).unwrap().contains("row24"),
+                "the sidebar waited until the gesture ended to paint"
+            );
+        }
+    }
+    for _ in 0..30 {
+        if render().contains("row27") {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert!(render().contains("row27"), "last page was not reached");
+    for _ in 0..30 {
+        if fs::read_to_string(&capture).unwrap().contains("row27") {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        fs::read_to_string(&capture).unwrap().contains("row27"),
+        "tmux did not paint the last window"
+    );
+    assert_eq!(focus(), initial_focus);
+    for _ in 0..32 {
+        wheel(64, 25, 4, &mut input);
+        thread::sleep(Duration::from_millis(25));
+    }
+    for _ in 0..30 {
+        if render().contains("#[range=user|st0 ") {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        render().contains("#[range=user|st0 "),
+        "first page was not reached"
+    );
+    for _ in 0..12 {
+        wheel(65, 25, 4, &mut input);
+        wheel(64, 25, 4, &mut input);
+    }
+    thread::sleep(Duration::from_millis(800));
+    assert!(
+        render().contains("#[range=user|st0 "),
+        "rapid reversal left an offset"
+    );
+    assert_eq!(focus(), initial_focus);
+    assert!(!fs::read_to_string(&capture)
+        .unwrap()
+        .contains("starmux: input error"));
+
+    tmux(&["kill-server"]);
+    let _ = second_client.wait();
+    let _ = client.wait();
     fs::remove_dir_all(root).unwrap();
 }

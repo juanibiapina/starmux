@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Scroll the complete sidebar with the mouse wheel, showing progress during rapid gestures and keeping direction changes in order without selecting another window.
 - Show Gob job progress as a horizontal track below each job name, with the percentage on the right.
 
 ### Fixed

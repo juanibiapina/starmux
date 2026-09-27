@@ -1,5 +1,10 @@
 use crate::{Session, Sidebar, Snapshot, Window};
-use std::{collections::BTreeMap, process::Command, time::Instant};
+use std::{
+    collections::BTreeMap,
+    process::{Command, Stdio},
+    thread,
+    time::{Duration, Instant},
+};
 
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
@@ -178,7 +183,11 @@ impl Tmux for ProcessTmux {
                 ))
             };
         }
-        let target = crate::navigation::target(token)?;
+        let target = if token.starts_with("st") {
+            crate::navigation::session_target(token)?
+        } else {
+            crate::navigation::target(token)?
+        };
         tmux_switch(socket, client, &target)
     }
 }
@@ -203,6 +212,77 @@ fn open_browser_target(target: &std::ffi::OsStr) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!("browser opener exited with {status}"))
+    }
+}
+
+pub fn scroll_client(
+    socket: &str,
+    client: &str,
+    down: bool,
+    refresh: bool,
+) -> Result<bool, String> {
+    if socket.is_empty() || client.is_empty() {
+        return Err("missing tmux socket or client name".into());
+    }
+    let movement = crate::scroll::move_by(socket, client, down, !refresh)
+        .map_err(|error| format!("scroll state failed: {error}"))?;
+    if movement.start_worker {
+        let spawn = std::env::current_exe()
+            .map_err(|error| error.to_string())
+            .and_then(|binary| {
+                Command::new(binary)
+                    .args(["scroll-worker", "--socket", socket, "--client", client])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            });
+        if let Err(error) = spawn {
+            crate::scroll::stop_worker(socket, client);
+            return Err(format!("scroll refresh failed: {error}"));
+        }
+    }
+    if movement.changed && refresh {
+        refresh_scroll_client(socket, client)?;
+    }
+    Ok(movement.changed)
+}
+
+pub fn scroll_worker(socket: &str, client: &str) -> Result<(), String> {
+    let result = (|| {
+        loop {
+            let generation = crate::scroll::worker_generation(socket, client)
+                .ok_or("scroll state is no longer present")?;
+            refresh_scroll_client(socket, client)?;
+            thread::sleep(Duration::from_millis(150));
+            if !crate::scroll::worker_next(socket, client, generation)
+                .map_err(|error| format!("scroll state failed: {error}"))?
+            {
+                break;
+            }
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        crate::scroll::stop_worker(socket, client);
+    }
+    result
+}
+
+fn refresh_scroll_client(socket: &str, client: &str) -> Result<(), String> {
+    let output = Command::new("tmux")
+        .args(["-S", socket, "refresh-client", "-S", "-t", client])
+        .output()
+        .map_err(|error| format!("tmux refresh failed: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "tmux refresh failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
     }
 }
 
@@ -334,6 +414,12 @@ pub struct Application<T> {
     tmux: T,
 }
 
+struct RenderOptions<'a> {
+    previous: Option<&'a crate::Diagnostics>,
+    spawn: bool,
+    offset: usize,
+}
+
 impl<T: Tmux> Application<T> {
     pub fn new(sidebar: Sidebar, tmux: T) -> Self {
         Self { sidebar, tmux }
@@ -354,12 +440,22 @@ impl<T: Tmux> Application<T> {
         let previous = dir
             .as_deref()
             .and_then(|dir| crate::debug::read(dir, socket, client));
-        let (rendered, diagnostics) =
-            match self.measured_render(socket, client, width, focus, previous.as_ref(), true) {
-                Ok(result) => result,
-                Err(error) if error == FOCUS_CHANGED => return Ok(String::new()),
-                Err(error) => return Err(error),
-            };
+        let (rendered, diagnostics, max_offset) = match self.measured_render(
+            socket,
+            client,
+            width,
+            focus,
+            RenderOptions {
+                previous: previous.as_ref(),
+                spawn: true,
+                offset: crate::scroll::read(socket, client),
+            },
+        ) {
+            Ok(result) => result,
+            Err(error) if error == FOCUS_CHANGED => return Ok(String::new()),
+            Err(error) => return Err(error),
+        };
+        let _ = crate::scroll::set_bound(socket, client, max_offset);
         if let Some(dir) = dir {
             let _ = crate::debug::write(&dir, socket, client, &diagnostics);
         }
@@ -372,9 +468,13 @@ impl<T: Tmux> Application<T> {
         client: &str,
         width: usize,
         focus: Option<&Focus>,
-        previous: Option<&crate::Diagnostics>,
-        spawn: bool,
-    ) -> Result<(String, crate::Diagnostics), String> {
+        options: RenderOptions<'_>,
+    ) -> Result<(String, crate::Diagnostics, usize), String> {
+        let RenderOptions {
+            previous,
+            spawn,
+            offset,
+        } = options;
         let started = Instant::now();
         let mut diagnostics = crate::Diagnostics::default();
         let snapshot = self.snapshot(socket, client, width, focus)?;
@@ -416,7 +516,7 @@ impl<T: Tmux> Application<T> {
             diagnostics.stages[6] =
                 (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
         }
-        let rendered = self.sidebar.render_with_inputs(
+        let (rendered, _, max_offset) = self.sidebar.render_scrolled(
             &snapshot,
             crate::RenderInputs {
                 pi_sessions: &pi_sessions,
@@ -428,10 +528,11 @@ impl<T: Tmux> Application<T> {
                 git: git.as_ref(),
                 debug: previous,
             },
+            offset,
         )?;
         diagnostics.stages[7] =
             (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
-        Ok((rendered, diagnostics))
+        Ok((rendered, diagnostics, max_offset))
     }
 
     fn pi_sessions(
@@ -638,7 +739,17 @@ impl<T: Tmux> Application<T> {
         width: usize,
         focus: Option<&Focus>,
     ) -> Result<String, String> {
-        let (_, diagnostics) = self.measured_render(socket, client, width, focus, None, false)?;
+        let (_, diagnostics, _) = self.measured_render(
+            socket,
+            client,
+            width,
+            focus,
+            RenderOptions {
+                previous: None,
+                spawn: false,
+                offset: 0,
+            },
+        )?;
         let stages = diagnostics.stages;
         Ok(format!(
             "{{\"query_us\":{},\"usage_us\":{},\"gob_us\":{},\"command_us\":{},\"git_us\":{},\"render_us\":{}}}",
@@ -1315,7 +1426,10 @@ mod tests {
         assert_eq!(tmux.opened_urls(), [pr_url, second_url]);
         responder.join().unwrap();
         assert!(rendered.contains("#[bold] repo#[bg=default]"), "{rendered}");
-        assert!(rendered.contains("#[range=user|sp9 ]"), "{rendered}");
+        assert!(
+            rendered.contains("#[range=user|sp9 list=focus ]"),
+            "{rendered}"
+        );
         assert!(
             rendered.contains(
                 "#[default,reverse,bold]##[fg=red]##{oops} #[default,fg=magenta,bg=default]●"
@@ -1330,7 +1444,7 @@ mod tests {
         assert!(rendered.contains("✦"), "{rendered}");
         assert!(rendered.find("##[fg=red]").unwrap() < rendered.find("unnamed").unwrap());
         assert!(!rendered.contains("stale"), "{rendered}");
-        assert_eq!(rendered.matches("#[range=").count(), 4);
+        assert_eq!(rendered.matches("#[range=").count(), 8);
         app.activate("/tmp/starmux-current.sock", "client", "sp9")
             .unwrap();
         assert_eq!(

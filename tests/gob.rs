@@ -75,7 +75,8 @@ fn gob_jobs_show_running_dots_and_horizontal_progress_after_the_divider() {
     assert!(rendered
         .split("#[nl]")
         .skip(2)
-        .all(|row| !row.starts_with("#[range=")));
+        .filter(|row| !row.is_empty())
+        .all(|row| row.contains("#[range=user|sv ") && !row.contains("#[range=user|sw")));
 }
 
 #[test]

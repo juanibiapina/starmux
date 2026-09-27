@@ -300,6 +300,8 @@ The first redraw shows `last --`. Each completed redraw records its measurement 
 
 ## Tmux integration
 
-`starmux init tmux` generates the side-status render command and the `MouseDown1Status` binding used for foreign-window navigation. Position, width, and outer style remain ordinary tmux options.
+`starmux init tmux` generates the side-status render command, click binding, and wheel bindings. Position, width, and outer style remain ordinary tmux options.
 
 The adapter passes `#{side-status-width}` as the explicit `--width` argument. Valid widths are 1–300 columns. If the client switches sessions or windows during a redraw, Starmux discards that stale render; the next redraw shows the new focus. Other status clicks retain tmux's default action.
+
+With `mouse on`, wheel up and down over the sidebar scroll the complete list one row at a time, including rows from every configured module. The selected tmux window stays unchanged; click a visible row to activate it. Each attached client keeps its own position. Scrolling stops at the first and last page and adjusts to changes in content or client height. Wheel events over the ordinary horizontal status keep tmux's window selection behavior. Regenerate and source `starmux init tmux` after upgrading to install the wheel bindings.

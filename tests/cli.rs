@@ -22,11 +22,63 @@ fn help_and_adapter_expose_only_the_query_interface() {
     let adapter = String::from_utf8(adapter.stdout).unwrap();
     assert!(adapter.contains("--width=#{side-status-width}"));
     assert!(adapter.contains("MouseDown1Status"));
-    assert!(adapter.contains("(sw|sp|su|sr|sl|ss),#{mouse_status_range}"));
+    assert!(adapter.contains("(st|sw|sp|su|sr|sl|ss),#{mouse_status_range}"));
+    assert!(adapter.contains("WheelUpStatus"));
+    assert!(adapter.contains("WheelDownStatus"));
+    assert!(adapter.contains("run-shell 'starmux scroll-event"));
+    assert!(!adapter.contains("run-shell -b 'starmux scroll"));
+    assert!(adapter.contains("(st|sw|sp|su|sr|sl|ss|sv),#{mouse_status_range}"));
     assert!(!adapter.contains("side-status-width 30"));
     assert!(!adapter.contains("side-status-style"));
     assert!(!adapter.contains("@window_icon"));
     assert!(!adapter.contains("@pi_win_state"));
+}
+
+#[test]
+fn wheel_at_top_is_a_noop_without_a_tmux_refresh() {
+    let cache = std::env::temp_dir().join(format!("starmux-scroll-edge-{}", std::process::id()));
+    std::fs::create_dir_all(&cache).unwrap();
+    let scroll = |direction| {
+        Command::new(env!("CARGO_BIN_EXE_starmux"))
+            .args([
+                "scroll",
+                "--socket=/dev/nonexistent-starmux-socket",
+                "--client=missing",
+                &format!("--direction={direction}"),
+            ])
+            .env("XDG_CACHE_HOME", &cache)
+            .output()
+            .unwrap()
+    };
+    for _ in 0..2 {
+        let result = scroll("up");
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(result.stdout.is_empty());
+    }
+    let event = |direction| {
+        Command::new(env!("CARGO_BIN_EXE_starmux"))
+            .args([
+                "scroll-event",
+                "--socket=/dev/nonexistent-starmux-socket",
+                "--client=missing",
+                &format!("--direction={direction}"),
+            ])
+            .env("XDG_CACHE_HOME", &cache)
+            .output()
+            .unwrap()
+    };
+    assert!(event("up").status.success());
+    assert!(event("down").status.success());
+    assert!(event("up").status.success());
+    assert!(event("up").status.success());
+    let result = scroll("down");
+    assert!(!result.status.success());
+    assert!(result.stdout.is_empty());
+    std::fs::remove_dir_all(cache).unwrap();
 }
 
 #[test]

@@ -64,8 +64,8 @@ fn portable_defaults_render_navigation_without_personal_options() {
     let sidebar = Sidebar::defaults().unwrap();
     assert!(sidebar.requested_window_options().is_empty());
     let rendered = sidebar.render(&snapshot()).unwrap();
-    assert!(rendered.contains("#[range=session|$0 "));
-    assert!(rendered.contains("#[range=window|0 list=focus "));
+    assert!(rendered.contains("#[range=user|st0 "));
+    assert!(rendered.contains("#[range=user|sw0 list=focus "));
     assert!(rendered.contains("#[range=user|sw1z141z6 "));
     assert!(rendered.contains("##[fg=red] x##{oops}"));
     assert!(rendered.contains("----------------------------"));
@@ -87,9 +87,9 @@ fn spacer_places_following_rows_at_the_bottom_and_collapses_on_overflow() {
     assert!(lines[lines.len() - 2].contains("----------------------------"));
     let gap = &lines[7..lines.len() - 2];
     assert_eq!(gap.len(), 5);
-    assert!(gap
-        .iter()
-        .all(|line| line.ends_with("#[default]") && !line.contains("#[range=")));
+    assert!(gap.iter().all(|line| line.contains("#[range=user|sv ")
+        && !line.contains("#[range=user|st")
+        && !line.contains("#[range=user|sw")));
 
     input.client_height = 5;
     let overfull = sidebar.render(&input).unwrap();
@@ -102,6 +102,54 @@ fn spacer_places_following_rows_at_the_bottom_and_collapses_on_overflow() {
 }
 
 #[test]
+fn scrolling_pages_through_all_modules_and_clamps_after_resize() {
+    let sidebar =
+        Sidebar::from_toml("modules = [\"sessions\", \"spacer\", \"divider\", \"blank\"]").unwrap();
+    let mut input = snapshot();
+    input.client_height = 4;
+    let mut render = |height, offset| {
+        input.client_height = height;
+        sidebar
+            .render_scrolled(
+                &input,
+                starmux::RenderInputs {
+                    pi_sessions: &[],
+                    usage_rows: &[],
+                    gob_jobs: &[],
+                    context: None,
+                    states: &[],
+                    commands: &BTreeMap::new(),
+                    git: None,
+                    debug: None,
+                },
+                offset,
+            )
+            .unwrap()
+    };
+    let (top, offset, max) = render(4, 0);
+    assert_eq!(max, 4);
+    assert_eq!(offset, 0);
+    assert!(top.contains("#[range=user|st0 "));
+    assert!(!top.contains("----------------------------"));
+
+    let (middle, offset, _) = render(4, 2);
+    assert_eq!(offset, 2);
+    assert!(!middle.contains("#[range=user|st0 "));
+    assert!(middle.contains("#[range=user|sw1z141z6 "));
+
+    let (bottom, offset, _) = render(4, usize::MAX);
+    assert_eq!(offset, 4);
+    assert!(bottom.contains("----------------------------"));
+    assert!(bottom.contains("#[range=user|sv "));
+    assert!(!bottom.contains("#[range=user|st0 "));
+
+    let (resized, offset, _) = render(8, usize::MAX);
+    assert_eq!(offset, 0);
+    assert!(resized.contains("#[range=user|st0 "));
+    assert!(resized.contains("----------------------------"));
+}
+
+#[test]
 fn blank_reserves_one_row_below_bottom_aligned_content() {
     let sidebar =
         Sidebar::from_toml("modules = [\"sessions\", \"spacer\", \"divider\", \"blank\"]").unwrap();
@@ -111,7 +159,7 @@ fn blank_reserves_one_row_below_bottom_aligned_content() {
     let lines: Vec<_> = rendered.split("#[nl]").collect();
     assert_eq!(lines.len() - 1, 13);
     assert!(lines[lines.len() - 3].contains("----------------------------"));
-    assert_eq!(lines[lines.len() - 2], "#[default]");
+    assert!(lines[lines.len() - 2].contains("#[range=user|sv "));
 
     let repeated = Sidebar::from_toml("modules = [\"blank\", \"blank\"]")
         .unwrap()
@@ -223,7 +271,7 @@ character = "="
     input.sessions[0].windows[0].name = "界界界界界界".into();
     let rendered = sidebar.render(&input).unwrap();
     let divider = rendered.find("==========").unwrap();
-    let session = rendered.find("#[range=session|$0 ").unwrap();
+    let session = rendered.find("#[range=user|st0 ").unwrap();
     assert!(divider < session, "module order was not preserved");
     assert!(!rendered.contains("indicator"));
     assert!(!rendered.contains("界界界界界界"));
@@ -418,7 +466,7 @@ selected_fill = "border"
     assert!(selected.contains("#[fill=#3b4261]"), "{rendered}");
     assert!(read_only.contains("read only#[bg=default]"), "{rendered}");
     assert!(
-        read_only.contains("          #[fill=default]"),
+        read_only.contains("#[norange default]#[fill=default]"),
         "{rendered}"
     );
 }
@@ -879,7 +927,8 @@ fn usage_without_a_web_page_has_no_click_target() {
         .render_with_usage(&snapshot(), &[], &[usage])
         .unwrap();
     assert!(rendered.contains("Gemini"));
-    assert!(!rendered.contains("#[range=user|"), "{rendered}");
+    assert!(rendered.contains("#[range=user|sv "), "{rendered}");
+    assert!(!rendered.contains("#[range=user|su"), "{rendered}");
 }
 
 #[test]
@@ -1020,11 +1069,12 @@ fn pi_context_icons_and_clipping_work_at_narrow_widths() {
                 "{rendered}"
             );
         }
-        assert_eq!(rendered.matches("#[range=").count(), 3, "{rendered}");
-        for row in rendered
-            .split("#[nl]")
-            .filter(|row| row.contains("#[range=user|"))
-        {
+        assert_eq!(rendered.matches("#[range=").count(), 6, "{rendered}");
+        for row in rendered.split("#[nl]").filter(|row| {
+            ["sl", "sr", "ss"]
+                .iter()
+                .any(|kind| row.contains(&format!("#[range=user|{kind}")))
+        }) {
             let token = row
                 .split("#[range=user|")
                 .nth(1)
@@ -1194,7 +1244,8 @@ fn debug_rows_follow_order_and_clip_without_click_targets() {
     assert!(rendered.contains("tmux 1.20 ms"), "{rendered}");
     assert!(rendered.contains("usage 0.250 ms"), "{rendered}");
     assert!(rendered.contains("git 0.100 ms"), "{rendered}");
-    assert!(!rendered.contains("#[range="), "{rendered}");
+    assert!(rendered.contains("#[range=user|sv "), "{rendered}");
+    assert!(!rendered.contains("#[range=user|sw"), "{rendered}");
     assert!(rendered.contains("#[fg=brightblack]"), "{rendered}");
     let mut narrow = input.clone();
     narrow.width = 7;
@@ -1214,7 +1265,7 @@ fn debug_rows_follow_order_and_clip_without_click_targets() {
         )
         .unwrap();
     assert!(!clipped.contains("last 1.60 ms"), "{clipped}");
-    assert!(!clipped.contains("#[range="), "{clipped}");
+    assert!(clipped.contains("#[range=user|sv "), "{clipped}");
 
     let disabled = Sidebar::from_toml("modules = [\"debug\"]\n[debug]\ndisabled = true").unwrap();
     assert!(!disabled.render(&input).unwrap().contains("last"));
