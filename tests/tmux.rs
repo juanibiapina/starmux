@@ -24,6 +24,133 @@ fn attached_client(socket: &str, target: &str) -> std::process::Command {
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
+fn gob_failures_leave_other_rows_and_diagnostics_available() {
+    use std::{
+        fs,
+        os::unix::fs::PermissionsExt,
+        process::{Command, Stdio},
+        thread,
+        time::Duration,
+    };
+
+    let root = std::env::temp_dir().join(format!("starmux-gob-failure-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let socket = format!("starmux-gob-failure-{}", std::process::id());
+    let gob = root.join("gob");
+    let config = root.join("config.toml");
+    fs::write(
+        &config,
+        "modules = [\"sessions\", \"gob\", \"command.good\", \"command.bad\"]\n[commands.good]\nargv = [\"/bin/echo\", \"healthy\"]\n[commands.bad]\nargv = [\"/usr/bin/false\"]\n",
+    )
+    .unwrap();
+    let tmux = |args: &[&str]| {
+        let output = Command::new("tmux")
+            .args(["-L", &socket])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    };
+    tmux(&[
+        "-f",
+        "/dev/null",
+        "new-session",
+        "-d",
+        "-s",
+        "main",
+        "-c",
+        root.to_str().unwrap(),
+        "sleep 15",
+    ]);
+    let mut attached = attached_client(&socket, "main")
+        .env("TERM", "xterm-256color")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let _input = attached.stdin.take();
+    let mut client = String::new();
+    for _ in 0..30 {
+        client = String::from_utf8(tmux(&["list-clients", "-F", "#{client_name}"]).stdout)
+            .unwrap_or_default();
+        if !client.trim().is_empty() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert!(!client.trim().is_empty());
+    let socket_path =
+        String::from_utf8(tmux(&["display-message", "-p", "#{socket_path}"]).stdout).unwrap();
+    let binary = env!("CARGO_BIN_EXE_starmux");
+    let path = format!("{}:{}", root.display(), std::env::var("PATH").unwrap());
+    let query = |command: &str| {
+        Command::new(binary)
+            .args([
+                command,
+                "--width=30",
+                &format!("--socket={}", socket_path.trim()),
+                &format!("--client={}", client.trim()),
+            ])
+            .env("STARMUX_CONFIG", &config)
+            .env("PATH", &path)
+            .output()
+            .unwrap()
+    };
+    for (script, expected) in [
+        ("#!/bin/sh\n/bin/sleep 2\n", "gob list timed out"),
+        ("#!/bin/sh\nprintf 'invalid json'\n", "invalid gob list"),
+        (
+            "#!/bin/sh\nprintf 'unavailable' >&2\nexit 7\n",
+            "gob list failed: unavailable",
+        ),
+    ] {
+        fs::write(&gob, script).unwrap();
+        fs::set_permissions(&gob, fs::Permissions::from_mode(0o700)).unwrap();
+        let rendered = query("render-query");
+        assert!(
+            rendered.status.success(),
+            "{}",
+            String::from_utf8_lossy(&rendered.stderr)
+        );
+        let text = String::from_utf8(rendered.stdout).unwrap();
+        assert!(text.contains("main") && text.contains("healthy"), "{text}");
+        assert!(
+            !text.contains(" Jobs") && !text.contains("input error"),
+            "{text}"
+        );
+        let explained = query("explain");
+        assert!(
+            explained.status.success(),
+            "{}",
+            String::from_utf8_lossy(&explained.stderr)
+        );
+        let text = String::from_utf8(explained.stdout).unwrap();
+        assert!(text.contains(&format!("gob: {expected}")), "{text}");
+        assert!(text.contains("command.bad: command exited"), "{text}");
+        assert!(text.contains("command.good output=\"healthy\""), "{text}");
+    }
+    let timings = query("timings");
+    assert!(
+        timings.status.success(),
+        "{}",
+        String::from_utf8_lossy(&timings.stderr)
+    );
+    let metrics: serde_json::Value = serde_json::from_slice(&timings.stdout).unwrap();
+    assert!(metrics["gob_us"].as_u64().unwrap() > 0);
+
+    tmux(&["kill-server"]);
+    attached.wait().unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
 fn attached_side_status_paints_navigation_rows() {
     use std::{
         fs,

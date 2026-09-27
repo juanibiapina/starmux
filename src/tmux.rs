@@ -396,7 +396,7 @@ impl<T: Tmux> Application<T> {
             diagnostics.stages[3] =
                 (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
         }
-        let jobs = self.gob_jobs(&snapshot)?;
+        let jobs = self.gob_jobs(&snapshot).unwrap_or_default();
         if self.sidebar.gob_enabled() {
             diagnostics.stages[4] =
                 (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
@@ -596,13 +596,18 @@ impl<T: Tmux> Application<T> {
                 usage.windows.len()
             ));
         }
-        for job in self.gob_jobs(&snapshot)? {
-            result.push_str(&format!(
-                "gob id={:?} name={:?} progress={:?}\n",
-                job.id,
-                job.name,
-                job.percent(time::OffsetDateTime::now_utc())
-            ));
+        match self.gob_jobs(&snapshot) {
+            Ok(jobs) => {
+                for job in jobs {
+                    result.push_str(&format!(
+                        "gob id={:?} name={:?} progress={:?}\n",
+                        job.id,
+                        job.name,
+                        job.percent(time::OffsetDateTime::now_utc())
+                    ));
+                }
+            }
+            Err(error) => result.push_str(&format!("gob: {error}\n")),
         }
         if self.sidebar.git_enabled() {
             match self.git_status(&snapshot) {

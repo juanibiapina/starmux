@@ -6,6 +6,10 @@
 
 - Show Gob job progress as a horizontal track below each job name, with the percentage on the right.
 
+### Fixed
+
+- Keep the rest of the sidebar visible when Gob times out or returns an error.
+
 ## [0.4.0] - 2026-09-27
 
 ### Added
