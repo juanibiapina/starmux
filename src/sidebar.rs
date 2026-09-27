@@ -929,17 +929,37 @@ impl Sidebar {
             } else {
                 String::new()
             };
+            let heading_style =
+                usage_normal_style(&resolve_style(heading_style, "default", &self.palette)?);
+            let mut spans = vec![Span {
+                text: format!(" {}", usage.display_name),
+                style: heading_style.clone(),
+            }];
+            if provider == "codex" && !usage.unavailable {
+                if let Some(count) = usage.available_resets {
+                    let noun = if count == 1 { "reset" } else { "resets" };
+                    spans.push(Span {
+                        text: format!(" · {count} {noun}"),
+                        style: usage_normal_style(&resolve_style(
+                            &self.config.usage.stale_style,
+                            "default",
+                            &self.palette,
+                        )?),
+                    });
+                }
+            }
+            if spans.len() == 1 {
+                spans[0].text.push_str(&suffix);
+            } else if !suffix.is_empty() {
+                spans.push(Span {
+                    text: suffix,
+                    style: heading_style,
+                });
+            }
             let page_range =
                 crate::usage::page_token(provider).map(|token| Range::UsagePage(token.into()));
             rows.push(Row {
-                spans: vec![Span {
-                    text: format!(" {}{suffix}", usage.display_name),
-                    style: usage_normal_style(&resolve_style(
-                        heading_style,
-                        "default",
-                        &self.palette,
-                    )?),
-                }],
+                spans,
                 fill: None,
                 range: page_range.clone(),
                 focus: false,

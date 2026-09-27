@@ -16,6 +16,7 @@ const BACKOFF_MS: u64 = 60_000;
 const LEASE_MS: u64 = 30_000;
 const MAX_STATE_BYTES: u64 = 32 * 1024;
 const MAX_WINDOWS: usize = 16;
+const MAX_AVAILABLE_RESETS: u32 = 9999;
 
 pub(crate) const PROVIDERS: &[&str] = &[
     "anthropic",
@@ -79,6 +80,12 @@ pub struct UsageSnapshot {
     #[serde(rename = "displayName")]
     pub display_name: String,
     pub windows: Vec<UsageWindow>,
+    #[serde(
+        default,
+        rename = "availableResets",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub available_resets: Option<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -86,6 +93,7 @@ pub struct UsageRow {
     pub provider: String,
     pub display_name: String,
     pub windows: Vec<UsageWindow>,
+    pub available_resets: Option<u32>,
     pub stale: bool,
     pub fetched_at: Option<u64>,
     pub unavailable: bool,
@@ -165,6 +173,10 @@ fn read_state(dir: &Path, provider: &str) -> State {
         if good.usage.provider != provider
             || good.fetched_at > now_ms().saturating_add(60_000)
             || good.usage.windows.len() > MAX_WINDOWS
+            || good
+                .usage
+                .available_resets
+                .is_some_and(|count| count > MAX_AVAILABLE_RESETS)
             || good.usage.windows.iter().any(|window| {
                 !window.used_percent.is_finite()
                     || !(0.0..=100.0).contains(&window.used_percent)
@@ -327,6 +339,7 @@ fn row(provider: &str, state: &State) -> UsageRow {
             provider: provider.to_owned(),
             display_name: good.usage.display_name.clone(),
             windows: good.usage.windows.clone(),
+            available_resets: good.usage.available_resets,
             stale: now_ms().saturating_sub(good.fetched_at) > STALE_MS,
             fetched_at: Some(good.fetched_at),
             unavailable: false,
@@ -335,6 +348,7 @@ fn row(provider: &str, state: &State) -> UsageRow {
             provider: provider.to_owned(),
             display_name: provider.to_owned(),
             windows: Vec::new(),
+            available_resets: None,
             stale: false,
             fetched_at: None,
             unavailable: true,
@@ -466,6 +480,7 @@ mod tests {
                 duration_seconds: None,
                 reset_at: None,
             }],
+            available_resets: None,
         }
     }
 
@@ -477,7 +492,10 @@ mod tests {
         let requests = AtomicUsize::new(0);
         refresh_owned_with("codex", &dir, &first, |_, _| {
             requests.fetch_add(1, Ordering::SeqCst);
-            Ok(snapshot())
+            Ok(UsageSnapshot {
+                available_resets: Some(1),
+                ..snapshot()
+            })
         })
         .unwrap();
         release_lease(&dir, "codex", &first);
@@ -488,11 +506,35 @@ mod tests {
         })
         .unwrap();
         assert_eq!(requests.load(Ordering::SeqCst), 1);
-        assert_eq!(
-            resolve(&["codex".into()], &dir, false)[0].windows[0].used_percent,
-            37.0
-        );
+        let cached = resolve(&["codex".into()], &dir, false);
+        assert_eq!(cached[0].windows[0].used_percent, 37.0);
+        assert_eq!(cached[0].available_resets, Some(1));
         release_lease(&dir, "codex", &second);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn legacy_cache_and_invalid_reset_count() {
+        let dir = temp_dir();
+        let lease = try_lease(&dir, "codex").unwrap();
+        let state = State {
+            version: 1,
+            last_good: Some(LastGood {
+                fetched_at: now_ms(),
+                usage: snapshot(),
+            }),
+            retry_at: None,
+        };
+        write_state(&dir, "codex", &state, &lease).unwrap();
+        assert_eq!(
+            resolve(&["codex".into()], &dir, false)[0].available_resets,
+            None
+        );
+        let mut invalid = state;
+        invalid.last_good.as_mut().unwrap().usage.available_resets = Some(10_000);
+        write_state(&dir, "codex", &invalid, &lease).unwrap();
+        assert!(resolve(&["codex".into()], &dir, false)[0].unavailable);
+        release_lease(&dir, "codex", &lease);
         fs::remove_dir_all(dir).unwrap();
     }
 

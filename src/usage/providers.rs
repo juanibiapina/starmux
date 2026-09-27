@@ -1,5 +1,5 @@
 //! Provider adapters for subscription usage. Credentials stay in the worker process.
-use super::{FetchError, UsageSnapshot, UsageWindow};
+use super::{FetchError, UsageSnapshot, UsageWindow, MAX_AVAILABLE_RESETS};
 use serde_json::Value;
 use std::{
     fs,
@@ -281,6 +281,13 @@ fn request(
         })
 }
 
+fn codex_available_resets(data: &Value) -> Option<u32> {
+    data["rate_limit_reset_credits"]["available_count"]
+        .as_u64()
+        .filter(|count| *count <= u64::from(MAX_AVAILABLE_RESETS))
+        .map(|count| count as u32)
+}
+
 fn windows(provider: &str, data: &Value) -> Vec<UsageWindow> {
     let mut result = Vec::new();
     match provider {
@@ -529,6 +536,7 @@ fn kiro() -> Result<UsageSnapshot, FetchError> {
         provider: "kiro".into(),
         display_name: "Kiro Plan".into(),
         windows: vec![window("Credits", percent)],
+        available_resets: None,
     })
 }
 
@@ -544,22 +552,22 @@ pub(crate) fn fetch(provider: &str, _context: Option<&str>) -> Result<UsageSnaps
         .into();
     let agent = &agent;
     let bearer = format!("Bearer {token}");
+    let mut available_resets = None;
     let mut result = match provider {
         "codex" => {
             let mut headers = vec![("Accept", "application/json")];
             if let Some(ref account) = extra {
                 headers.push(("ChatGPT-Account-Id", account));
             }
-            windows(
-                provider,
-                &request(
-                    agent,
-                    "https://chatgpt.com/backend-api/wham/usage",
-                    &bearer,
-                    &headers,
-                    None,
-                )?,
-            )
+            let data = request(
+                agent,
+                "https://chatgpt.com/backend-api/wham/usage",
+                &bearer,
+                &headers,
+                None,
+            )?;
+            available_resets = codex_available_resets(&data);
+            windows(provider, &data)
         }
         "anthropic" => windows(
             provider,
@@ -703,6 +711,7 @@ pub(crate) fn fetch(provider: &str, _context: Option<&str>) -> Result<UsageSnaps
         provider: provider.into(),
         display_name: display_name.into(),
         windows: result,
+        available_resets,
     })
 }
 
@@ -781,6 +790,27 @@ mod tests {
         server.join().unwrap();
         assert_eq!(error.status, Some(429));
         assert_eq!(error.fetch.retry_after, Some(Duration::from_secs(120)));
+    }
+
+    #[test]
+    fn codex_reports_available_resets() {
+        for (value, expected) in [
+            (json!(1), Some(1)),
+            (json!(0), Some(0)),
+            (json!(9999), Some(9999)),
+            (json!(null), None),
+            (json!(-1), None),
+            (json!("1"), None),
+            (json!(10000), None),
+        ] {
+            assert_eq!(
+                codex_available_resets(
+                    &json!({"rate_limit_reset_credits":{"available_count":value}})
+                ),
+                expected
+            );
+        }
+        assert_eq!(codex_available_resets(&json!({})), None);
     }
 
     #[test]

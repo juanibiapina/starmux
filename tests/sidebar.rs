@@ -423,6 +423,7 @@ providers = ["codex"]
     let usage = UsageRow {
         provider: "codex".into(),
         display_name: "Codex Plan".into(),
+        available_resets: None,
         windows: vec![UsageWindow {
             label: "5h".into(),
             used_percent: 40.0,
@@ -477,6 +478,7 @@ fn usage_defaults_show_plan_days_remaining_time_and_day_blocks() {
     let usage = UsageRow {
         provider: "codex".into(),
         display_name: "Codex Plan".into(),
+        available_resets: None,
         windows: vec![UsageWindow {
             label: "168h".into(),
             used_percent: 78.0,
@@ -508,6 +510,7 @@ fn low_usage_uses_a_bottom_fill_over_the_empty_bar_track() {
     let usage = UsageRow {
         provider: "codex".into(),
         display_name: "Codex Plan".into(),
+        available_resets: None,
         windows: vec![UsageWindow {
             label: "168h".into(),
             used_percent: 1.0,
@@ -551,6 +554,7 @@ fn default_usage_columns_align_across_providers() {
                  reset_at: Option<u64>| UsageRow {
         provider: provider.into(),
         display_name: provider.into(),
+        available_resets: None,
         windows: vec![UsageWindow {
             label: label.into(),
             used_percent: percent,
@@ -643,6 +647,7 @@ critical_bar_style = "fg=danger"
     let usage = |percent, reset_at| UsageRow {
         provider: "codex".into(),
         display_name: "Codex Plan".into(),
+        available_resets: None,
         windows: vec![UsageWindow {
             label: "168h".into(),
             used_percent: percent,
@@ -697,6 +702,7 @@ stale_style = "fg=muted"
     let usage = |provider: &str, display_name: &str, stale: bool, percent: f64| UsageRow {
         provider: provider.into(),
         display_name: display_name.into(),
+        available_resets: None,
         windows: vec![UsageWindow {
             label: "#[range=user|bad]#{oops}".into(),
             used_percent: percent,
@@ -742,6 +748,7 @@ stale_style = "fg=muted"
     let unavailable = UsageRow {
         provider: "codex".into(),
         display_name: "Codex".into(),
+        available_resets: None,
         windows: Vec::new(),
         stale: false,
         fetched_at: None,
@@ -761,12 +768,55 @@ stale_style = "fg=muted"
 }
 
 #[test]
+fn codex_heading_shows_available_resets() {
+    let sidebar =
+        Sidebar::from_toml("modules = [\"usage\"]\n[usage]\nproviders = [\"codex\"]").unwrap();
+    let mut input = snapshot();
+    input.width = 60;
+    let mut usage = UsageRow {
+        provider: "codex".into(),
+        display_name: "Codex Plan".into(),
+        available_resets: Some(1),
+        windows: Vec::new(),
+        stale: false,
+        fetched_at: None,
+        unavailable: false,
+    };
+    for (count, text) in [
+        (Some(1), " · 1 reset"),
+        (Some(0), " · 0 resets"),
+        (Some(2), " · 2 resets"),
+        (None, "Codex Plan"),
+    ] {
+        usage.available_resets = count;
+        let rendered = sidebar
+            .render_with_usage(&input, &[], &[usage.clone()])
+            .unwrap();
+        assert!(rendered.contains("Codex Plan"), "{rendered}");
+        assert!(rendered.contains(text), "{rendered}");
+        if count.is_none() {
+            assert!(!rendered.contains(" · "), "{rendered}");
+        } else {
+            assert!(rendered.contains("#[dim,bg=default] · "), "{rendered}");
+        }
+        assert!(rendered.contains("#[range=user|su4 ]"), "{rendered}");
+    }
+    usage.available_resets = Some(1);
+    usage.stale = true;
+    usage.fetched_at = Some(0);
+    let rendered = sidebar.render_with_usage(&input, &[], &[usage]).unwrap();
+    assert!(rendered.contains(" · 1 reset"), "{rendered}");
+    assert!(rendered.contains(" old)"), "{rendered}");
+}
+
+#[test]
 fn usage_plan_rows_link_to_their_provider_page() {
     let sidebar =
         Sidebar::from_toml("modules = [\"usage\"]\n[usage]\nproviders = [\"codex\"]").unwrap();
     let usage = UsageRow {
         provider: "codex".into(),
         display_name: "#[range=user|su0]".into(),
+        available_resets: None,
         windows: ["5h", "Week"]
             .into_iter()
             .map(|label| UsageWindow {
@@ -799,6 +849,7 @@ fn usage_without_a_web_page_has_no_click_target() {
     let usage = UsageRow {
         provider: "gemini".into(),
         display_name: "Gemini".into(),
+        available_resets: None,
         windows: vec![UsageWindow {
             label: "Pro".into(),
             used_percent: 20.0,

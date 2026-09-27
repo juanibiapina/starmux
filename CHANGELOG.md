@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Show available Codex resets beside the usage heading.
+
 ## [0.3.0] - 2026-09-27
 
 ### Added
