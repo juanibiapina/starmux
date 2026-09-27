@@ -50,10 +50,32 @@ struct Config {
     usage: UsageConfig,
     gob: GobConfig,
     git: GitConfig,
+    debug: DebugConfig,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     commands: BTreeMap<String, CommandConfig>,
     #[serde(rename = "pi-context")]
     pi_context: PiContextConfig,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+struct DebugConfig {
+    disabled: bool,
+    details: bool,
+    style: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_dir: Option<String>,
+}
+
+impl Default for DebugConfig {
+    fn default() -> Self {
+        Self {
+            disabled: false,
+            details: false,
+            style: "dim".into(),
+            cache_dir: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -258,6 +280,7 @@ impl Default for Config {
             usage: UsageConfig::default(),
             gob: GobConfig::default(),
             git: GitConfig::default(),
+            debug: DebugConfig::default(),
             commands: BTreeMap::new(),
             pi_context: PiContextConfig::default(),
         }
@@ -389,6 +412,7 @@ pub struct RenderInputs<'a> {
     pub states: &'a [crate::pr_state::PrState],
     pub commands: &'a BTreeMap<String, String>,
     pub git: Option<&'a crate::GitStatus>,
+    pub debug: Option<&'a crate::debug::Diagnostics>,
 }
 
 #[derive(Clone, Debug)]
@@ -424,6 +448,7 @@ impl Sidebar {
             "usage",
             "gob",
             "git",
+            "debug",
             "pi-context",
             "spacer",
             "blank",
@@ -553,6 +578,14 @@ impl Sidebar {
         {
             return Err("pi-workbench data_dir must be an absolute path".into());
         }
+        if config
+            .debug
+            .cache_dir
+            .as_deref()
+            .is_some_and(|path| !std::path::Path::new(path).is_absolute())
+        {
+            return Err("debug cache_dir must be an absolute path".into());
+        }
         if let Some(command) = &config.pi_context.open_command {
             if command.is_empty()
                 || command.len() > 16
@@ -617,6 +650,7 @@ impl Sidebar {
             &config.git.deleted_style,
             &config.git.clean_style,
             &config.git.state_style,
+            &config.debug.style,
         ] {
             resolve_style(style, "default", &palette)?;
         }
@@ -723,6 +757,11 @@ impl Sidebar {
         })
     }
 
+    pub(crate) fn debug_cache_dir(&self) -> Option<Option<&str>> {
+        (!self.config.debug.disabled && self.config.modules.iter().any(|name| name == "debug"))
+            .then_some(self.config.debug.cache_dir.as_deref())
+    }
+
     pub(crate) fn git_enabled(&self) -> bool {
         !self.config.git.disabled && self.config.modules.iter().any(|name| name == "git")
     }
@@ -802,6 +841,7 @@ impl Sidebar {
                 states,
                 commands: &BTreeMap::new(),
                 git: None,
+                debug: None,
             },
         )
     }
@@ -819,6 +859,7 @@ impl Sidebar {
             states,
             commands,
             git,
+            debug,
         } = input;
         validate_snapshot(snapshot)?;
         let mut rows = Vec::new();
@@ -860,10 +901,13 @@ impl Sidebar {
                         rows.push(self.render_command(name, text)?);
                     }
                 }
+                "debug" if !self.config.debug.disabled => {
+                    rows.extend(self.render_debug(debug)?);
+                }
                 "spacer" => spacer = Some(rows.len()),
                 "blank" => rows.push(Row::blank()),
                 "sessions" | "divider" | "pi-workbench" | "usage" | "gob" | "git"
-                | "pi-context" => {}
+                | "pi-context" | "debug" => {}
                 _ => return Err(format!("unknown module {name}")),
             }
         }
@@ -882,6 +926,34 @@ impl Sidebar {
 
     pub(crate) fn module_names(&self) -> &[String] {
         &self.config.modules
+    }
+
+    fn render_debug(&self, previous: Option<&crate::Diagnostics>) -> Result<Vec<Row>, String> {
+        let style = resolve_style(&self.config.debug.style, "default", &self.palette)?;
+        let mut lines = Vec::new();
+        match previous {
+            Some(previous) => {
+                lines.push(format!(" last {}", debug_duration(previous.total())));
+                if self.config.debug.details {
+                    for (name, micros) in crate::debug::STAGES.iter().zip(previous.stages) {
+                        if micros > 0 {
+                            lines.push(format!("  {name} {}", debug_duration(micros)));
+                        }
+                    }
+                }
+            }
+            None => lines.push(" last --".into()),
+        }
+        Ok(lines
+            .into_iter()
+            .map(|text| Row {
+                spans: vec![Span {
+                    text,
+                    style: style.clone(),
+                }],
+                ..Row::blank()
+            })
+            .collect())
     }
 
     fn render_sessions(&self, snapshot: &Snapshot) -> Result<Vec<Row>, String> {
@@ -2363,6 +2435,14 @@ fn clipped(text: &str, remaining: &mut usize) -> String {
         result.push_str(grapheme);
     }
     result
+}
+
+fn debug_duration(micros: u64) -> String {
+    if micros < 1000 {
+        format!("{:.3} ms", micros as f64 / 1000.0)
+    } else {
+        format!("{:.2} ms", micros as f64 / 1000.0)
+    }
 }
 
 fn render_rows(rows: &[Row], width: usize) -> String {

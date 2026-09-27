@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Add an optional `debug` module that shows the previous sidebar redraw time and a breakdown by stage.
 - Show available Codex resets beside the usage heading.
 - Show output from multiple configured commands in the sidebar, including colored gitmux status for the selected pane's directory.
 - Show configurable Git status rows with branch, upstream, changed files and lines, stashes, and active operations.

@@ -345,14 +345,73 @@ impl<T: Tmux> Application<T> {
         width: usize,
         focus: Option<&Focus>,
     ) -> Result<String, String> {
+        let dir = self.sidebar.debug_cache_dir().and_then(|configured| {
+            configured
+                .map(std::path::PathBuf::from)
+                .or_else(crate::debug::default_dir)
+        });
+        let previous = dir
+            .as_deref()
+            .and_then(|dir| crate::debug::read(dir, socket, client));
+        let (rendered, diagnostics) =
+            self.measured_render(socket, client, width, focus, previous.as_ref(), true)?;
+        if let Some(dir) = dir {
+            let _ = crate::debug::write(&dir, socket, client, &diagnostics);
+        }
+        Ok(rendered)
+    }
+
+    fn measured_render(
+        &self,
+        socket: &str,
+        client: &str,
+        width: usize,
+        focus: Option<&Focus>,
+        previous: Option<&crate::Diagnostics>,
+        spawn: bool,
+    ) -> Result<(String, crate::Diagnostics), String> {
+        let started = Instant::now();
+        let mut diagnostics = crate::Diagnostics::default();
         let snapshot = self.snapshot(socket, client, width, focus)?;
+        diagnostics.stages[0] = started.elapsed().as_micros() as u64;
         let (pi_sessions, context) = self.pi_sessions(socket, &snapshot)?;
-        let states = self.pr_states(context.as_ref(), true);
-        let usage = self.usage_rows(true)?;
+        if self.sidebar.pi_workbench_data_dir().is_some() {
+            diagnostics.stages[1] =
+                (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
+        }
+        let states = self.pr_states(context.as_ref(), spawn);
+        if context
+            .as_ref()
+            .is_some_and(|context| !context.pull_requests.is_empty())
+        {
+            diagnostics.stages[2] =
+                (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
+        }
+        let usage = self.usage_rows(spawn)?;
+        if self
+            .sidebar
+            .usage_options()
+            .is_some_and(|(providers, _)| !providers.is_empty())
+        {
+            diagnostics.stages[3] =
+                (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
+        }
         let jobs = self.gob_jobs(&snapshot)?;
+        if self.sidebar.gob_enabled() {
+            diagnostics.stages[4] =
+                (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
+        }
         let (commands, _) = self.commands(&snapshot);
+        if !self.sidebar.command_options().is_empty() {
+            diagnostics.stages[5] =
+                (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
+        }
         let git = self.git_status(&snapshot).ok().flatten();
-        self.sidebar.render_with_inputs(
+        if self.sidebar.git_enabled() {
+            diagnostics.stages[6] =
+                (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
+        }
+        let rendered = self.sidebar.render_with_inputs(
             &snapshot,
             crate::RenderInputs {
                 pi_sessions: &pi_sessions,
@@ -362,8 +421,12 @@ impl<T: Tmux> Application<T> {
                 states: &states,
                 commands: &commands,
                 git: git.as_ref(),
+                debug: previous,
             },
-        )
+        )?;
+        diagnostics.stages[7] =
+            (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
+        Ok((rendered, diagnostics))
     }
 
     fn pi_sessions(
@@ -565,43 +628,11 @@ impl<T: Tmux> Application<T> {
         width: usize,
         focus: Option<&Focus>,
     ) -> Result<String, String> {
-        let started = Instant::now();
-        let snapshot = self.snapshot(socket, client, width, focus)?;
-        let (pi_sessions, context) = self.pi_sessions(socket, &snapshot)?;
-        let states = self.pr_states(context.as_ref(), false);
-        let queried = started.elapsed().as_micros();
-        let usage = self.usage_rows(false)?;
-        let usage_us = started.elapsed().as_micros().saturating_sub(queried);
-        let jobs = self.gob_jobs(&snapshot)?;
-        let gob_us = started
-            .elapsed()
-            .as_micros()
-            .saturating_sub(queried + usage_us);
-        let (commands, _) = self.commands(&snapshot);
-        let command_us = started
-            .elapsed()
-            .as_micros()
-            .saturating_sub(queried + usage_us + gob_us);
-        let git = self.git_status(&snapshot).ok().flatten();
-        let git_us = started
-            .elapsed()
-            .as_micros()
-            .saturating_sub(queried + usage_us + gob_us + command_us);
-        self.sidebar.render_with_inputs(
-            &snapshot,
-            crate::RenderInputs {
-                pi_sessions: &pi_sessions,
-                usage_rows: &usage,
-                gob_jobs: &jobs,
-                context: context.as_ref(),
-                states: &states,
-                commands: &commands,
-                git: git.as_ref(),
-            },
-        )?;
+        let (_, diagnostics) = self.measured_render(socket, client, width, focus, None, false)?;
+        let stages = diagnostics.stages;
         Ok(format!(
-            "{{\"query_us\":{queried},\"usage_us\":{usage_us},\"gob_us\":{gob_us},\"command_us\":{command_us},\"git_us\":{git_us},\"render_us\":{}}}",
-            started.elapsed().as_micros().saturating_sub(queried + usage_us + gob_us + command_us + git_us)
+            "{{\"query_us\":{},\"usage_us\":{},\"gob_us\":{},\"command_us\":{},\"git_us\":{},\"render_us\":{}}}",
+            stages[0] + stages[1] + stages[2], stages[3], stages[4], stages[5], stages[6], stages[7]
         ))
     }
 
@@ -954,6 +985,56 @@ mod tests {
                 .contains("command.slow: command timed out"));
         }
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn debug_shows_the_previous_completed_redraw_for_each_client() {
+        let root = std::env::temp_dir().join(format!(
+            "starmux-debug-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let sidebar = Sidebar::from_toml(&format!(
+            "modules = [\"debug\"]\n[debug]\ndetails = true\ncache_dir = {:?}",
+            root.to_str().unwrap()
+        ))
+        .unwrap();
+        let snapshot = Snapshot {
+            width: 30,
+            client_width: 80,
+            client_height: 24,
+            status_lines: 1,
+            current_session: "$0".into(),
+            current_pane: "%0".into(),
+            pane_path: "/tmp".into(),
+            sessions: vec![Session {
+                id: "$0".into(),
+                name: "main".into(),
+                windows: vec![],
+            }],
+        };
+        let app = Application::new(sidebar, MemoryTmux::new(snapshot));
+        let first = app.render_query("socket", "client", 30, None).unwrap();
+        assert!(first.contains("last --"), "{first}");
+        let second = app.render_query("socket", "client", 30, None).unwrap();
+        assert!(
+            second.contains("last ") && !second.contains("last --"),
+            "{second}"
+        );
+        assert!(app
+            .render_query("socket", "other", 30, None)
+            .unwrap()
+            .contains("last --"));
+        assert!(app
+            .render_query("other", "client", 30, None)
+            .unwrap()
+            .contains("last --"));
+        let timings: serde_json::Value =
+            serde_json::from_str(&app.timings("socket", "client", 30, None).unwrap()).unwrap();
+        assert!(timings["query_us"].is_u64());
+        assert!(timings["render_us"].is_u64());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

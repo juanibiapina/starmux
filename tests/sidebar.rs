@@ -1081,6 +1081,7 @@ fn named_commands_keep_order_and_render_only_validated_styles() {
                 states: &[],
                 commands: &commands,
                 git: None,
+                debug: None,
             },
         )
         .unwrap();
@@ -1144,6 +1145,7 @@ fn git_lines_can_hide_upstream_or_put_it_on_its_own_row() {
                     states: &[],
                     commands: &BTreeMap::new(),
                     git: Some(&status),
+                    debug: None,
                 },
             )
             .unwrap()
@@ -1158,4 +1160,66 @@ fn git_lines_can_hide_upstream_or_put_it_on_its_own_row() {
     assert!(separate.contains("origin/main"));
     assert!(separate.contains("↑2"));
     assert!(Sidebar::from_toml("modules = [\"git\"]\n[git]\nlines = [\"$unknown\"]").is_err());
+}
+
+#[test]
+fn debug_rows_follow_order_and_clip_without_click_targets() {
+    let sidebar = Sidebar::from_toml(
+        "modules = [\"divider\", \"debug\"]\n[debug]\ndetails = true\nstyle = \"fg=brightblack\"",
+    )
+    .unwrap();
+    let diagnostics = starmux::Diagnostics {
+        stages: [1200, 0, 0, 250, 0, 0, 100, 50],
+    };
+    let input = snapshot();
+    let render = || {
+        sidebar
+            .render_with_inputs(
+                &input,
+                starmux::RenderInputs {
+                    pi_sessions: &[],
+                    usage_rows: &[],
+                    gob_jobs: &[],
+                    context: None,
+                    states: &[],
+                    commands: &BTreeMap::new(),
+                    git: None,
+                    debug: Some(&diagnostics),
+                },
+            )
+            .unwrap()
+    };
+    let rendered = render();
+    assert!(rendered.find("----------------").unwrap() < rendered.find("last 1.60 ms").unwrap());
+    assert!(rendered.contains("tmux 1.20 ms"), "{rendered}");
+    assert!(rendered.contains("usage 0.250 ms"), "{rendered}");
+    assert!(rendered.contains("git 0.100 ms"), "{rendered}");
+    assert!(!rendered.contains("#[range="), "{rendered}");
+    assert!(rendered.contains("#[fg=brightblack]"), "{rendered}");
+    let mut narrow = input.clone();
+    narrow.width = 7;
+    let clipped = sidebar
+        .render_with_inputs(
+            &narrow,
+            starmux::RenderInputs {
+                pi_sessions: &[],
+                usage_rows: &[],
+                gob_jobs: &[],
+                context: None,
+                states: &[],
+                commands: &BTreeMap::new(),
+                git: None,
+                debug: Some(&diagnostics),
+            },
+        )
+        .unwrap();
+    assert!(!clipped.contains("last 1.60 ms"), "{clipped}");
+    assert!(!clipped.contains("#[range="), "{clipped}");
+
+    let disabled = Sidebar::from_toml("modules = [\"debug\"]\n[debug]\ndisabled = true").unwrap();
+    assert!(!disabled.render(&input).unwrap().contains("last"));
+    assert!(
+        Sidebar::from_toml("modules = [\"debug\"]\n[debug]\ncache_dir = \"relative\"").is_err()
+    );
+    assert!(Sidebar::from_toml("modules = [\"debug\"]\n[debug]\nstyle = \"#[bad]\"").is_err());
 }

@@ -1,6 +1,8 @@
 mod command;
+mod debug;
 mod git;
 mod gob;
+pub use debug::Diagnostics;
 pub use git::GitStatus;
 mod navigation;
 pub use gob::GobJob;

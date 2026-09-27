@@ -12,7 +12,7 @@ Run `starmux print-config` to print the complete configuration. Run `starmux che
 modules = ["sessions", "divider"]
 ```
 
-The built-ins are `sessions`, `divider`, `pi-workbench`, `pi-context`, `usage`, `gob`, `git`, `spacer`, and `blank`. Named external commands use `command.<name>`. Unknown names and duplicate names other than `divider` and `blank` are errors. Repeat `divider` to separate multiple sections, for example `modules = ["sessions", "divider", "pi-workbench", "divider", "usage", "divider", "gob"]`. Each divider uses the same `[divider]` settings. `pi-workbench`, `pi-context`, `usage`, `gob`, and `git` are not enabled by default.
+The built-ins are `sessions`, `divider`, `pi-workbench`, `pi-context`, `usage`, `gob`, `git`, `debug`, `spacer`, and `blank`. Named external commands use `command.<name>`. Unknown names and duplicate names other than `divider` and `blank` are errors. Repeat `divider` to separate multiple sections, for example `modules = ["sessions", "divider", "pi-workbench", "divider", "usage", "divider", "gob"]`. Each divider uses the same `[divider]` settings. `pi-workbench`, `pi-context`, `usage`, `gob`, `git`, and `debug` are not enabled by default.
 
 Place one `spacer` between modules to push the following rows to the bottom of the sidebar. For example, `modules = ["sessions", "spacer", "divider", "usage"]` keeps sessions at the top and usage at the bottom. The spacer takes only the rows left after all other modules render. It adds no rows if the sidebar is full, and it has no style or click target. Its size updates when the client is resized. Add `blank` after `usage` to leave one empty row below it: `modules = ["sessions", "spacer", "divider", "usage", "blank"]`. Each `blank` entry adds one empty row without a style or click target; repeat it for more space.
 
@@ -94,7 +94,7 @@ character = "-"
 style = "dim"
 ```
 
-Set `disabled = true` in `[sessions]`, `[divider]`, `[pi-workbench]`, `[pi-context]`, `[usage]`, `[gob]`, or `[git]` to omit that module without changing the shared module order.
+Set `disabled = true` in `[sessions]`, `[divider]`, `[pi-workbench]`, `[pi-context]`, `[usage]`, `[gob]`, `[git]`, or `[debug]` to omit that module without changing the shared module order.
 
 ## Provider usage
 
@@ -237,6 +237,22 @@ Each string in `lines` is one sidebar row. An entry with no nonempty variables p
 `$staged`, `$modified`, `$untracked`, and `$conflicts` count files; one file can be both staged and modified. `$added` and `$deleted` count tracked line changes against HEAD across staged and unstaged edits. Untracked files and binary changes have no line totals. `$clean` shows `✔` when no files have changed and no Git operation is active; stashes do not make the worktree dirty. `$stash` counts repository stashes, shared across linked worktrees. `$upstream` and `$divergence` use local refs without fetching. `$state` shows an active merge, rebase, cherry-pick, or revert. Detached HEAD shows a short commit ID. Outside a repository or when Git is missing, the section has no rows. Queries have a 1.5 second deadline and a 2 MiB output limit; failures omit the section and appear in `starmux explain`.
 
 The `[git]` styles are `branch_style`, `upstream_style`, `divergence_style`, `staged_style`, `modified_style`, `untracked_style`, `conflicts_style`, `stash_style`, `added_style`, `deleted_style`, `clean_style`, and `state_style`. Each accepts validated tmux styles and palette colors. The default colors make additions green and deletions red.
+
+## Debug timings
+
+Add `debug` to show how long the previous completed redraw took for this tmux socket and client. Place it after `spacer` to keep it at the bottom:
+
+```toml
+modules = ["sessions", "spacer", "debug"]
+
+[debug]
+details = true
+style = "dim"
+```
+
+The default shows only `last 12.34 ms`; `details = true` adds rows for nonzero `tmux`, `pi`, `pr`, `usage`, `gob`, `commands`, `git`, and `format` stages. These are source query and formatting times: several sidebar modules share a source, and `commands` combines configured external commands. The total is the sum of the stages, subject to rounding when displayed. The interval begins before the tmux snapshot and ends after formatting the sidebar. It excludes process startup, reading and writing the debug cache, and tmux's evaluation of the resulting status text. Background refresh workers are not included; starting them during a redraw is included. `starmux timings` retains its JSON fields but runs its own query without starting refresh workers.
+
+The first redraw shows `last --`. Each completed redraw records its measurement for the next one; the value expires after five minutes. Cache errors also show `last --` and do not interrupt the sidebar. The default cache is `${XDG_CACHE_HOME:-~/.cache}/starmux/debug`; set an absolute `cache_dir` under `[debug]` to change it. Rows have no click targets and use the configured validated style. `disabled = true` omits the rows and cache access. The default module list does not include `debug`.
 
 ## Tmux integration
 
