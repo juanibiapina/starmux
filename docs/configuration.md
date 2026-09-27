@@ -123,7 +123,7 @@ Set `cache_dir` to an absolute path under `[usage]` to change the usage cache lo
 
 ## Live Pi sessions
 
-Add `pi-live` to `modules` to show a state icon and the name of each reachable Pi session published by Pi Workbench:
+Add `pi-live` to `modules` to show a state icon and the name of each reachable Pi session published by pi-workbench:
 
 ```toml
 modules = ["sessions", "divider", "pi-live"]
@@ -148,7 +148,7 @@ Starmux reads version 2 JSON records from `~/.local/share/pi/status`. It gets th
 
 ## Selected Pi context
 
-Add `pi-context` to show the plans, pull requests, and loaded skills recorded by Pi Workbench for the Pi session in the selected tmux pane. It can be placed independently of `pi-live`:
+Add `pi-context` to show the plans, pull requests, and loaded skills recorded by pi-workbench for the Pi session in the selected tmux pane. It can be placed independently of `pi-live`:
 
 ```toml
 modules = ["sessions", "divider", "pi-live", "divider", "pi-context"]
