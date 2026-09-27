@@ -1506,34 +1506,33 @@ impl Sidebar {
                 selected: false,
             });
             if let Some(percent) = job.percent(time::OffsetDateTime::now_utc()) {
-                let label = format!("{percent:.0}%");
+                let label = format!("{:>4}", format!("{percent:.0}%"));
+                let right_pad = if width >= label.len() + 2 { 2 } else { 0 };
+                let gap = usize::from(width > label.len() + right_pad + 1);
+                let indent = 4.min(width.saturating_sub(label.len() + right_pad + gap + 1));
+                let length = width.saturating_sub(indent + gap + label.len() + right_pad);
+                let filled = ((percent / 100.0 * length as f64).round() as usize).min(length);
+                let mut bar = BTreeMap::from([(
+                    "bar",
+                    Value::Spans(vec![Span {
+                        text: format!("{}{}", "█".repeat(filled), "░".repeat(length - filled)),
+                        style: progress.clone(),
+                    }]),
+                )]);
+                shade_usage_bar(&mut bar, &progress, &track, "default");
                 let mut spans = vec![Span {
-                    text: "    ".into(),
+                    text: " ".repeat(indent),
                     style: "default".into(),
                 }];
-                if width >= 4 + 5 + 1 + label.len() {
-                    let mut bar = BTreeMap::from([(
-                        "bar",
-                        Value::Spans(vec![Span {
-                            text: progress_blocks(percent, 5).concat(),
-                            style: progress.clone(),
-                        }]),
-                    )]);
-                    shade_usage_bar(&mut bar, &progress, &track, "default");
-                    if let Some(Value::Spans(glyphs)) = bar.remove("bar") {
-                        spans.extend(glyphs);
-                    }
-                    spans.push(Span {
-                        text: " ".into(),
-                        style: "default".into(),
-                    });
+                if let Some(Value::Spans(glyphs)) = bar.remove("bar") {
+                    spans.extend(glyphs);
                 }
                 spans.push(Span {
-                    text: label,
+                    text: format!("{}{label}{}", " ".repeat(gap), " ".repeat(right_pad)),
                     style: "default".into(),
                 });
                 rows.push(Row {
-                    spans,
+                    spans: coalesce(spans),
                     fill: None,
                     range: None,
                     focus: false,

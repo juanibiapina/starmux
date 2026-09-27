@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Show Gob job progress as a horizontal track below each job name, with the percentage on the right.
+
 ## [0.4.0] - 2026-09-27
 
 ### Added
