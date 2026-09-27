@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Select different module lists from one configuration file for separate tmux render areas.
+
 ### Changed
 
 - Scroll the complete sidebar with the mouse wheel, showing progress during rapid gestures and keeping direction changes in order without selecting another window.

@@ -215,23 +215,50 @@ fn open_browser_target(target: &std::ffi::OsStr) -> Result<(), String> {
     }
 }
 
+fn scroll_identity(client: &str, config: &str) -> String {
+    if config == "default" {
+        client.to_owned()
+    } else {
+        format!("{client}\0{config}")
+    }
+}
+
 pub fn scroll_client(
     socket: &str,
     client: &str,
     down: bool,
     refresh: bool,
 ) -> Result<bool, String> {
+    scroll_client_for(socket, client, down, refresh, "default")
+}
+
+pub fn scroll_client_for(
+    socket: &str,
+    client: &str,
+    down: bool,
+    refresh: bool,
+    config: &str,
+) -> Result<bool, String> {
     if socket.is_empty() || client.is_empty() {
         return Err("missing tmux socket or client name".into());
     }
-    let movement = crate::scroll::move_by(socket, client, down, !refresh)
+    let identity = scroll_identity(client, config);
+    let movement = crate::scroll::move_by(socket, &identity, down, !refresh)
         .map_err(|error| format!("scroll state failed: {error}"))?;
     if movement.start_worker {
         let spawn = std::env::current_exe()
             .map_err(|error| error.to_string())
             .and_then(|binary| {
                 Command::new(binary)
-                    .args(["scroll-worker", "--socket", socket, "--client", client])
+                    .args([
+                        "scroll-worker",
+                        "--socket",
+                        socket,
+                        "--client",
+                        client,
+                        "--config",
+                        config,
+                    ])
                     .stdin(Stdio::null())
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
@@ -240,7 +267,7 @@ pub fn scroll_client(
                     .map_err(|error| error.to_string())
             });
         if let Err(error) = spawn {
-            crate::scroll::stop_worker(socket, client);
+            crate::scroll::stop_worker(socket, &identity);
             return Err(format!("scroll refresh failed: {error}"));
         }
     }
@@ -251,13 +278,18 @@ pub fn scroll_client(
 }
 
 pub fn scroll_worker(socket: &str, client: &str) -> Result<(), String> {
+    scroll_worker_for(socket, client, "default")
+}
+
+pub fn scroll_worker_for(socket: &str, client: &str, config: &str) -> Result<(), String> {
+    let identity = scroll_identity(client, config);
     let result = (|| {
         loop {
-            let generation = crate::scroll::worker_generation(socket, client)
+            let generation = crate::scroll::worker_generation(socket, &identity)
                 .ok_or("scroll state is no longer present")?;
             refresh_scroll_client(socket, client)?;
             thread::sleep(Duration::from_millis(150));
-            if !crate::scroll::worker_next(socket, client, generation)
+            if !crate::scroll::worker_next(socket, &identity, generation)
                 .map_err(|error| format!("scroll state failed: {error}"))?
             {
                 break;
@@ -266,7 +298,7 @@ pub fn scroll_worker(socket: &str, client: &str) -> Result<(), String> {
         Ok(())
     })();
     if result.is_err() {
-        crate::scroll::stop_worker(socket, client);
+        crate::scroll::stop_worker(socket, &identity);
     }
     result
 }
@@ -437,9 +469,10 @@ impl<T: Tmux> Application<T> {
                 .map(std::path::PathBuf::from)
                 .or_else(crate::debug::default_dir)
         });
+        let identity = scroll_identity(client, self.sidebar.selected_config());
         let previous = dir
             .as_deref()
-            .and_then(|dir| crate::debug::read(dir, socket, client));
+            .and_then(|dir| crate::debug::read(dir, socket, &identity));
         let (rendered, diagnostics, max_offset) = match self.measured_render(
             socket,
             client,
@@ -448,16 +481,16 @@ impl<T: Tmux> Application<T> {
             RenderOptions {
                 previous: previous.as_ref(),
                 spawn: true,
-                offset: crate::scroll::read(socket, client),
+                offset: crate::scroll::read(socket, &identity),
             },
         ) {
             Ok(result) => result,
             Err(error) if error == FOCUS_CHANGED => return Ok(String::new()),
             Err(error) => return Err(error),
         };
-        let _ = crate::scroll::set_bound(socket, client, max_offset);
+        let _ = crate::scroll::set_bound(socket, &identity, max_offset);
         if let Some(dir) = dir {
-            let _ = crate::debug::write(&dir, socket, client, &diagnostics);
+            let _ = crate::debug::write(&dir, socket, &identity, &diagnostics);
         }
         Ok(rendered)
     }

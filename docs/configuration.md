@@ -16,6 +16,27 @@ The built-ins are `sessions`, `divider`, `pi-workbench`, `pi-context`, `usage`, 
 
 Place one `spacer` between modules to push the following rows to the bottom of the sidebar. For example, `modules = ["sessions", "spacer", "divider", "usage"]` keeps sessions at the top and usage at the bottom. The spacer takes only the rows left after all other modules render. It adds no rows if the sidebar is full, and it has no style or click target. Its size updates when the client is resized. Add `blank` after `usage` to leave one empty row below it: `modules = ["sessions", "spacer", "divider", "usage", "blank"]`. Each `blank` entry adds one empty row without a style or click target; repeat it for more space.
 
+### Multiple module lists
+
+Define additional ordered lists in the same file with `[configs.NAME]`. The top-level `modules` list is named `default` and is selected when `--config` is absent:
+
+```toml
+modules = ["sessions", "divider", "pi-workbench"]
+
+[configs.right]
+modules = ["usage", "spacer", "debug"]
+
+[configs.bottom]
+modules = ["git", "command.build"]
+
+[commands.build]
+argv = ["my-status", "--short"]
+```
+
+Run `starmux render-query --config=right --width=30 --socket=PATH --client=NAME` to select the right list. `explain` and `timings` accept the same selector. All lists use the same module settings, colorscheme, palette, and named commands. A command may be referenced only by a named list. Empty lists produce no content rows. Names use 1–32 ASCII letters, digits, `_`, or `-`; `default` is reserved. Unknown names and invalid lists are errors. `check-config` validates every list; `print-config` prints all of them.
+
+`starmux init tmux` selects `default`. For another tmux render area, copy its generated render invocation and add `--config=right` after `render-query`. Pass the same `--config=right` to custom `starmux activate`, `starmux scroll`, and `starmux scroll-event` bindings for that area. Scroll positions are separate for each list on a client. Tmux controls the placement and width of each area; Starmux renders its selected rows within the supplied width and available height.
+
 ## Row formats
 
 Session and window rows use a safe formatter rather than raw tmux syntax:

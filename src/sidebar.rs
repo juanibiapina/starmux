@@ -41,6 +41,8 @@ pub struct Snapshot {
 #[serde(default, deny_unknown_fields)]
 struct Config {
     modules: Vec<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    configs: BTreeMap<String, ModuleList>,
     #[serde(skip_serializing_if = "Option::is_none")]
     colorscheme: Option<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -61,6 +63,12 @@ struct Config {
     commands: BTreeMap<String, CommandConfig>,
     #[serde(rename = "pi-context")]
     pi_context: PiContextConfig,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ModuleList {
+    modules: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -278,6 +286,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             modules: vec!["sessions".into(), "divider".into()],
+            configs: BTreeMap::new(),
             colorscheme: None,
             colorschemes: BTreeMap::new(),
             palette: None,
@@ -426,6 +435,7 @@ pub struct RenderInputs<'a> {
 #[derive(Clone, Debug)]
 pub struct Sidebar {
     config: Config,
+    selected: String,
     palette: BTreeMap<String, String>,
     sessions: CompiledSessions,
     pi_workbench_format: Vec<Node>,
@@ -496,24 +506,38 @@ impl Sidebar {
             "spacer",
             "blank",
         ];
-        let mut seen = BTreeSet::new();
+        let mut used = BTreeSet::new();
         if config.commands.len() > 4 {
             return Err("at most 4 commands may be configured".into());
         }
-        for name in &config.modules {
-            if let Some(id) = name.strip_prefix("command.") {
-                if !valid_command_name(id) || !config.commands.contains_key(id) {
-                    return Err(format!("unknown command module {name}"));
-                }
-            } else if !known.contains(&name.as_str()) {
-                return Err(format!("unknown module {name}"));
+        for name in config.configs.keys() {
+            if !valid_command_name(name) || name == "default" {
+                return Err(format!("invalid config name {name}"));
             }
-            if name != "divider" && name != "blank" && !seen.insert(name) {
-                return Err(format!("duplicate module {name}"));
+        }
+        for (label, modules) in std::iter::once(("default", &config.modules)).chain(
+            config
+                .configs
+                .iter()
+                .map(|(name, list)| (name.as_str(), &list.modules)),
+        ) {
+            let mut seen = BTreeSet::new();
+            for name in modules {
+                if let Some(id) = name.strip_prefix("command.") {
+                    if !valid_command_name(id) || !config.commands.contains_key(id) {
+                        return Err(format!("config {label}: unknown command module {name}"));
+                    }
+                } else if !known.contains(&name.as_str()) {
+                    return Err(format!("config {label}: unknown module {name}"));
+                }
+                if name != "divider" && name != "blank" && !seen.insert(name) {
+                    return Err(format!("config {label}: duplicate module {name}"));
+                }
+                used.insert(name.as_str());
             }
         }
         for (name, command) in &config.commands {
-            if !valid_command_name(name) || !seen.contains(&format!("command.{name}")) {
+            if !valid_command_name(name) || !used.contains(format!("command.{name}").as_str()) {
                 return Err(format!("unused or invalid command {name}"));
             }
             if command.argv.is_empty()
@@ -746,6 +770,7 @@ impl Sidebar {
         };
         Ok(Self {
             config,
+            selected: "default".into(),
             palette,
             sessions,
             pi_workbench_format,
@@ -755,9 +780,29 @@ impl Sidebar {
         })
     }
 
+    pub fn select(mut self, name: &str) -> Result<Self, String> {
+        if name != "default" && !self.config.configs.contains_key(name) {
+            return Err(format!("unknown config {name}"));
+        }
+        self.selected = name.to_owned();
+        Ok(self)
+    }
+
+    pub fn selected_config(&self) -> &str {
+        &self.selected
+    }
+
+    fn modules(&self) -> &[String] {
+        if self.selected == "default" {
+            &self.config.modules
+        } else {
+            &self.config.configs[&self.selected].modules
+        }
+    }
+
     pub fn requested_window_options(&self) -> Vec<(String, String)> {
         if self.sessions.config.disabled
-            || !self.config.modules.iter().any(|name| name == "sessions")
+            || !self.modules().iter().any(|name| name == "sessions")
             || !contains_variable(&self.sessions.window_format, "indicator")
             || self.sessions.config.indicator.is_none()
         {
@@ -773,11 +818,7 @@ impl Sidebar {
 
     pub(crate) fn pi_workbench_data_dir(&self) -> Option<&str> {
         if (self.config.pi_workbench.disabled
-            || !self
-                .config
-                .modules
-                .iter()
-                .any(|name| name == "pi-workbench"))
+            || !self.modules().iter().any(|name| name == "pi-workbench"))
             && !self.pi_context_enabled()
         {
             return None;
@@ -786,8 +827,7 @@ impl Sidebar {
     }
 
     pub(crate) fn pi_context_enabled(&self) -> bool {
-        !self.config.pi_context.disabled
-            && self.config.modules.iter().any(|name| name == "pi-context")
+        !self.config.pi_context.disabled && self.modules().iter().any(|name| name == "pi-context")
     }
 
     pub(crate) fn file_open_args(
@@ -810,20 +850,20 @@ impl Sidebar {
     }
 
     pub(crate) fn debug_cache_dir(&self) -> Option<Option<&str>> {
-        (!self.config.debug.disabled && self.config.modules.iter().any(|name| name == "debug"))
+        (!self.config.debug.disabled && self.modules().iter().any(|name| name == "debug"))
             .then_some(self.config.debug.cache_dir.as_deref())
     }
 
     pub(crate) fn git_enabled(&self) -> bool {
-        !self.config.git.disabled && self.config.modules.iter().any(|name| name == "git")
+        !self.config.git.disabled && self.modules().iter().any(|name| name == "git")
     }
 
     pub(crate) fn gob_enabled(&self) -> bool {
-        !self.config.gob.disabled && self.config.modules.iter().any(|name| name == "gob")
+        !self.config.gob.disabled && self.modules().iter().any(|name| name == "gob")
     }
 
     pub(crate) fn usage_options(&self) -> Option<(&[String], Option<&str>)> {
-        if self.config.usage.disabled || !self.config.modules.iter().any(|name| name == "usage") {
+        if self.config.usage.disabled || !self.modules().iter().any(|name| name == "usage") {
             return None;
         }
         Some((
@@ -833,8 +873,7 @@ impl Sidebar {
     }
 
     pub(crate) fn command_options(&self) -> Vec<(&str, &[String])> {
-        self.config
-            .modules
+        self.modules()
             .iter()
             .filter_map(|name| {
                 let id = name.strip_prefix("command.")?;
@@ -926,7 +965,7 @@ impl Sidebar {
         validate_snapshot(snapshot)?;
         let mut rows = Vec::new();
         let mut spacer = None;
-        for name in &self.config.modules {
+        for name in self.modules() {
             match name.as_str() {
                 "sessions" if !self.sessions.config.disabled => {
                     rows.extend(self.render_sessions(snapshot)?)
@@ -1003,7 +1042,7 @@ impl Sidebar {
     }
 
     pub(crate) fn module_names(&self) -> &[String] {
-        &self.config.modules
+        self.modules()
     }
 
     fn render_debug(&self, previous: Option<&crate::Diagnostics>) -> Result<Vec<Row>, String> {

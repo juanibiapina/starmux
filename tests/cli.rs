@@ -189,3 +189,41 @@ fn version_is_reported() {
         format!("starmux {}\n", env!("CARGO_PKG_VERSION"))
     );
 }
+
+#[test]
+fn named_config_is_validated_before_querying_tmux() {
+    let root = std::env::temp_dir().join(format!("starmux-named-config-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("config.toml");
+    std::fs::write(
+        &path,
+        "modules = []\n[configs.right]\nmodules = [\"divider\"]\n",
+    )
+    .unwrap();
+    let invoke = |command: &str, config: &str| {
+        Command::new(env!("CARGO_BIN_EXE_starmux"))
+            .args([
+                command,
+                "--width=30",
+                "--socket=/dev/nonexistent",
+                "--client=none",
+                config,
+            ])
+            .env("STARMUX_CONFIG", &path)
+            .output()
+            .unwrap()
+    };
+    for command in ["render-query", "explain", "timings"] {
+        let output = invoke(command, "--config=missing");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("unknown config missing"));
+        let selected = invoke(command, "--config=right");
+        assert!(!String::from_utf8_lossy(&selected.stderr).contains("unknown config"));
+    }
+    let printed = Command::new(env!("CARGO_BIN_EXE_starmux"))
+        .arg("print-config")
+        .env("STARMUX_CONFIG", &path)
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&printed.stdout).contains("[configs.right]"));
+    std::fs::remove_dir_all(root).unwrap();
+}

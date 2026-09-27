@@ -416,6 +416,54 @@ fn attached_side_status_paints_navigation_rows() {
         );
         assert!(padded.contains("----------------------------"));
     }
+    let rows = std::iter::once("\"divider\"")
+        .chain(std::iter::repeat_n("\"blank\"", 80))
+        .collect::<Vec<_>>()
+        .join(", ");
+    fs::write(
+        &config_path,
+        format!("modules = [{rows}]\n[configs.right]\nmodules = [{rows}]\n"),
+    )
+    .unwrap();
+    let named = Command::new(binary)
+        .args(&query)
+        .arg("--config=right")
+        .env("STARMUX_CONFIG", &config_path)
+        .output()
+        .unwrap();
+    assert!(named.status.success());
+    assert!(String::from_utf8_lossy(&named.stdout).contains("----------------------------"));
+    let wheel = Command::new(binary)
+        .args([
+            "scroll-event",
+            &format!("--socket={}", parts[0]),
+            &format!("--client={}", client_name.trim()),
+            "--direction=down",
+            "--config=right",
+        ])
+        .env("STARMUX_CONFIG", &config_path)
+        .output()
+        .unwrap();
+    assert!(
+        wheel.status.success(),
+        "{}",
+        String::from_utf8_lossy(&wheel.stderr)
+    );
+    let shifted = Command::new(binary)
+        .args(&query)
+        .arg("--config=right")
+        .env("STARMUX_CONFIG", &config_path)
+        .output()
+        .unwrap();
+    assert!(shifted.status.success());
+    assert!(!String::from_utf8_lossy(&shifted.stdout).contains("----------------------------"));
+    let default = Command::new(binary)
+        .args(&query)
+        .env("STARMUX_CONFIG", &config_path)
+        .output()
+        .unwrap();
+    assert!(default.status.success());
+    assert!(String::from_utf8_lossy(&default.stdout).contains("----------------------------"));
     tmux(&["kill-server"]);
     let _ = client.wait();
     fs::remove_dir_all(root).unwrap();

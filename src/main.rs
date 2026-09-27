@@ -43,7 +43,7 @@ fn flags(values: &[String]) -> Result<BTreeMap<&str, &str>, String> {
     Ok(result)
 }
 
-fn query_arguments(values: &[String]) -> Result<(usize, &str, &str, Option<Focus>), String> {
+fn query_arguments(values: &[String]) -> Result<(usize, &str, &str, Option<Focus>, &str), String> {
     let flags = flags(values)?;
     let width = flags
         .get("width")
@@ -57,11 +57,12 @@ fn query_arguments(values: &[String]) -> Result<(usize, &str, &str, Option<Focus
         (Some(session), Some(window)) => Some(Focus::new(*session, *window)?),
         _ => return Err("expected both --current-session and --current-window".into()),
     };
+    let config = flags.get("config").copied().unwrap_or("default");
     let expected = if focus.is_some() { 5 } else { 3 };
-    if flags.len() != expected {
+    if flags.len() != expected + usize::from(flags.contains_key("config")) {
         return Err("unknown render-query argument".into());
     }
-    Ok((width, socket, client, focus))
+    Ok((width, socket, client, focus, config))
 }
 
 fn run() -> Result<(), String> {
@@ -76,7 +77,7 @@ fn run() -> Result<(), String> {
     }
     if args.len() == 1 && matches!(command, "--help" | "-h") {
         println!(
-            "starmux {}\n\nUsage:\n  starmux init tmux\n  starmux render-query --width=COLUMNS --socket=PATH --client=NAME [--current-session=ID --current-window=ID]\n  starmux explain --width=COLUMNS --socket=PATH --client=NAME [--current-session=ID --current-window=ID]\n  starmux timings --width=COLUMNS --socket=PATH --client=NAME [--current-session=ID --current-window=ID]\n  starmux activate --socket=PATH --client=NAME --target=TOKEN\n  starmux scroll --socket=PATH --client=NAME --direction=up|down\n  starmux check-config\n  starmux print-config",
+            "starmux {}\n\nUsage:\n  starmux init tmux\n  starmux render-query --width=COLUMNS --socket=PATH --client=NAME [--current-session=ID --current-window=ID] [--config=NAME]\n  starmux explain --width=COLUMNS --socket=PATH --client=NAME [--current-session=ID --current-window=ID] [--config=NAME]\n  starmux timings --width=COLUMNS --socket=PATH --client=NAME [--current-session=ID --current-window=ID] [--config=NAME]\n  starmux activate --socket=PATH --client=NAME --target=TOKEN [--config=NAME]\n  starmux scroll --socket=PATH --client=NAME --direction=up|down [--config=NAME]\n  starmux check-config\n  starmux print-config",
             env!("CARGO_PKG_VERSION")
         );
         return Ok(());
@@ -118,37 +119,50 @@ fn run() -> Result<(), String> {
             {
                 starmux::scroll_worker(socket, client)
             }
+            [_, socket_flag, socket, client_flag, client, config_flag, config]
+                if socket_flag == "--socket"
+                    && client_flag == "--client"
+                    && config_flag == "--config" =>
+            {
+                starmux::scroll_worker_for(socket, client, config)
+            }
             _ => Err("invalid scroll worker arguments".into()),
         };
     }
     if matches!(command, "scroll" | "scroll-event") {
         let parsed = flags(&args[1..])?;
-        if parsed.len() != 3 {
+        if parsed.len() != 3 + usize::from(parsed.contains_key("config")) {
             return Err(
-                "usage: starmux scroll --socket=PATH --client=NAME --direction=up|down".into(),
+                "usage: starmux scroll --socket=PATH --client=NAME --direction=up|down [--config=NAME]".into(),
             );
         }
+        let config = parsed.get("config").copied().unwrap_or("default");
+        load_sidebar()?.select(config)?;
         let down = match *parsed.get("direction").ok_or("missing --direction")? {
             "up" => false,
             "down" => true,
             _ => return Err("invalid --direction".into()),
         };
-        let _ = starmux::scroll_client(
+        let _ = starmux::scroll_client_for(
             parsed.get("socket").ok_or("missing --socket")?,
             parsed.get("client").ok_or("missing --client")?,
             down,
             command == "scroll",
+            config,
         )?;
         return Ok(());
     }
     if command == "activate" {
         let parsed = flags(&args[1..])?;
-        if parsed.len() != 3 {
+        if parsed.len() != 3 + usize::from(parsed.contains_key("config")) {
             return Err(
-                "usage: starmux activate --socket=PATH --client=NAME --target=TOKEN".into(),
+                "usage: starmux activate --socket=PATH --client=NAME --target=TOKEN [--config=NAME]".into(),
             );
         }
-        let app = Application::new(load_sidebar()?, ProcessTmux);
+        let app = Application::new(
+            load_sidebar()?.select(parsed.get("config").copied().unwrap_or("default"))?,
+            ProcessTmux,
+        );
         return app.activate(
             parsed.get("socket").ok_or("missing --socket")?,
             parsed.get("client").ok_or("missing --client")?,
@@ -174,8 +188,8 @@ fn run() -> Result<(), String> {
     if !matches!(command, "render-query" | "explain" | "timings") {
         return Err(format!("unknown command {command}"));
     }
-    let (width, socket, client, focus) = query_arguments(&args[1..])?;
-    let app = Application::new(sidebar, ProcessTmux);
+    let (width, socket, client, focus, config) = query_arguments(&args[1..])?;
+    let app = Application::new(sidebar.select(config)?, ProcessTmux);
     match command {
         "render-query" => println!(
             "{}",

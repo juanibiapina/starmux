@@ -1467,3 +1467,56 @@ argv = ["status"]
         assert!(Sidebar::from_toml(&broken).is_err(), "accepted {broken}");
     }
 }
+
+#[test]
+fn named_configs_select_rows_with_shared_settings_and_round_trip() {
+    let text = r#"
+modules = ["sessions", "divider"]
+[configs.right]
+modules = ["divider", "command.build", "blank"]
+[configs.empty]
+modules = []
+[divider]
+character = "="
+[commands.build]
+argv = ["echo", "ready"]
+"#;
+    let default = Sidebar::from_toml(text).unwrap();
+    let printed = default.print_config().unwrap();
+    assert!(printed.contains("[configs.right]"));
+    let right = Sidebar::from_toml(&printed)
+        .unwrap()
+        .select("right")
+        .unwrap();
+    assert!(default
+        .render(&snapshot())
+        .unwrap()
+        .contains("#[range=user|st0 "));
+    let rendered = right.render(&snapshot()).unwrap();
+    assert!(
+        rendered.contains("============================"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("#[range=user|st0 "), "{rendered}");
+    assert!(Sidebar::from_toml(text)
+        .unwrap()
+        .select("empty")
+        .unwrap()
+        .render(&snapshot())
+        .is_ok());
+    assert!(Sidebar::from_toml(text).unwrap().select("missing").is_err());
+}
+
+#[test]
+fn check_config_validates_all_named_lists() {
+    for text in [
+        "modules = []\n[configs.right]\nmodules = [\"missing\"]",
+        "modules = []\n[configs.right]\nmodules = [\"sessions\", \"sessions\"]",
+        "modules = []\n[configs.right]\nmodules = [\"spacer\", \"spacer\"]",
+        "modules = []\n[configs.default]\nmodules = []",
+        "modules = []\n[configs.right]\nmodules = []\nunknown = 1",
+        "modules = []\n[configs.right]\nmodules = [\"command.missing\"]",
+    ] {
+        assert!(Sidebar::from_toml(text).is_err(), "accepted {text}");
+    }
+}
