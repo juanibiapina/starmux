@@ -11,7 +11,7 @@ use std::{
 
 const MAX_RECORDS: usize = 32;
 const MAX_DIRECTORY_ENTRIES: usize = 256;
-const MAX_RECORD_BYTES: u64 = 16 * 1024;
+const MAX_RECORD_BYTES: u64 = 1024 * 1024;
 const MAX_RESPONSE_BYTES: usize = 1024;
 const PING_TIMEOUT: Duration = Duration::from_millis(40);
 const QUERY_BUDGET: Duration = Duration::from_millis(200);
@@ -338,7 +338,7 @@ pub struct PiContext {
     pub skills: Vec<PiSkill>,
 }
 
-const MAX_CONTEXT_BYTES: u64 = 256 * 1024;
+const MAX_CONTEXT_BYTES: u64 = 1024 * 1024;
 const MAX_ITEMS: usize = 16;
 
 pub(crate) fn read_context(path: &Path, session_id: &str) -> Option<PiContext> {
