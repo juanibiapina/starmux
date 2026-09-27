@@ -351,6 +351,7 @@ impl<T: Tmux> Application<T> {
         let usage = self.usage_rows(true)?;
         let jobs = self.gob_jobs(&snapshot)?;
         let (commands, _) = self.commands(&snapshot);
+        let git = self.git_status(&snapshot).ok().flatten();
         self.sidebar.render_with_inputs(
             &snapshot,
             crate::RenderInputs {
@@ -360,6 +361,7 @@ impl<T: Tmux> Application<T> {
                 context: context.as_ref(),
                 states: &states,
                 commands: &commands,
+                git: git.as_ref(),
             },
         )
     }
@@ -454,6 +456,13 @@ impl<T: Tmux> Application<T> {
         (rows, errors)
     }
 
+    fn git_status(&self, snapshot: &Snapshot) -> Result<Option<crate::GitStatus>, String> {
+        if !self.sidebar.git_enabled() {
+            return Ok(None);
+        }
+        crate::git::query(std::path::Path::new(&snapshot.pane_path))
+    }
+
     fn gob_jobs(&self, snapshot: &Snapshot) -> Result<Vec<crate::GobJob>, String> {
         if !self.sidebar.gob_enabled() {
             return Ok(Vec::new());
@@ -532,6 +541,13 @@ impl<T: Tmux> Application<T> {
                 job.percent(time::OffsetDateTime::now_utc())
             ));
         }
+        if self.sidebar.git_enabled() {
+            match self.git_status(&snapshot) {
+                Ok(Some(status)) => result.push_str(&format!("git {status:?}\n")),
+                Ok(None) => result.push_str("git: outside repository\n"),
+                Err(error) => result.push_str(&format!("git: {error}\n")),
+            }
+        }
         let (commands, errors) = self.commands(&snapshot);
         for (name, output) in commands {
             result.push_str(&format!("{name} output={output:?}\n"));
@@ -566,6 +582,11 @@ impl<T: Tmux> Application<T> {
             .elapsed()
             .as_micros()
             .saturating_sub(queried + usage_us + gob_us);
+        let git = self.git_status(&snapshot).ok().flatten();
+        let git_us = started
+            .elapsed()
+            .as_micros()
+            .saturating_sub(queried + usage_us + gob_us + command_us);
         self.sidebar.render_with_inputs(
             &snapshot,
             crate::RenderInputs {
@@ -575,11 +596,12 @@ impl<T: Tmux> Application<T> {
                 context: context.as_ref(),
                 states: &states,
                 commands: &commands,
+                git: git.as_ref(),
             },
         )?;
         Ok(format!(
-            "{{\"query_us\":{queried},\"usage_us\":{usage_us},\"gob_us\":{gob_us},\"command_us\":{command_us},\"render_us\":{}}}",
-            started.elapsed().as_micros().saturating_sub(queried + usage_us + gob_us + command_us)
+            "{{\"query_us\":{queried},\"usage_us\":{usage_us},\"gob_us\":{gob_us},\"command_us\":{command_us},\"git_us\":{git_us},\"render_us\":{}}}",
+            started.elapsed().as_micros().saturating_sub(queried + usage_us + gob_us + command_us + git_us)
         ))
     }
 

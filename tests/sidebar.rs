@@ -1065,6 +1065,7 @@ fn named_commands_keep_order_and_render_only_validated_styles() {
                 context: None,
                 states: &[],
                 commands: &commands,
+                git: None,
             },
         )
         .unwrap();
@@ -1101,4 +1102,45 @@ fn command_instances_require_exact_valid_references() {
     ] {
         assert!(Sidebar::from_toml(config).is_err(), "{config}");
     }
+}
+
+#[test]
+fn git_lines_can_hide_upstream_or_put_it_on_its_own_row() {
+    let status = starmux::GitStatus {
+        branch: "main#[fg=red]".into(),
+        upstream: "origin/main".into(),
+        ahead: 2,
+        added: 3,
+        deleted: 1,
+        ..Default::default()
+    };
+    let render = |lines: &str| {
+        let sidebar = Sidebar::from_toml(&format!(
+            "modules = [\"git\"]\n[git]\nlines = {lines}\nadded_style = \"fg=green\"\ndeleted_style = \"fg=red\""
+        )).unwrap();
+        sidebar
+            .render_with_inputs(
+                &snapshot(),
+                starmux::RenderInputs {
+                    pi_sessions: &[],
+                    usage_rows: &[],
+                    gob_jobs: &[],
+                    context: None,
+                    states: &[],
+                    commands: &BTreeMap::new(),
+                    git: Some(&status),
+                },
+            )
+            .unwrap()
+    };
+    let hidden = render("[\" $branch\", \" ( $added)( $deleted)\"]");
+    assert!(!hidden.contains("origin/main"));
+    assert!(hidden.contains("main##[fg=red]"), "{hidden}");
+    assert!(hidden.contains("#[fg=green]+3"), "{hidden}");
+    assert!(hidden.contains("#[fg=red]-1"), "{hidden}");
+    let separate = render("[\" $branch\", \" $upstream( $divergence)\", \" ( $state)\"]");
+    assert_eq!(separate.matches("#[nl]").count(), 4, "{separate}");
+    assert!(separate.contains("origin/main"));
+    assert!(separate.contains("↑2"));
+    assert!(Sidebar::from_toml("modules = [\"git\"]\n[git]\nlines = [\"$unknown\"]").is_err());
 }

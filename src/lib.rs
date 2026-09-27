@@ -1,5 +1,7 @@
 mod command;
+mod git;
 mod gob;
+pub use git::GitStatus;
 mod navigation;
 pub use gob::GobJob;
 mod pi_live;

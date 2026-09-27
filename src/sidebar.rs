@@ -49,6 +49,7 @@ struct Config {
     pi_live: PiLiveConfig,
     usage: UsageConfig,
     gob: GobConfig,
+    git: GitConfig,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     commands: BTreeMap<String, CommandConfig>,
     #[serde(rename = "pi-context")]
@@ -86,6 +87,50 @@ impl Default for PiContextConfig {
             merged_style: "fg=magenta".into(),
             closed_style: "fg=red".into(),
             unknown_style: "fg=brightblack".into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+struct GitConfig {
+    disabled: bool,
+    lines: Vec<String>,
+    branch_style: String,
+    upstream_style: String,
+    divergence_style: String,
+    staged_style: String,
+    modified_style: String,
+    untracked_style: String,
+    conflicts_style: String,
+    stash_style: String,
+    added_style: String,
+    deleted_style: String,
+    clean_style: String,
+    state_style: String,
+}
+
+impl Default for GitConfig {
+    fn default() -> Self {
+        Self {
+            disabled: false,
+            lines: vec![
+                " $branch( $upstream)( $divergence)".into(),
+                " ( $conflicts)( $staged)( $modified)( $untracked)( $stash)( $added)( $deleted)( $clean)".into(),
+                " ( $state)".into(),
+            ],
+            branch_style: "bold".into(),
+            upstream_style: "fg=cyan".into(),
+            divergence_style: "fg=yellow".into(),
+            staged_style: "fg=green".into(),
+            modified_style: "fg=red".into(),
+            untracked_style: "fg=magenta".into(),
+            conflicts_style: "fg=red,bold".into(),
+            stash_style: "fg=cyan".into(),
+            added_style: "fg=green".into(),
+            deleted_style: "fg=red".into(),
+            clean_style: "fg=green".into(),
+            state_style: "fg=red,bold".into(),
         }
     }
 }
@@ -212,6 +257,7 @@ impl Default for Config {
             pi_live: PiLiveConfig::default(),
             usage: UsageConfig::default(),
             gob: GobConfig::default(),
+            git: GitConfig::default(),
             commands: BTreeMap::new(),
             pi_context: PiContextConfig::default(),
         }
@@ -342,6 +388,7 @@ pub struct RenderInputs<'a> {
     pub context: Option<&'a crate::PiContext>,
     pub states: &'a [crate::pr_state::PrState],
     pub commands: &'a BTreeMap<String, String>,
+    pub git: Option<&'a crate::GitStatus>,
 }
 
 #[derive(Clone, Debug)]
@@ -352,6 +399,7 @@ pub struct Sidebar {
     pi_live_format: Vec<Node>,
     usage_format: Vec<Node>,
     gob_format: Vec<Node>,
+    git_lines: Vec<Vec<Node>>,
 }
 
 impl Sidebar {
@@ -375,6 +423,7 @@ impl Sidebar {
             "pi-live",
             "usage",
             "gob",
+            "git",
             "pi-context",
             "spacer",
             "blank",
@@ -441,6 +490,38 @@ impl Sidebar {
         validate_format(&pi_live_format, &["name", "state"], &palette)?;
         let gob_format = Parser::parse(&config.gob.format)?;
         validate_format(&gob_format, &["id", "name", "state"], &palette)?;
+        if config.git.lines.len() > 12 {
+            return Err("git lines may contain at most 12 rows".into());
+        }
+        let git_lines = config
+            .git
+            .lines
+            .iter()
+            .map(|line| {
+                let nodes = Parser::parse(line)?;
+                validate_format(
+                    &nodes,
+                    &[
+                        "branch",
+                        "upstream",
+                        "ahead",
+                        "behind",
+                        "divergence",
+                        "staged",
+                        "modified",
+                        "untracked",
+                        "conflicts",
+                        "stash",
+                        "added",
+                        "deleted",
+                        "clean",
+                        "state",
+                    ],
+                    &palette,
+                )?;
+                Ok(nodes)
+            })
+            .collect::<Result<Vec<_>, String>>()?;
         let usage_format = Parser::parse(&config.usage.format)?;
         validate_format(
             &usage_format,
@@ -524,6 +605,18 @@ impl Sidebar {
             &config.gob.heading_style,
             &config.gob.running_style,
             &config.gob.progress_style,
+            &config.git.branch_style,
+            &config.git.upstream_style,
+            &config.git.divergence_style,
+            &config.git.staged_style,
+            &config.git.modified_style,
+            &config.git.untracked_style,
+            &config.git.conflicts_style,
+            &config.git.stash_style,
+            &config.git.added_style,
+            &config.git.deleted_style,
+            &config.git.clean_style,
+            &config.git.state_style,
         ] {
             resolve_style(style, "default", &palette)?;
         }
@@ -572,6 +665,7 @@ impl Sidebar {
             pi_live_format,
             usage_format,
             gob_format,
+            git_lines,
         })
     }
 
@@ -623,6 +717,10 @@ impl Sidebar {
                 })
                 .collect()
         })
+    }
+
+    pub(crate) fn git_enabled(&self) -> bool {
+        !self.config.git.disabled && self.config.modules.iter().any(|name| name == "git")
     }
 
     pub(crate) fn gob_enabled(&self) -> bool {
@@ -699,6 +797,7 @@ impl Sidebar {
                 context,
                 states,
                 commands: &BTreeMap::new(),
+                git: None,
             },
         )
     }
@@ -715,6 +814,7 @@ impl Sidebar {
             context,
             states,
             commands,
+            git,
         } = input;
         validate_snapshot(snapshot)?;
         let mut rows = Vec::new();
@@ -746,6 +846,11 @@ impl Sidebar {
                 "gob" if !self.config.gob.disabled => {
                     rows.extend(self.render_gob(gob_jobs, snapshot.width)?)
                 }
+                "git" if !self.config.git.disabled => {
+                    if let Some(status) = git {
+                        rows.extend(self.render_git(status)?);
+                    }
+                }
                 name if name.starts_with("command.") => {
                     if let Some(text) = commands.get(name) {
                         rows.push(self.render_command(name, text)?);
@@ -753,7 +858,7 @@ impl Sidebar {
                 }
                 "spacer" => spacer = Some(rows.len()),
                 "blank" => rows.push(Row::blank()),
-                "sessions" | "divider" | "pi-live" | "usage" | "gob" | "pi-context" => {}
+                "sessions" | "divider" | "pi-live" | "usage" | "gob" | "git" | "pi-context" => {}
                 _ => return Err(format!("unknown module {name}")),
             }
         }
@@ -1139,6 +1244,78 @@ impl Sidebar {
             focus: false,
             selected: false,
         })
+    }
+
+    fn render_git(&self, status: &crate::GitStatus) -> Result<Vec<Row>, String> {
+        let config = &self.config.git;
+        let mut values = BTreeMap::new();
+        let fields = [
+            ("branch", status.branch.clone(), &config.branch_style),
+            ("upstream", status.upstream.clone(), &config.upstream_style),
+            ("ahead", count("↑", status.ahead), &config.divergence_style),
+            (
+                "behind",
+                count("↓", status.behind),
+                &config.divergence_style,
+            ),
+            (
+                "divergence",
+                format!("{}{}", count("↓", status.behind), count("↑", status.ahead)),
+                &config.divergence_style,
+            ),
+            ("staged", count("●", status.staged), &config.staged_style),
+            (
+                "modified",
+                count("✚", status.modified),
+                &config.modified_style,
+            ),
+            (
+                "untracked",
+                count("…", status.untracked),
+                &config.untracked_style,
+            ),
+            (
+                "conflicts",
+                count("✖", status.conflicts),
+                &config.conflicts_style,
+            ),
+            ("stash", count("⚑", status.stash), &config.stash_style),
+            ("added", count("+", status.added), &config.added_style),
+            ("deleted", count("-", status.deleted), &config.deleted_style),
+            (
+                "clean",
+                if status.clean() {
+                    "✔".into()
+                } else {
+                    String::new()
+                },
+                &config.clean_style,
+            ),
+            ("state", status.state.clone(), &config.state_style),
+        ];
+        for (key, text, style) in fields {
+            values.insert(
+                key,
+                Value::Spans(vec![Span {
+                    text,
+                    style: resolve_style(style, "default", &self.palette)?,
+                }]),
+            );
+        }
+        let mut rows = Vec::new();
+        for line in &self.git_lines {
+            let (spans, present) = render_nodes(line, &values, "default", &self.palette, None)?;
+            if present {
+                rows.push(Row {
+                    spans: coalesce(spans),
+                    fill: None,
+                    range: None,
+                    focus: false,
+                    selected: false,
+                });
+            }
+        }
+        Ok(rows)
     }
 
     fn render_gob(&self, jobs: &[crate::gob::GobJob], width: usize) -> Result<Vec<Row>, String> {
@@ -1972,6 +2149,14 @@ fn progress_blocks(percent: f64, count: usize) -> Vec<&'static str> {
 enum Value {
     Text(String),
     Spans(Vec<Span>),
+}
+
+fn count(prefix: &str, value: u64) -> String {
+    if value == 0 {
+        String::new()
+    } else {
+        format!("{prefix}{value}")
+    }
 }
 
 fn render_format(

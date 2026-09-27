@@ -5,6 +5,7 @@
 ### Added
 - Show available Codex resets beside the usage heading.
 - Show output from multiple configured commands in the sidebar, including colored gitmux status for the selected pane's directory.
+- Show configurable Git status rows with branch, upstream, changed files and lines, stashes, and active operations.
 
 ## [0.3.0] - 2026-09-27
 
