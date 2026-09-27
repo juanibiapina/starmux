@@ -1223,3 +1223,196 @@ fn debug_rows_follow_order_and_clip_without_click_targets() {
     );
     assert!(Sidebar::from_toml("modules = [\"debug\"]\n[debug]\nstyle = \"#[bad]\"").is_err());
 }
+
+#[test]
+fn bundled_schemes_color_all_rendered_modules_and_round_trip() {
+    let config = r#"
+colorscheme = "tokyo-night"
+modules = ["sessions", "divider", "pi-workbench", "pi-context", "usage", "gob", "git", "debug", "command.example"]
+[commands.example]
+argv = ["true"]
+[usage]
+providers = ["codex"]
+"#;
+    let sidebar = Sidebar::from_toml(config).unwrap();
+    let pi = PiSession {
+        state: "working".into(),
+        project: "/tmp/project".into(),
+        name: "agent".into(),
+        location: None,
+        target: None,
+        selected: true,
+    };
+    let context = starmux::PiContext {
+        pull_requests: vec!["https://github.com/o/r/pull/1".into()],
+        ..Default::default()
+    };
+    let usage = UsageRow {
+        provider: "codex".into(),
+        display_name: "Codex".into(),
+        available_resets: None,
+        windows: vec![UsageWindow {
+            label: "5h".into(),
+            used_percent: 90.0,
+            duration_seconds: None,
+            reset_at: None,
+        }],
+        stale: false,
+        unavailable: false,
+        fetched_at: None,
+    };
+    let job = starmux::GobJob {
+        id: "1".into(),
+        name: "build".into(),
+        started_at: None,
+        avg_duration_ms: 0,
+    };
+    let git = starmux::GitStatus {
+        branch: "main".into(),
+        modified: 2,
+        ..Default::default()
+    };
+    let debug = starmux::Diagnostics {
+        stages: [1000, 0, 0, 0, 0, 0, 0, 0],
+    };
+    let commands = BTreeMap::from([("command.example".into(), "hello".into())]);
+    let render = |sidebar: &Sidebar| {
+        sidebar
+            .render_with_inputs(
+                &snapshot(),
+                starmux::RenderInputs {
+                    pi_sessions: std::slice::from_ref(&pi),
+                    usage_rows: std::slice::from_ref(&usage),
+                    gob_jobs: std::slice::from_ref(&job),
+                    context: Some(&context),
+                    states: &[starmux::pr_state::PrState::Open],
+                    commands: &commands,
+                    git: Some(&git),
+                    debug: Some(&debug),
+                },
+            )
+            .unwrap()
+    };
+    let output = render(&sidebar);
+    for expected in [
+        "#[fg=#1b1d2b,bg=#c099ff,bold]", // sessions
+        "#[fg=#3b4261,nobold]",          // divider
+        "fg=#ffc777,bg=#3b4261]●",       // selected Pi Workbench
+        "#[fg=#c3e88d]",                 // Pi context
+        "#[fg=#f7768e",                  // usage and git
+        "#[fg=#82aaff,bold] Jobs",       // gob
+        "#[fg=#828bb8] last",            // debug
+        "#[fg=#82aaff]hello",            // command
+    ] {
+        assert!(output.contains(expected), "missing {expected}: {output}");
+    }
+    let printed = sidebar.print_config().unwrap();
+    assert_eq!(output, render(&Sidebar::from_toml(&printed).unwrap()));
+
+    for (name, color) in [
+        ("catppuccin-mocha", "#cba6f7"),
+        ("github-dark", "#a371f7"),
+        ("gruvbox-dark", "#d3869b"),
+        ("nord", "#b48ead"),
+        ("dracula", "#bd93f9"),
+        ("solarized-dark", "#6c71c4"),
+        ("one-dark", "#c678dd"),
+        ("rose-pine-moon", "#c4a7e7"),
+        ("kanagawa-wave", "#957fb8"),
+    ] {
+        let themed = Sidebar::from_toml(&format!("colorscheme = \"{name}\"")).unwrap();
+        assert!(themed
+            .render(&snapshot())
+            .unwrap()
+            .contains(&format!("bg={color}")));
+    }
+}
+
+#[test]
+fn scheme_overrides_and_invalid_inputs_are_checked_at_the_sidebar_interface() {
+    let sidebar = Sidebar::from_toml(
+        r##"
+colorscheme = "tokyo-night"
+palette = "mine"
+[palettes.mine]
+accent = "#abcdef"
+[sessions]
+other_session_style = "fg=red,bold"
+current_session_fill = "#123456"
+"##,
+    )
+    .unwrap();
+    let output = sidebar.render(&snapshot()).unwrap();
+    assert!(output.contains("bg=#abcdef"), "{output}");
+    assert!(output.contains("#[fill=#123456]"), "{output}");
+    assert!(output.contains("#[fg=red,bold]"), "{output}");
+    assert!(Sidebar::from_toml("colorscheme = \"missing\"").is_err());
+    assert!(Sidebar::from_toml(
+        "colorscheme = \"tokyo-night\"\n[usage]\nbar_track_color = \"#[bad]\""
+    )
+    .is_err());
+    assert_eq!(
+        Sidebar::defaults().unwrap().render(&snapshot()).unwrap(),
+        Sidebar::from_toml("modules = [\"sessions\", \"divider\"]")
+            .unwrap()
+            .render(&snapshot())
+            .unwrap()
+    );
+}
+
+#[test]
+fn custom_colorscheme_colors_modules_and_survives_print_config() {
+    let config = r##"
+colorscheme = "my-dark"
+modules = ["sessions", "divider", "command.status"]
+[colorschemes.my-dark]
+background = "#10151c"
+surface = "#18212b"
+highlight = "#273442"
+border = "#405064"
+text = "#d9e2ec"
+muted = "#91a2b3"
+accent = "#a8a0ff"
+warning = "#ffd580"
+green = "#8fd6a8"
+orange = "#ffab70"
+danger = "#ff808c"
+[commands.status]
+argv = ["status"]
+"##;
+    let sidebar = Sidebar::from_toml(config).unwrap();
+    let commands = BTreeMap::from([("command.status".into(), "ready".into())]);
+    let render = |sidebar: &Sidebar| {
+        sidebar
+            .render_with_inputs(
+                &snapshot(),
+                starmux::RenderInputs {
+                    pi_sessions: &[],
+                    usage_rows: &[],
+                    gob_jobs: &[],
+                    context: None,
+                    states: &[],
+                    commands: &commands,
+                    git: None,
+                    debug: None,
+                },
+            )
+            .unwrap()
+    };
+    let output = render(&sidebar);
+    assert!(output.contains("#[fg=#10151c,bg=#a8a0ff,bold]"), "{output}");
+    assert!(output.contains("#[fg=#405064,nobold]"), "{output}");
+    assert!(output.contains("#[fg=#d9e2ec]ready"), "{output}");
+    let printed = sidebar.print_config().unwrap();
+    assert!(printed.contains("[colorschemes.my-dark]"));
+    assert_eq!(output, render(&Sidebar::from_toml(&printed).unwrap()));
+
+    for broken in [
+        config.replace("danger = \"#ff808c\"", ""),
+        config.replace("danger = \"#ff808c\"", "danger = \"fg=red\""),
+        config.replace("danger = \"#ff808c\"", "surprise = \"#ff808c\""),
+        config.replace("my-dark", "github-dark"),
+    ] {
+        assert!(Sidebar::from_toml(&broken).is_err(), "accepted {broken}");
+    }
+}

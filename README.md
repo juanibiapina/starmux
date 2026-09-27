@@ -10,7 +10,7 @@ A fast and configurable sidebar for tmux.
 
 The screenshot uses my [custom Starmux configuration](https://github.com/juanibiapina/dotfiles/blob/main/dotfiles/tmux/.config/starmux.toml).
 
-[Configuration](docs/configuration.md)
+See [configuration](docs/configuration.md#palettes) for bundled and custom colorschemes.
 
 ## Requirements
 

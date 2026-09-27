@@ -52,7 +52,51 @@ current_session_style = "fg=surface,bg=accent,bold"
 other_session_style = "fg=text,bold"
 ```
 
-Without a selected palette, styles use terminal colors directly.
+Select a built-in colorscheme to color the sidebar modules without setting individual styles:
+
+```toml
+colorscheme = "tokyo-night"
+```
+
+Bundled schemes (colors are mapped from the linked upstream palettes into Starmux's eleven roles):
+
+| Name | Palette source |
+| --- | --- |
+| `tokyo-night` | [Tokyo Night](https://github.com/folke/tokyonight.nvim) (uses the existing Starmux dotfiles colors) |
+| `catppuccin-mocha` | [Catppuccin](https://github.com/catppuccin/palette) |
+| `github-dark` | [GitHub Primer](https://github.com/primer/primitives) |
+| `gruvbox-dark` | [Gruvbox](https://github.com/morhetz/gruvbox/blob/master/colors/gruvbox.vim) |
+| `nord` | [Nord](https://github.com/nordtheme/nord/blob/develop/src/nord.css) |
+| `dracula` | [Dracula](https://github.com/dracula/dracula-theme#color-palette) |
+| `solarized-dark` | [Solarized](https://github.com/altercation/solarized) |
+| `one-dark` | [One Dark](https://github.com/joshdick/onedark.vim/blob/main/autoload/onedark.vim) |
+| `rose-pine-moon` | [Rosé Pine](https://github.com/rose-pine/rose-pine-palette/blob/main/dist/css/rose-pine.css) |
+| `kanagawa-wave` | [Kanagawa](https://github.com/rebelot/kanagawa.nvim/blob/master/lua/kanagawa/colors.lua) |
+
+Define your own scheme with the same eleven color roles:
+
+```toml
+colorscheme = "my-dark"
+
+[colorschemes.my-dark]
+background = "#10151c"
+surface = "#18212b"
+highlight = "#273442"
+border = "#405064"
+text = "#d9e2ec"
+muted = "#91a2b3"
+accent = "#a8a0ff"
+warning = "#ffd580"
+green = "#8fd6a8"
+orange = "#ffab70"
+danger = "#ff808c"
+```
+
+Each role is required. Colors accept the same validated tmux color names, `colour0`–`colour255`, and `#RRGGBB` values as palette colors. Custom names cannot replace bundled names. `check-config` rejects missing or unknown roles and invalid colors.
+
+Each scheme supplies default styles and fills for sessions, dividers, Pi Workbench, Pi context, git, usage, gob, debug, and text-mode named commands. The scheme colors ordinary text in these modules too. `spacer` and `blank` contain no styled content. A scheme does not set tmux's outer `side-status-style`, change tmux's other status options, or recolor styles supplied by an external command in `tmux-styles` mode.
+
+Explicit module styles and fills take priority over scheme defaults. A selected custom `palette` overlays colors with the same names in the scheme, so a module style such as `fg=accent` uses your palette's `accent`. Formats and indicator rules remain under your control; explicit colors in a format or rule are not replaced. Unknown scheme names and invalid colors or styles fail `check-config`. Without a colorscheme, styles use terminal colors directly unless you select a custom palette as above.
 
 ## Window indicators
 

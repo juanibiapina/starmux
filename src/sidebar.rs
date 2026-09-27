@@ -1,3 +1,5 @@
+mod colorscheme;
+
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use unicode_segmentation::UnicodeSegmentation;
@@ -39,6 +41,10 @@ pub struct Snapshot {
 #[serde(default, deny_unknown_fields)]
 struct Config {
     modules: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    colorscheme: Option<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    colorschemes: BTreeMap<String, BTreeMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     palette: Option<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -272,6 +278,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             modules: vec!["sessions".into(), "divider".into()],
+            colorscheme: None,
+            colorschemes: BTreeMap::new(),
             palette: None,
             palettes: BTreeMap::new(),
             sessions: SessionsConfig::default(),
@@ -426,13 +434,48 @@ pub struct Sidebar {
     git_lines: Vec<Vec<Node>>,
 }
 
+fn merge_missing(input: &mut toml::Value, defaults: toml::Value) {
+    if let (Some(input), toml::Value::Table(defaults)) = (input.as_table_mut(), defaults) {
+        for (key, value) in defaults {
+            if let Some(existing) = input.get_mut(&key) {
+                merge_missing(existing, value);
+            } else {
+                input.insert(key, value);
+            }
+        }
+    }
+}
+
 impl Sidebar {
     pub fn from_toml(text: &str) -> Result<Self, String> {
-        let config = if text.trim().is_empty() {
-            Config::default()
-        } else {
-            toml::from_str(text).map_err(|error| error.to_string())?
-        };
+        if text.trim().is_empty() {
+            return Self::defaults();
+        }
+        let mut input: toml::Value = toml::from_str(text).map_err(|error| error.to_string())?;
+        let selected: Config = input
+            .clone()
+            .try_into()
+            .map_err(|error: toml::de::Error| error.to_string())?;
+        if let Some(name) = &selected.colorscheme {
+            let (defaults, _) = colorscheme::load(name, &selected.colorschemes)?;
+            merge_missing(&mut input, defaults);
+            // Named text commands also inherit the scheme unless explicitly styled.
+            if let Some(commands) = input
+                .get_mut("commands")
+                .and_then(toml::Value::as_table_mut)
+            {
+                for (_, command) in commands.iter_mut() {
+                    if let Some(table) = command.as_table_mut() {
+                        table
+                            .entry("style")
+                            .or_insert_with(|| toml::Value::String("fg=text".into()));
+                    }
+                }
+            }
+        }
+        let config = input
+            .try_into()
+            .map_err(|error: toml::de::Error| error.to_string())?;
         Self::compile(config)
     }
 
@@ -490,14 +533,23 @@ impl Sidebar {
                 return Err(format!("invalid command.{name} prefix"));
             }
         }
-        let palette = match &config.palette {
-            Some(name) => config
-                .palettes
-                .get(name)
-                .cloned()
-                .ok_or_else(|| format!("unknown palette {name}"))?,
+        for (name, colors) in &config.colorschemes {
+            if !valid_command_name(name) || colorscheme::is_builtin(name) {
+                return Err(format!("invalid or reserved colorscheme name {name}"));
+            }
+            colorscheme::validate_colors(name, colors)?;
+        }
+        let mut palette = match &config.colorscheme {
+            Some(name) => colorscheme::load(name, &config.colorschemes)?.1,
             None => BTreeMap::new(),
         };
+        if let Some(name) = &config.palette {
+            let custom = config
+                .palettes
+                .get(name)
+                .ok_or_else(|| format!("unknown palette {name}"))?;
+            palette.extend(custom.clone());
+        }
         for (name, value) in &palette {
             validate_name(name, "palette color")?;
             validate_color(value, &BTreeMap::new())?;
@@ -917,7 +969,16 @@ impl Sidebar {
             let padding = available.saturating_sub(rows.len());
             rows.splice(index..index, (0..padding).map(|_| Row::blank()));
         }
-        Ok(render_rows(&rows, snapshot.width))
+        let text_color = self
+            .config
+            .colorscheme
+            .as_ref()
+            .and_then(|_| self.palette.get("text"));
+        Ok(render_rows(
+            &rows,
+            snapshot.width,
+            text_color.map(String::as_str),
+        ))
     }
 
     pub fn print_config(&self) -> Result<String, String> {
@@ -2445,7 +2506,7 @@ fn debug_duration(micros: u64) -> String {
     }
 }
 
-fn render_rows(rows: &[Row], width: usize) -> String {
+fn render_rows(rows: &[Row], width: usize, text_color: Option<&str>) -> String {
     let mut result = String::from(
         "#[list=on]#[list=left-marker]#[acs]-#[noacs]#[nl]#[list=right-marker]#[acs].#[noacs]#[nl]",
     );
@@ -2474,7 +2535,11 @@ fn render_rows(rows: &[Row], width: usize) -> String {
                 continue;
             }
             if span.style == "default" {
-                result.push_str("#[default]");
+                if let Some(color) = text_color {
+                    result.push_str(&format!("#[default,fg={color}]"));
+                } else {
+                    result.push_str("#[default]");
+                }
             } else {
                 result.push_str(&format!("#[{}]", span.style));
             }
