@@ -45,8 +45,8 @@ struct Config {
     palettes: BTreeMap<String, BTreeMap<String, String>>,
     sessions: SessionsConfig,
     divider: DividerConfig,
-    #[serde(rename = "pi-live")]
-    pi_live: PiLiveConfig,
+    #[serde(rename = "pi-workbench")]
+    pi_workbench: PiWorkbenchConfig,
     usage: UsageConfig,
     gob: GobConfig,
     git: GitConfig,
@@ -225,7 +225,7 @@ struct IndicatorRule {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
-struct PiLiveConfig {
+struct PiWorkbenchConfig {
     disabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     data_dir: Option<String>,
@@ -254,7 +254,7 @@ impl Default for Config {
             palettes: BTreeMap::new(),
             sessions: SessionsConfig::default(),
             divider: DividerConfig::default(),
-            pi_live: PiLiveConfig::default(),
+            pi_workbench: PiWorkbenchConfig::default(),
             usage: UsageConfig::default(),
             gob: GobConfig::default(),
             git: GitConfig::default(),
@@ -340,7 +340,7 @@ impl Default for IndicatorRule {
     }
 }
 
-impl Default for PiLiveConfig {
+impl Default for PiWorkbenchConfig {
     fn default() -> Self {
         Self {
             disabled: false,
@@ -396,7 +396,7 @@ pub struct Sidebar {
     config: Config,
     palette: BTreeMap<String, String>,
     sessions: CompiledSessions,
-    pi_live_format: Vec<Node>,
+    pi_workbench_format: Vec<Node>,
     usage_format: Vec<Node>,
     gob_format: Vec<Node>,
     git_lines: Vec<Vec<Node>>,
@@ -420,7 +420,7 @@ impl Sidebar {
         let known = [
             "sessions",
             "divider",
-            "pi-live",
+            "pi-workbench",
             "usage",
             "gob",
             "git",
@@ -486,8 +486,8 @@ impl Sidebar {
             &["id", "index", "name", "indicator"],
             &palette,
         )?;
-        let pi_live_format = Parser::parse(&config.pi_live.format)?;
-        validate_format(&pi_live_format, &["name", "state"], &palette)?;
+        let pi_workbench_format = Parser::parse(&config.pi_workbench.format)?;
+        validate_format(&pi_workbench_format, &["name", "state"], &palette)?;
         let gob_format = Parser::parse(&config.gob.format)?;
         validate_format(&gob_format, &["id", "name", "state"], &palette)?;
         if config.git.lines.len() > 12 {
@@ -546,12 +546,12 @@ impl Sidebar {
             return Err("usage cache_dir must be an absolute path".into());
         }
         if config
-            .pi_live
+            .pi_workbench
             .data_dir
             .as_deref()
             .is_some_and(|path| !std::path::Path::new(path).is_absolute())
         {
-            return Err("pi-live data_dir must be an absolute path".into());
+            return Err("pi-workbench data_dir must be an absolute path".into());
         }
         if let Some(command) = &config.pi_context.open_command {
             if command.is_empty()
@@ -582,11 +582,11 @@ impl Sidebar {
             &config.sessions.selected_window_style,
             &config.sessions.other_window_style,
             &config.divider.style,
-            &config.pi_live.project_style,
-            &config.pi_live.idle_style,
-            &config.pi_live.working_style,
-            &config.pi_live.notify_style,
-            &config.pi_live.selected_style,
+            &config.pi_workbench.project_style,
+            &config.pi_workbench.idle_style,
+            &config.pi_workbench.working_style,
+            &config.pi_workbench.notify_style,
+            &config.pi_workbench.selected_style,
             &config.usage.provider_style,
             &config.usage.window_style,
             &config.usage.warning_bar_style,
@@ -632,7 +632,7 @@ impl Sidebar {
             &config.sessions.active_window_fill,
             &config.sessions.selected_window_fill,
             &config.sessions.other_window_fill,
-            &config.pi_live.selected_fill,
+            &config.pi_workbench.selected_fill,
         ] {
             resolve_color(fill, &palette)?;
         }
@@ -662,7 +662,7 @@ impl Sidebar {
             config,
             palette,
             sessions,
-            pi_live_format,
+            pi_workbench_format,
             usage_format,
             gob_format,
             git_lines,
@@ -685,14 +685,18 @@ impl Sidebar {
             .collect()
     }
 
-    pub(crate) fn pi_live_data_dir(&self) -> Option<&str> {
-        if (self.config.pi_live.disabled
-            || !self.config.modules.iter().any(|name| name == "pi-live"))
+    pub(crate) fn pi_workbench_data_dir(&self) -> Option<&str> {
+        if (self.config.pi_workbench.disabled
+            || !self
+                .config
+                .modules
+                .iter()
+                .any(|name| name == "pi-workbench"))
             && !self.pi_context_enabled()
         {
             return None;
         }
-        Some(self.config.pi_live.data_dir.as_deref().unwrap_or(""))
+        Some(self.config.pi_workbench.data_dir.as_deref().unwrap_or(""))
     }
 
     pub(crate) fn pi_context_enabled(&self) -> bool {
@@ -752,7 +756,7 @@ impl Sidebar {
         self.render_with_usage(snapshot, &[], &[])
     }
 
-    pub fn render_with_pi_live(
+    pub fn render_with_pi_workbench(
         &self,
         snapshot: &Snapshot,
         pi_sessions: &[crate::PiSession],
@@ -827,8 +831,8 @@ impl Sidebar {
                 "divider" if !self.config.divider.disabled => {
                     rows.push(self.render_divider(snapshot.width)?)
                 }
-                "pi-live" if !self.config.pi_live.disabled => {
-                    rows.extend(self.render_pi_live(pi_sessions)?)
+                "pi-workbench" if !self.config.pi_workbench.disabled => {
+                    rows.extend(self.render_pi_workbench(pi_sessions)?)
                 }
                 "usage" if !self.config.usage.disabled => {
                     rows.extend(self.render_usage(usage_rows, snapshot.width)?)
@@ -858,7 +862,8 @@ impl Sidebar {
                 }
                 "spacer" => spacer = Some(rows.len()),
                 "blank" => rows.push(Row::blank()),
-                "sessions" | "divider" | "pi-live" | "usage" | "gob" | "git" | "pi-context" => {}
+                "sessions" | "divider" | "pi-workbench" | "usage" | "gob" | "git"
+                | "pi-context" => {}
                 _ => return Err(format!("unknown module {name}")),
             }
         }
@@ -990,13 +995,13 @@ impl Sidebar {
         }
     }
 
-    fn render_pi_live(&self, sessions: &[crate::PiSession]) -> Result<Vec<Row>, String> {
+    fn render_pi_workbench(&self, sessions: &[crate::PiSession]) -> Result<Vec<Row>, String> {
         let mut ordered = sessions.to_vec();
-        crate::pi_live::sort_sessions(&mut ordered);
+        crate::pi_workbench::sort_sessions(&mut ordered);
         let mut labels: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
         for session in &ordered {
             labels
-                .entry(crate::pi_live::project_label(&session.project))
+                .entry(crate::pi_workbench::project_label(&session.project))
                 .or_default()
                 .insert(&session.project);
         }
@@ -1004,7 +1009,7 @@ impl Sidebar {
         let mut previous = None;
         for session in &ordered {
             if previous != Some(session.project.as_str()) {
-                let mut title = crate::pi_live::project_label(&session.project).to_owned();
+                let mut title = crate::pi_workbench::project_label(&session.project).to_owned();
                 if labels[title.as_str()].len() > 1 {
                     if let Some(parent) = std::path::Path::new(&session.project)
                         .parent()
@@ -1018,7 +1023,7 @@ impl Sidebar {
                     spans: vec![Span {
                         text: format!(" {title}"),
                         style: resolve_style(
-                            &self.config.pi_live.project_style,
+                            &self.config.pi_workbench.project_style,
                             "default",
                             &self.palette,
                         )?,
@@ -1037,12 +1042,12 @@ impl Sidebar {
 
     fn render_pi_session(&self, session: &crate::PiSession) -> Result<Row, String> {
         let icon_style = match session.state.as_str() {
-            "notify" => &self.config.pi_live.notify_style,
-            "working" => &self.config.pi_live.working_style,
-            _ => &self.config.pi_live.idle_style,
+            "notify" => &self.config.pi_workbench.notify_style,
+            "working" => &self.config.pi_workbench.working_style,
+            _ => &self.config.pi_workbench.idle_style,
         };
         let icon_style = resolve_style(icon_style, "default", &self.palette)?;
-        let selected_fill = resolve_color(&self.config.pi_live.selected_fill, &self.palette)?;
+        let selected_fill = resolve_color(&self.config.pi_workbench.selected_fill, &self.palette)?;
         let icon_style = if session.selected {
             format!("default,{icon_style},bg={selected_fill}")
         } else {
@@ -1052,7 +1057,7 @@ impl Sidebar {
             format!(
                 "default,{}",
                 resolve_style(
-                    &self.config.pi_live.selected_style,
+                    &self.config.pi_workbench.selected_style,
                     "default",
                     &self.palette
                 )?
@@ -1078,7 +1083,12 @@ impl Sidebar {
             })
             .transpose()?;
         Ok(Row {
-            spans: render_format(&self.pi_live_format, &values, &row_style, &self.palette)?,
+            spans: render_format(
+                &self.pi_workbench_format,
+                &values,
+                &row_style,
+                &self.palette,
+            )?,
             fill: Some(if session.selected {
                 selected_fill
             } else {

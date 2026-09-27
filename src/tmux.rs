@@ -371,15 +371,15 @@ impl<T: Tmux> Application<T> {
         socket: &str,
         snapshot: &Snapshot,
     ) -> Result<(Vec<crate::PiSession>, Option<crate::PiContext>), String> {
-        let Some(data_dir) = self.sidebar.pi_live_data_dir() else {
+        let Some(data_dir) = self.sidebar.pi_workbench_data_dir() else {
             return Ok((Vec::new(), None));
         };
         let path = if data_dir.is_empty() {
-            crate::pi_live::default_data_dir()?
+            crate::pi_workbench::default_data_dir()?
         } else {
             std::path::PathBuf::from(data_dir)
         };
-        let mut entries = crate::pi_live::list(&path, std::path::Path::new(socket))?;
+        let mut entries = crate::pi_workbench::list(&path, std::path::Path::new(socket))?;
         if entries.iter().any(|entry| entry.session.location.is_some()) {
             let panes = self.tmux.panes(socket)?;
             for entry in &mut entries {
@@ -412,7 +412,7 @@ impl<T: Tmux> Application<T> {
                     entry
                         .context_path
                         .as_ref()
-                        .and_then(|path| crate::pi_live::read_context(path, &entry.session_id))
+                        .and_then(|path| crate::pi_workbench::read_context(path, &entry.session_id))
                 })
         } else {
             None
@@ -509,10 +509,10 @@ impl<T: Tmux> Application<T> {
             }
         }
         let (mut pi_sessions, context) = self.pi_sessions(socket, &snapshot)?;
-        crate::pi_live::sort_sessions(&mut pi_sessions);
+        crate::pi_workbench::sort_sessions(&mut pi_sessions);
         for session in pi_sessions {
             result.push_str(&format!(
-                "pi-live project={:?} {:?} {:?} target={:?} selected={}\n",
+                "pi-workbench project={:?} {:?} {:?} target={:?} selected={}\n",
                 session.project, session.state, session.name, session.target, session.selected
             ));
         }
@@ -1020,7 +1020,7 @@ mod tests {
     }
 
     #[test]
-    fn enabled_pi_live_renders_only_reachable_published_sessions() {
+    fn enabled_pi_workbench_renders_only_reachable_published_sessions() {
         use std::{
             fs,
             io::{Read, Write},
@@ -1028,7 +1028,7 @@ mod tests {
             thread,
         };
         let data_dir = std::env::temp_dir().join(format!(
-            "starmux-pi-live-{}-{:?}",
+            "sm-piw-{}-{:?}",
             std::process::id(),
             thread::current().id()
         ));
@@ -1115,7 +1115,7 @@ mod tests {
         .unwrap();
         fs::write(data_dir.join("status/broken.json"), "{bad json").unwrap();
         let config = format!(
-            "modules = [\"sessions\", \"pi-live\", \"pi-context\"]\n[pi-live]\ndata_dir = {:?}\nformat = \"$name $state\"\n[pi-context]\nopen_command = [\"dev\", \"tmux\", \"edit\", \"{{file}}\", \"{{pane}}\", \"{{socket}}\"]\n",
+            "modules = [\"sessions\", \"pi-workbench\", \"pi-context\"]\n[pi-workbench]\ndata_dir = {:?}\nformat = \"$name $state\"\n[pi-context]\nopen_command = [\"dev\", \"tmux\", \"edit\", \"{{file}}\", \"{{pane}}\", \"{{socket}}\"]\n",
             data_dir.to_str().unwrap()
         );
         let tmux = MemoryTmux::new(Snapshot {
@@ -1155,7 +1155,7 @@ mod tests {
             "{other_rendered}"
         );
         let context_only = format!(
-            "modules = [\"pi-context\"]\n[pi-live]\ndata_dir = {:?}\n",
+            "modules = [\"pi-context\"]\n[pi-workbench]\ndata_dir = {:?}\n",
             data_dir.to_str().unwrap()
         );
         let context_app =
@@ -1255,7 +1255,7 @@ mod tests {
     }
 
     #[test]
-    fn pi_live_excludes_foreign_and_legacy_records_before_matching_panes() {
+    fn pi_workbench_excludes_foreign_and_legacy_records_before_matching_panes() {
         use std::{
             fs,
             io::{Read, Write},
@@ -1316,7 +1316,7 @@ mod tests {
             serde_json::json!({"paneId": "%0", "sessionName": "main", "socketPath": "/tmp/current-tmux.sock"})
         )).unwrap();
         let config = format!(
-            "modules = [\"pi-live\"]\n[pi-live]\ndata_dir = {:?}\n",
+            "modules = [\"pi-workbench\"]\n[pi-workbench]\ndata_dir = {:?}\n",
             data_dir.to_str().unwrap()
         );
         let tmux = MemoryTmux::new(Snapshot {

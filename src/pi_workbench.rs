@@ -71,7 +71,7 @@ struct Record {
 pub(crate) fn default_data_dir() -> Result<PathBuf, String> {
     std::env::var_os("HOME")
         .map(|home| PathBuf::from(home).join(".local/share/pi"))
-        .ok_or_else(|| "HOME is required for pi-live".to_owned())
+        .ok_or_else(|| "HOME is required for pi-workbench".to_owned())
 }
 
 pub(crate) struct LiveEntry {

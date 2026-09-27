@@ -7,6 +7,9 @@
 - Show output from multiple configured commands in the sidebar, including colored gitmux status for the selected pane's directory.
 - Show configurable Git status rows with branch, upstream, changed files and lines, stashes, and active operations.
 
+### Changed
+- Configure live Pi sessions with `pi-workbench` and `[pi-workbench]` instead of `pi-live` and `[pi-live]`.
+
 ## [0.3.0] - 2026-09-27
 
 ### Added

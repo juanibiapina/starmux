@@ -236,15 +236,28 @@ character = "="
 }
 
 #[test]
-fn pi_live_rows_follow_module_order_and_escape_session_names() {
+fn pi_workbench_config_replaces_pi_live() {
+    let sidebar =
+        Sidebar::from_toml("modules = [\"pi-workbench\"]\n[pi-workbench]\nformat = \"$name\"")
+            .unwrap();
+    let printed = sidebar.print_config().unwrap();
+    assert!(printed.contains("\"pi-workbench\""));
+    assert!(printed.contains("[pi-workbench]"));
+
+    assert!(Sidebar::from_toml("modules = [\"pi-live\"]").is_err());
+    assert!(Sidebar::from_toml("[pi-live]\nformat = \"$name\"").is_err());
+}
+
+#[test]
+fn pi_workbench_rows_follow_module_order_and_escape_session_names() {
     let sidebar = Sidebar::from_toml(
         r##"
-modules = ["pi-live", "divider"]
+modules = ["pi-workbench", "divider"]
 palette = "tokyo"
 [palettes.tokyo]
 warning = "#ffc777"
 muted = "#828bb8"
-[pi-live]
+[pi-workbench]
 format = " $state $name"
 working_style = "fg=warning"
 idle_style = "fg=muted"
@@ -254,7 +267,7 @@ idle_style = "fg=muted"
     let mut input = snapshot();
     input.width = 50;
     let rendered = sidebar
-        .render_with_pi_live(
+        .render_with_pi_workbench(
             &input,
             &[
                 PiSession {
@@ -289,9 +302,9 @@ idle_style = "fg=muted"
     assert!(!rendered.contains("#[range=window|"));
 
     for config in [
-        "modules = [\"pi-live\"]\n[pi-live]\nformat = \"$cwd\"",
-        "modules = [\"pi-live\"]\n[pi-live]\nworking_style = \"fg=#[bad]\"",
-        "modules = [\"pi-live\"]\n[pi-live]\ndata_dir = \"relative\"",
+        "modules = [\"pi-workbench\"]\n[pi-workbench]\nformat = \"$cwd\"",
+        "modules = [\"pi-workbench\"]\n[pi-workbench]\nworking_style = \"fg=#[bad]\"",
+        "modules = [\"pi-workbench\"]\n[pi-workbench]\ndata_dir = \"relative\"",
     ] {
         assert!(Sidebar::from_toml(config).is_err(), "accepted {config}");
     }
@@ -299,7 +312,7 @@ idle_style = "fg=muted"
 
 #[test]
 fn pi_projects_stay_together_in_priority_order() {
-    let sidebar = Sidebar::from_toml("modules = [\"pi-live\"]").unwrap();
+    let sidebar = Sidebar::from_toml("modules = [\"pi-workbench\"]").unwrap();
     let session = |project: &str, name: &str, state: &str, selected: bool| PiSession {
         name: name.into(),
         project: format!("/projects/{project}"),
@@ -312,7 +325,7 @@ fn pi_projects_stay_together_in_priority_order() {
         selected,
     };
     let rendered = sidebar
-        .render_with_pi_live(
+        .render_with_pi_workbench(
             &snapshot(),
             &[
                 session("idle", "only idle", "idle", false),
@@ -345,7 +358,7 @@ fn pi_projects_stay_together_in_priority_order() {
     assert!(rendered.contains("#[range=user|sp"), "{rendered}");
 
     let duplicates = sidebar
-        .render_with_pi_live(
+        .render_with_pi_workbench(
             &snapshot(),
             &[
                 session("owner-a/app", "alpha", "idle", false),
@@ -361,12 +374,12 @@ fn pi_projects_stay_together_in_priority_order() {
 fn selected_pi_background_does_not_fill_following_read_only_row() {
     let sidebar = Sidebar::from_toml(
         r##"
-modules = ["pi-live"]
+modules = ["pi-workbench"]
 palette = "tokyo"
 [palettes.tokyo]
 accent = "#c099ff"
 border = "#3b4261"
-[pi-live]
+[pi-workbench]
 selected_style = "fg=accent,bg=border,bold"
 selected_fill = "border"
 "##,
@@ -393,7 +406,9 @@ selected_fill = "border"
             selected: false,
         },
     ];
-    let rendered = sidebar.render_with_pi_live(&snapshot(), &rows).unwrap();
+    let rendered = sidebar
+        .render_with_pi_workbench(&snapshot(), &rows)
+        .unwrap();
     let lines: Vec<_> = rendered.split("#[nl]").collect();
     let selected = lines.iter().find(|line| line.contains("selected")).unwrap();
     let read_only = lines
@@ -412,7 +427,7 @@ selected_fill = "border"
 fn divider_can_separate_usage_from_pi_sessions() {
     let sidebar = Sidebar::from_toml(
         r#"
-modules = ["sessions", "divider", "pi-live", "divider", "usage"]
+modules = ["sessions", "divider", "pi-workbench", "divider", "usage"]
 [divider]
 character = "─"
 [usage]

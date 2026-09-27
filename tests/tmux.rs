@@ -775,7 +775,7 @@ fn pi_attention_row_click_selects_its_pane() {
     fs::write(
         &config,
         format!(
-            "modules = [\"sessions\", \"divider\", \"pi-live\", \"divider\", \"pi-context\"]\n[pi-live]\ndata_dir = {:?}\n[pi-context]\nopen_command = [\"dev\", \"tmux\", \"edit\", \"{{file}}\", \"{{pane}}\", \"{{socket}}\"]\n",
+            "modules = [\"sessions\", \"divider\", \"pi-workbench\", \"divider\", \"pi-context\"]\n[pi-workbench]\ndata_dir = {:?}\n[pi-context]\nopen_command = [\"dev\", \"tmux\", \"edit\", \"{{file}}\", \"{{pane}}\", \"{{socket}}\"]\n",
             root.to_str().unwrap()
         ),
     )
