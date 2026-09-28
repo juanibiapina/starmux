@@ -4,7 +4,7 @@ use std::{
     fs::{self, OpenOptions},
     hash::{Hash, Hasher},
     io::{Read, Write},
-    path::{Path, PathBuf},
+    path::Path,
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -60,13 +60,6 @@ fn now_ms() -> Option<u64> {
     )
 }
 
-fn dir() -> Option<PathBuf> {
-    let root = std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))?;
-    Some(root.join("starmux/scroll"))
-}
-
 fn read_at(dir: &Path, key: &str) -> Option<State> {
     let path = dir.join(format!("{key}.json"));
     let meta = fs::symlink_metadata(&path).ok()?;
@@ -97,9 +90,8 @@ fn read_at(dir: &Path, key: &str) -> Option<State> {
     })
 }
 
-pub(crate) fn read(socket: &str, client: &str) -> usize {
-    dir()
-        .and_then(|dir| read_at(&dir, &key(socket, client)))
+pub(crate) fn read(dir: &Path, socket: &str, client: &str) -> usize {
+    read_at(dir, &key(socket, client))
         .unwrap_or_default()
         .offset
 }
@@ -140,13 +132,13 @@ fn update(
     socket: &str,
     client: &str,
     change: impl FnOnce(State) -> State,
+    dir: &Path,
 ) -> std::io::Result<(State, State)> {
-    let dir = dir().ok_or_else(|| std::io::Error::other("no cache directory"))?;
-    fs::create_dir_all(&dir)?;
+    fs::create_dir_all(dir)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
     }
     let key = key(socket, client);
     let mut options = OpenOptions::new();
@@ -158,11 +150,11 @@ fn update(
     }
     let lock = options.open(dir.join(format!("{key}.lock")))?;
     lock.lock_exclusive()?;
-    let current = read_at(&dir, &key).unwrap_or_default();
+    let current = read_at(dir, &key).unwrap_or_default();
     let mut next = change(current);
     next.offset = next.offset.min(MAX_OFFSET);
     if next != current {
-        write_at(&dir, &key, next)?;
+        write_at(dir, &key, next)?;
     }
     Ok((current, next))
 }
@@ -178,69 +170,92 @@ pub(crate) fn move_by(
     client: &str,
     direction: ScrollDirection,
     worker: bool,
+    dir: &Path,
 ) -> std::io::Result<Move> {
     let now = now_ms().unwrap_or_default();
-    let (previous, next) = update(socket, client, |mut state| {
-        let offset = match direction {
-            ScrollDirection::Down => state
-                .offset
-                .saturating_add(1)
-                .min(state.max.unwrap_or(MAX_OFFSET)),
-            ScrollDirection::Up => state.offset.saturating_sub(1),
-        };
-        if offset != state.offset {
-            state.offset = offset;
-            state.generation = state.generation.wrapping_add(1);
-            if worker && state.worker_until_ms <= now {
-                state.worker_until_ms = now.saturating_add(2000);
+    let (previous, next) = update(
+        socket,
+        client,
+        |mut state| {
+            let offset = match direction {
+                ScrollDirection::Down => state
+                    .offset
+                    .saturating_add(1)
+                    .min(state.max.unwrap_or(MAX_OFFSET)),
+                ScrollDirection::Up => state.offset.saturating_sub(1),
+            };
+            if offset != state.offset {
+                state.offset = offset;
+                state.generation = state.generation.wrapping_add(1);
+                if worker && state.worker_until_ms <= now {
+                    state.worker_until_ms = now.saturating_add(2000);
+                }
             }
-        }
-        state
-    })?;
+            state
+        },
+        dir,
+    )?;
     Ok(Move {
         changed: next.offset != previous.offset,
         start_worker: next.worker_until_ms != previous.worker_until_ms,
     })
 }
 
-pub(crate) fn worker_generation(socket: &str, client: &str) -> Option<u64> {
-    dir()
-        .and_then(|dir| read_at(&dir, &key(socket, client)))
-        .map(|state| state.generation)
+pub(crate) fn worker_generation(dir: &Path, socket: &str, client: &str) -> Option<u64> {
+    read_at(dir, &key(socket, client)).map(|state| state.generation)
 }
 
-pub(crate) fn worker_next(socket: &str, client: &str, painted: u64) -> std::io::Result<bool> {
+pub(crate) fn worker_next(
+    dir: &Path,
+    socket: &str,
+    client: &str,
+    painted: u64,
+) -> std::io::Result<bool> {
     let now = now_ms().unwrap_or_default();
-    let (_, next) = update(socket, client, |mut state| {
-        state.worker_until_ms = if state.generation == painted {
-            0
-        } else {
-            now.saturating_add(2000)
-        };
-        state
-    })?;
+    let (_, next) = update(
+        socket,
+        client,
+        |mut state| {
+            state.worker_until_ms = if state.generation == painted {
+                0
+            } else {
+                now.saturating_add(2000)
+            };
+            state
+        },
+        dir,
+    )?;
     Ok(next.worker_until_ms != 0)
 }
 
-pub(crate) fn stop_worker(socket: &str, client: &str) {
-    let _ = update(socket, client, |mut state| {
-        state.worker_until_ms = 0;
-        state
-    });
+pub(crate) fn stop_worker(dir: &Path, socket: &str, client: &str) {
+    let _ = update(
+        socket,
+        client,
+        |mut state| {
+            state.worker_until_ms = 0;
+            state
+        },
+        dir,
+    );
 }
 
-pub(crate) fn set_bound(socket: &str, client: &str, max: usize) -> std::io::Result<()> {
+pub(crate) fn set_bound(dir: &Path, socket: &str, client: &str, max: usize) -> std::io::Result<()> {
     let max = max.min(MAX_OFFSET);
-    if dir()
-        .and_then(|dir| read_at(&dir, &key(socket, client)))
+    if read_at(dir, &key(socket, client))
         .is_some_and(|state| state.max == Some(max) && state.offset <= max)
     {
         return Ok(());
     }
-    let _ = update(socket, client, |mut state| {
-        state.max = Some(max);
-        state.offset = state.offset.min(max);
-        state
-    })?;
+    let _ = update(
+        socket,
+        client,
+        |mut state| {
+            state.max = Some(max);
+            state.offset = state.offset.min(max);
+            state
+        },
+        dir,
+    )?;
     Ok(())
 }

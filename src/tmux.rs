@@ -239,11 +239,23 @@ pub fn scroll_client_for(
     refresh: bool,
     config: &str,
 ) -> Result<bool, String> {
+    let dir = crate::cache::default_child("scroll").ok_or("missing cache directory")?;
+    scroll_client_in(socket, client, direction, refresh, config, &dir)
+}
+
+pub fn scroll_client_in(
+    socket: &str,
+    client: &str,
+    direction: crate::ScrollDirection,
+    refresh: bool,
+    config: &str,
+    dir: &std::path::Path,
+) -> Result<bool, String> {
     if socket.is_empty() || client.is_empty() {
         return Err("missing tmux socket or client name".into());
     }
     let identity = scroll_identity(client, config);
-    let movement = crate::scroll::move_by(socket, &identity, direction, !refresh)
+    let movement = crate::scroll::move_by(socket, &identity, direction, !refresh, dir)
         .map_err(|error| format!("scroll state failed: {error}"))?;
     if movement.start_worker {
         let spawn = std::env::current_exe()
@@ -258,6 +270,8 @@ pub fn scroll_client_for(
                         client,
                         "--config",
                         config,
+                        "--dir",
+                        dir.to_str().ok_or("invalid scroll cache directory")?,
                     ])
                     .stdin(Stdio::null())
                     .stdout(Stdio::null())
@@ -267,7 +281,7 @@ pub fn scroll_client_for(
                     .map_err(|error| error.to_string())
             });
         if let Err(error) = spawn {
-            crate::scroll::stop_worker(socket, &identity);
+            crate::scroll::stop_worker(dir, socket, &identity);
             return Err(format!("scroll refresh failed: {error}"));
         }
     }
@@ -282,14 +296,24 @@ pub fn scroll_worker(socket: &str, client: &str) -> Result<(), String> {
 }
 
 pub fn scroll_worker_for(socket: &str, client: &str, config: &str) -> Result<(), String> {
+    let dir = crate::cache::default_child("scroll").ok_or("missing cache directory")?;
+    scroll_worker_in(socket, client, config, &dir)
+}
+
+pub fn scroll_worker_in(
+    socket: &str,
+    client: &str,
+    config: &str,
+    dir: &std::path::Path,
+) -> Result<(), String> {
     let identity = scroll_identity(client, config);
     let result = (|| {
         loop {
-            let generation = crate::scroll::worker_generation(socket, &identity)
+            let generation = crate::scroll::worker_generation(dir, socket, &identity)
                 .ok_or("scroll state is no longer present")?;
             refresh_scroll_client(socket, client)?;
             thread::sleep(Duration::from_millis(150));
-            if !crate::scroll::worker_next(socket, &identity, generation)
+            if !crate::scroll::worker_next(dir, socket, &identity, generation)
                 .map_err(|error| format!("scroll state failed: {error}"))?
             {
                 break;
@@ -298,7 +322,7 @@ pub fn scroll_worker_for(socket: &str, client: &str, config: &str) -> Result<(),
         Ok(())
     })();
     if result.is_err() {
-        crate::scroll::stop_worker(socket, &identity);
+        crate::scroll::stop_worker(dir, socket, &identity);
     }
     result
 }
@@ -467,9 +491,10 @@ impl<T: Tmux> Application<T> {
         let dir = self.sidebar.debug_cache_dir().and_then(|configured| {
             configured
                 .map(std::path::PathBuf::from)
-                .or_else(crate::debug::default_dir)
+                .or_else(|| self.sidebar.cache_dir("debug"))
         });
         let identity = scroll_identity(client, self.sidebar.selected_config());
+        let scroll_dir = self.sidebar.cache_dir("scroll");
         let previous = dir
             .as_deref()
             .and_then(|dir| crate::debug::read(dir, socket, &identity));
@@ -481,14 +506,18 @@ impl<T: Tmux> Application<T> {
             RenderOptions {
                 previous: previous.as_ref(),
                 spawn: true,
-                offset: crate::scroll::read(socket, &identity),
+                offset: scroll_dir
+                    .as_deref()
+                    .map_or(0, |dir| crate::scroll::read(dir, socket, &identity)),
             },
         ) {
             Ok(result) => result,
             Err(error) if error == FOCUS_CHANGED => return Ok(String::new()),
             Err(error) => return Err(error),
         };
-        let _ = crate::scroll::set_bound(socket, &identity, max_offset);
+        if let Some(dir) = scroll_dir.as_deref() {
+            let _ = crate::scroll::set_bound(dir, socket, &identity, max_offset);
+        }
         if let Some(dir) = dir {
             let _ = crate::debug::write(&dir, socket, &identity, &diagnostics);
         }
@@ -549,9 +578,20 @@ impl<T: Tmux> Application<T> {
             diagnostics.stages[6] =
                 (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
         }
+        let top = self.sidebar.top_enabled().then(|| {
+            self.sidebar
+                .cache_dir("top")
+                .map(|dir| crate::top::resolve(&dir, spawn))
+                .unwrap_or_default()
+        });
+        if top.is_some() {
+            diagnostics.stages[8] =
+                (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
+        }
         let (rendered, _, max_offset) = self.sidebar.render_scrolled(
             &snapshot,
             crate::RenderInputs {
+                top: top.as_ref(),
                 pi_sessions: &pi_sessions,
                 usage_rows: &usage,
                 gob_jobs: &jobs,
@@ -633,7 +673,7 @@ impl<T: Tmux> Application<T> {
         let Some(context) = context else {
             return Vec::new();
         };
-        let Some(dir) = crate::pr_state::default_dir() else {
+        let Some(dir) = self.sidebar.cache_dir("pr-state") else {
             return vec![crate::pr_state::PrState::Unknown; context.pull_requests.len()];
         };
         context
@@ -681,7 +721,10 @@ impl<T: Tmux> Application<T> {
         }
         let dir = match data_dir {
             Some(path) => std::path::PathBuf::from(path),
-            None => crate::usage::default_dir()?,
+            None => self
+                .sidebar
+                .cache_dir("usage")
+                .ok_or("HOME is required for usage")?,
         };
         Ok(crate::usage::resolve(providers, &dir, spawn))
     }
@@ -735,6 +778,20 @@ impl<T: Tmux> Application<T> {
                 usage.windows.len()
             ));
         }
+        if self.sidebar.top_enabled() {
+            if let Some(dir) = self.sidebar.cache_dir("top") {
+                let status = crate::top::resolve(&dir, false);
+                result.push_str(&format!(
+                    "top cpu={:?} memory={:?} battery={:?} stale_age={:?}\n",
+                    status.cpu,
+                    status.memory,
+                    status.battery.as_ref().map(|battery| battery.percent),
+                    status.age_seconds
+                ));
+            } else {
+                result.push_str("top: cache directory unavailable\n");
+            }
+        }
         match self.gob_jobs(&snapshot) {
             Ok(jobs) => {
                 for job in jobs {
@@ -785,8 +842,8 @@ impl<T: Tmux> Application<T> {
         )?;
         let stages = diagnostics.stages;
         Ok(format!(
-            "{{\"query_us\":{},\"usage_us\":{},\"gob_us\":{},\"command_us\":{},\"git_us\":{},\"render_us\":{}}}",
-            stages[0] + stages[1] + stages[2], stages[3], stages[4], stages[5], stages[6], stages[7]
+            "{{\"query_us\":{},\"usage_us\":{},\"gob_us\":{},\"command_us\":{},\"git_us\":{},\"top_us\":{},\"render_us\":{}}}",
+            stages[0] + stages[1] + stages[2], stages[3], stages[4], stages[5], stages[6], stages[8], stages[7]
         ))
     }
 

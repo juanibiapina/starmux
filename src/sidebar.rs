@@ -41,6 +41,9 @@ pub struct Snapshot {
 #[serde(default, deny_unknown_fields)]
 struct Config {
     modules: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_dir: Option<String>,
+    top: TopConfig,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     configs: BTreeMap<String, ModuleList>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -69,6 +72,32 @@ struct Config {
 #[serde(deny_unknown_fields)]
 struct ModuleList {
     modules: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+struct TopConfig {
+    disabled: bool,
+    metrics: Vec<String>,
+    heading_style: String,
+    value_style: String,
+    warning_style: String,
+    critical_style: String,
+    track_style: String,
+}
+
+impl Default for TopConfig {
+    fn default() -> Self {
+        Self {
+            disabled: false,
+            metrics: vec!["cpu".into(), "memory".into(), "battery".into()],
+            heading_style: "bold".into(),
+            value_style: "default".into(),
+            warning_style: "fg=yellow".into(),
+            critical_style: "fg=red".into(),
+            track_style: "dim".into(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -288,6 +317,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             modules: vec!["sessions".into(), "divider".into()],
+            cache_dir: None,
+            top: TopConfig::default(),
             configs: BTreeMap::new(),
             colorscheme: None,
             colorschemes: BTreeMap::new(),
@@ -424,6 +455,7 @@ struct CompiledSessions {
 }
 
 pub struct RenderInputs<'a> {
+    pub top: Option<&'a crate::top::HostStatus>,
     pub pi_sessions: &'a [crate::PiSession],
     pub usage_rows: &'a [crate::usage::UsageRow],
     pub gob_jobs: &'a [crate::gob::GobJob],
@@ -501,6 +533,7 @@ impl Sidebar {
     )]
     fn compile(config: Config) -> Result<Self, String> {
         let known = [
+            "top",
             "sessions",
             "divider",
             "pi-workbench",
@@ -540,6 +573,19 @@ impl Sidebar {
                     return Err(format!("config {label}: duplicate module {name}"));
                 }
                 used.insert(name.as_str());
+            }
+        }
+        if config
+            .cache_dir
+            .as_deref()
+            .is_some_and(|path| !std::path::Path::new(path).is_absolute())
+        {
+            return Err("cache_dir must be an absolute path".into());
+        }
+        let mut metrics = BTreeSet::new();
+        for metric in &config.top.metrics {
+            if !matches!(metric.as_str(), "cpu" | "memory" | "battery") || !metrics.insert(metric) {
+                return Err(format!("invalid or duplicate top metric {metric}"));
             }
         }
         for (name, command) in &config.commands {
@@ -691,6 +737,11 @@ impl Sidebar {
             }
         }
         for style in [
+            &config.top.heading_style,
+            &config.top.value_style,
+            &config.top.warning_style,
+            &config.top.critical_style,
+            &config.top.track_style,
             &config.sessions.current_session_style,
             &config.sessions.other_session_style,
             &config.sessions.active_window_style,
@@ -856,6 +907,21 @@ impl Sidebar {
         })
     }
 
+    pub fn cache_dir_for(&self, name: &str) -> Option<std::path::PathBuf> {
+        if !matches!(name, "top" | "usage" | "pr-state" | "debug" | "scroll") {
+            return None;
+        }
+        crate::cache::root(self.config.cache_dir.as_deref()).map(|root| root.join(name))
+    }
+
+    pub(crate) fn cache_dir(&self, name: &str) -> Option<std::path::PathBuf> {
+        self.cache_dir_for(name)
+    }
+
+    pub(crate) fn top_enabled(&self) -> bool {
+        !self.config.top.disabled && self.modules().iter().any(|name| name == "top")
+    }
+
     pub(crate) fn debug_cache_dir(&self) -> Option<Option<&str>> {
         (!self.config.debug.disabled && self.modules().iter().any(|name| name == "debug"))
             .then_some(self.config.debug.cache_dir.as_deref())
@@ -920,6 +986,7 @@ impl Sidebar {
         self.render_with_inputs(
             snapshot,
             RenderInputs {
+                top: None,
                 pi_sessions,
                 usage_rows,
                 gob_jobs,
@@ -948,6 +1015,7 @@ impl Sidebar {
         offset: usize,
     ) -> Result<(String, usize, usize), String> {
         let RenderInputs {
+            top,
             pi_sessions,
             usage_rows,
             gob_jobs,
@@ -962,6 +1030,7 @@ impl Sidebar {
         let mut spacer = None;
         for name in self.modules() {
             match name.as_str() {
+                "top" if !self.config.top.disabled => rows.extend(self.render_top(top)?),
                 "sessions" if !self.sessions.config.disabled => {
                     rows.extend(self.render_sessions(snapshot)?)
                 }
@@ -1009,7 +1078,7 @@ impl Sidebar {
                 "spacer" => spacer = Some(rows.len()),
                 "blank" => rows.push(Row::blank()),
                 "sessions" | "divider" | "pi-workbench" | "usage" | "gob" | "git"
-                | "pi-context" | "debug" => {}
+                | "pi-context" | "debug" | "top" => {}
                 _ => return Err(format!("unknown module {name}")),
             }
         }
@@ -1040,6 +1109,114 @@ impl Sidebar {
 
     pub(crate) fn module_names(&self) -> &[String] {
         self.modules()
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Host rows share width, theme, and state decisions"
+    )]
+    fn render_top(&self, status: Option<&crate::top::HostStatus>) -> Result<Vec<Row>, String> {
+        let config = &self.config.top;
+        if config.metrics.is_empty() {
+            return Ok(Vec::new());
+        }
+        let style = |value: &str| resolve_style(value, "default", &self.palette);
+        let mut rows = vec![Row {
+            divider: false,
+            spans: vec![Span {
+                text: " SYSTEM".into(),
+                style: style(&config.heading_style)?,
+            }],
+            fill: None,
+            range: None,
+            focus: false,
+            selected: false,
+        }];
+        let stale = status.and_then(|status| status.age_seconds);
+        for metric in &config.metrics {
+            let battery = status.and_then(|status| status.battery.as_ref());
+            if metric == "battery" && battery.is_none() && status.is_some() {
+                continue;
+            }
+            let (icon, label, value, suffix) = match metric.as_str() {
+                "cpu" => ("󰻠", "CPU", status.and_then(|s| s.cpu), ""),
+                "memory" => ("󰍛", "MEM", status.and_then(|s| s.memory), ""),
+                "battery" => (
+                    battery.map_or("󰁹", |b| {
+                        if b.charging {
+                            "󰂄"
+                        } else if b.percent <= 20 {
+                            "󰁺"
+                        } else {
+                            "󰁹"
+                        }
+                    }),
+                    "BAT",
+                    battery.map(|b| b.percent),
+                    battery.map_or("", |b| {
+                        if b.full {
+                            " full"
+                        } else if b.charging {
+                            " charging"
+                        } else {
+                            ""
+                        }
+                    }),
+                ),
+                _ => continue,
+            };
+            let alert = match metric.as_str() {
+                "battery" => value.is_some_and(|value| value <= 20),
+                _ => value.is_some_and(|value| value >= 80),
+            };
+            let color = if stale.is_some() || value.is_none() {
+                &config.track_style
+            } else if alert {
+                &config.critical_style
+            } else {
+                &config.value_style
+            };
+            let mut spans = vec![Span {
+                text: format!(
+                    " {icon} {label}   {}",
+                    value.map_or_else(|| "--".into(), |v| format!("{v}%"))
+                ),
+                style: style(color)?,
+            }];
+            if let Some(value) = value {
+                if metric != "battery" {
+                    let filled = usize::from(value).div_ceil(13).min(8);
+                    spans.push(Span {
+                        text: format!("  {}", "▰".repeat(filled)),
+                        style: style(color)?,
+                    });
+                    spans.push(Span {
+                        text: "▱".repeat(8 - filled),
+                        style: style(&config.track_style)?,
+                    });
+                } else {
+                    spans.push(Span {
+                        text: suffix.into(),
+                        style: style(&config.track_style)?,
+                    });
+                }
+            }
+            rows.push(Row {
+                divider: false,
+                spans,
+                fill: None,
+                range: None,
+                focus: false,
+                selected: false,
+            });
+        }
+        if let Some(age) = stale {
+            rows[0].spans.push(Span {
+                text: format!(" · {age}s old"),
+                style: style(&config.track_style)?,
+            });
+        }
+        Ok(rows)
     }
 
     fn render_debug(&self, previous: Option<&crate::Diagnostics>) -> Result<Vec<Row>, String> {

@@ -98,13 +98,7 @@ fn read(path: &Path, url: &str) -> Option<Cache> {
 }
 
 pub fn default_dir() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(
-        std::env::var_os("XDG_CACHE_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(home).join(".cache"))
-            .join("starmux/pr-state"),
-    )
+    crate::cache::default_child("pr-state")
 }
 
 pub fn resolve(url: &str, dir: &Path, spawn: bool) -> PrState {

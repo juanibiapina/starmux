@@ -113,6 +113,7 @@ fn scrolling_pages_through_all_modules_and_clamps_after_resize() {
             .render_scrolled(
                 &input,
                 starmux::RenderInputs {
+                    top: None,
                     pi_sessions: &[],
                     usage_rows: &[],
                     gob_jobs: &[],
@@ -541,6 +542,7 @@ fn collapsed_dividers_keep_bottom_alignment_and_scroll_bounds() {
         .render_scrolled(
             &input,
             starmux::RenderInputs {
+                top: None,
                 pi_sessions: &[],
                 usage_rows: &[],
                 gob_jobs: &[],
@@ -573,6 +575,7 @@ fn command_output_separates_dividers_in_a_named_list() {
         .render_with_inputs(
             &input,
             starmux::RenderInputs {
+                top: None,
                 pi_sessions: &[],
                 usage_rows: &[],
                 gob_jobs: &[],
@@ -1167,6 +1170,7 @@ fn pi_context_names_the_selected_session_above_its_entries() {
             .render_with_inputs(
                 &snapshot(),
                 starmux::RenderInputs {
+                    top: None,
                     pi_sessions,
                     usage_rows: &[],
                     gob_jobs: &[],
@@ -1208,6 +1212,7 @@ fn pi_context_names_the_selected_session_above_its_entries() {
             .render_with_inputs(
                 &narrow,
                 starmux::RenderInputs {
+                    top: None,
                     pi_sessions: &sessions,
                     usage_rows: &[],
                     gob_jobs: &[],
@@ -1251,6 +1256,7 @@ fn pi_context_pr_state_icons_use_distinct_styles() {
             .render_with_inputs(
                 &snapshot(),
                 starmux::RenderInputs {
+                    top: None,
                     pi_sessions: &[],
                     usage_rows: &[],
                     gob_jobs: &[],
@@ -1296,6 +1302,7 @@ fn pi_context_icons_and_clipping_work_at_narrow_widths() {
             .render_with_inputs(
                 &input,
                 starmux::RenderInputs {
+                    top: None,
                     pi_sessions: &[],
                     usage_rows: &[],
                     gob_jobs: &[],
@@ -1350,6 +1357,7 @@ fn pi_context_icons_and_clipping_work_at_narrow_widths() {
         .render_with_inputs(
             &input,
             starmux::RenderInputs {
+                top: None,
                 pi_sessions: &[],
                 usage_rows: &[],
                 gob_jobs: &[],
@@ -1386,6 +1394,7 @@ fn named_commands_keep_order_and_render_only_validated_styles() {
         .render_with_inputs(
             &input,
             starmux::RenderInputs {
+                top: None,
                 pi_sessions: &[],
                 usage_rows: &[],
                 gob_jobs: &[],
@@ -1450,6 +1459,7 @@ fn git_lines_can_hide_upstream_or_put_it_on_its_own_row() {
             .render_with_inputs(
                 &snapshot(),
                 starmux::RenderInputs {
+                    top: None,
                     pi_sessions: &[],
                     usage_rows: &[],
                     gob_jobs: &[],
@@ -1481,7 +1491,7 @@ fn debug_rows_follow_order_and_clip_without_click_targets() {
     )
     .unwrap();
     let diagnostics = starmux::Diagnostics {
-        stages: [1200, 0, 0, 250, 0, 0, 100, 50],
+        stages: [1200, 0, 0, 250, 0, 0, 100, 50, 0],
     };
     let input = snapshot();
     let render = || {
@@ -1489,6 +1499,7 @@ fn debug_rows_follow_order_and_clip_without_click_targets() {
             .render_with_inputs(
                 &input,
                 starmux::RenderInputs {
+                    top: None,
                     pi_sessions: &[],
                     usage_rows: &[],
                     gob_jobs: &[],
@@ -1515,6 +1526,7 @@ fn debug_rows_follow_order_and_clip_without_click_targets() {
         .render_with_inputs(
             &narrow,
             starmux::RenderInputs {
+                top: None,
                 pi_sessions: &[],
                 usage_rows: &[],
                 gob_jobs: &[],
@@ -1586,7 +1598,7 @@ providers = ["codex"]
         ..Default::default()
     };
     let debug = starmux::Diagnostics {
-        stages: [1000, 0, 0, 0, 0, 0, 0, 0],
+        stages: [1000, 0, 0, 0, 0, 0, 0, 0, 0],
     };
     let commands = BTreeMap::from([("command.example".into(), "hello".into())]);
     let render = |sidebar: &Sidebar| {
@@ -1594,6 +1606,7 @@ providers = ["codex"]
             .render_with_inputs(
                 &snapshot(),
                 starmux::RenderInputs {
+                    top: None,
                     pi_sessions: std::slice::from_ref(&pi),
                     usage_rows: std::slice::from_ref(&usage),
                     gob_jobs: std::slice::from_ref(&job),
@@ -1700,6 +1713,7 @@ argv = ["status"]
             .render_with_inputs(
                 &snapshot(),
                 starmux::RenderInputs {
+                    top: None,
                     pi_sessions: &[],
                     usage_rows: &[],
                     gob_jobs: &[],

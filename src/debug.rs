@@ -4,20 +4,20 @@ use std::{
     fs::{self, OpenOptions},
     hash::{Hash, Hasher},
     io::{Read, Write},
-    path::{Path, PathBuf},
+    path::Path,
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub(crate) const STAGES: [&str; 8] = [
-    "tmux", "pi", "pr", "usage", "gob", "commands", "git", "format",
+pub(crate) const STAGES: [&str; 9] = [
+    "tmux", "pi", "pr", "usage", "gob", "commands", "git", "format", "top",
 ];
 const MAX_AGE_NS: u128 = 300_000_000_000;
 static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Diagnostics {
-    pub stages: [u64; 8],
+    pub stages: [u64; 9],
 }
 
 impl Diagnostics {
@@ -48,16 +48,6 @@ fn key(socket: &str, client: &str) -> String {
     socket.hash(&mut hasher);
     client.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
-}
-
-pub(crate) fn default_dir() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(
-        std::env::var_os("XDG_CACHE_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(home).join(".cache"))
-            .join("starmux/debug"),
-    )
 }
 
 pub(crate) fn read(dir: &Path, socket: &str, client: &str) -> Option<Diagnostics> {
@@ -157,7 +147,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("starmux-debug-record-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let expected = Diagnostics {
-            stages: [1200, 0, 0, 0, 0, 0, 0, 80],
+            stages: [1200, 0, 0, 0, 0, 0, 0, 80, 0],
         };
         write(&dir, "socket", "client", &expected).unwrap();
         assert_eq!(read(&dir, "socket", "client").unwrap().total(), 1280);

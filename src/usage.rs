@@ -131,17 +131,6 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-pub(crate) fn default_dir() -> Result<PathBuf, String> {
-    let home = std::env::var_os("HOME").ok_or("HOME is required for usage")?;
-    if cfg!(target_os = "macos") {
-        return Ok(PathBuf::from(home).join("Library/Caches/starmux/usage"));
-    }
-    let root = std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(home).join(".cache"));
-    Ok(root.join("starmux/usage"))
-}
-
 fn state_path(dir: &Path, provider: &str) -> PathBuf {
     dir.join(format!("provider-{provider}.json"))
 }

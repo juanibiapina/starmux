@@ -4,6 +4,8 @@
 
 ### Added
 
+- Show host CPU, memory, and battery status in an optional themed sidebar section.
+- Keep sidebar cache files under one configurable directory, with separate folders for each feature.
 - Select different module lists from one configuration file for separate tmux render areas.
 
 ### Changed

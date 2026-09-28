@@ -12,7 +12,7 @@ Run `starmux print-config` to print the complete configuration. Run `starmux che
 modules = ["sessions", "divider"]
 ```
 
-The built-ins are `sessions`, `divider`, `pi-workbench`, `pi-context`, `usage`, `gob`, `git`, `debug`, `spacer`, and `blank`. Named external commands use `command.<name>`. Unknown names and duplicate names other than `divider` and `blank` are errors. Repeat `divider` to separate multiple sections, for example `modules = ["sessions", "divider", "pi-workbench", "divider", "usage", "divider", "gob"]`. Each divider uses the same `[divider]` settings. `pi-workbench`, `pi-context`, `usage`, `gob`, `git`, and `debug` are not enabled by default.
+The built-ins are `top`, `sessions`, `divider`, `pi-workbench`, `pi-context`, `usage`, `gob`, `git`, `debug`, `spacer`, and `blank`. Named external commands use `command.<name>`. Unknown names and duplicate names other than `divider` and `blank` are errors. Repeat `divider` to separate multiple sections, for example `modules = ["sessions", "divider", "pi-workbench", "divider", "usage", "divider", "gob"]`. Each divider uses the same `[divider]` settings. `top`, `pi-workbench`, `pi-context`, `usage`, `gob`, `git`, and `debug` are not enabled by default.
 
 Place one `spacer` between modules to push the following rows to the bottom of the sidebar. For example, `modules = ["sessions", "spacer", "divider", "usage"]` keeps sessions at the top and usage at the bottom. The spacer takes only the rows left after all other modules render. It adds no rows if the sidebar is full, and it has no style or click target. Its size updates when the client is resized. Add `blank` after `usage` to leave one empty row below it: `modules = ["sessions", "spacer", "divider", "usage", "blank"]`. Each `blank` entry adds one empty row without a style or click target; repeat it for more space.
 
@@ -36,6 +36,21 @@ argv = ["my-status", "--short"]
 Run `starmux render-query --config=right --width=30 --socket=PATH --client=NAME` to select the right list. `explain` and `timings` accept the same selector. All lists use the same module settings, colorscheme, palette, and named commands. A command may be referenced only by a named list. Empty lists produce no content rows. Names use 1–32 ASCII letters, digits, `_`, or `-`; `default` is reserved. Unknown names and invalid lists are errors. `check-config` validates every list; `print-config` prints all of them.
 
 `starmux init tmux` selects `default`. For another tmux render area, copy its generated render invocation and add `--config=right` after `render-query`. Pass the same `--config=right` to custom `starmux activate`, `starmux scroll`, and `starmux scroll-event` bindings for that area. Scroll positions are separate for each list on a client. Tmux controls the placement and width of each area; Starmux renders its selected rows within the supplied width and available height.
+
+## Host status and persistent state
+
+Add `top` to a module list to show host CPU, memory, and battery status. Put it after `spacer` to keep it near the bottom:
+
+```toml
+modules = ["sessions", "spacer", "divider", "top", "divider", "git"]
+
+[top]
+metrics = ["cpu", "memory", "battery"]
+```
+
+The module shows a `SYSTEM` heading and compact rows with Nerd Font icons, percentages, and short CPU/memory bars. CPU is whole-host usage measured over an interval; memory is used physical memory. A battery row appears when a battery is detected, with charging or full state when available. Hosts without a battery show only CPU and memory. An unavailable metric shows `--`; cached data older than one minute is dimmed and marked with its age, and expires after five minutes. Short widths clip bars after the numeric value. Rows are not clickable. Set `disabled = true` to hide the section. Use `heading_style`, `value_style`, `warning_style`, `critical_style`, and `track_style` in `[top]` to override colorscheme defaults. CPU and memory turn red at 80%; battery turns red at or below 20%. Sampling happens in a background process roughly every ten seconds; a completed sample appears on the next tmux redraw.
+
+Starmux stores persistent state beneath `$XDG_CACHE_HOME/starmux` when `XDG_CACHE_HOME` is set, `~/Library/Caches/starmux` by default on macOS, and `~/.cache/starmux` by default on Linux. Separate `top/`, `usage/`, `pr-state/`, `debug/`, and `scroll/` directories keep their records apart. Set a top-level absolute `cache_dir` to change the root. Existing `[usage].cache_dir` and `[debug].cache_dir` settings take priority for their respective modules. Older macOS PR, debug, and scroll caches under `~/.cache/starmux` are disposable and expire in place.
 
 ## Row formats
 
@@ -115,7 +130,7 @@ danger = "#ff808c"
 
 Each role is required. Colors accept the same validated tmux color names, `colour0`–`colour255`, and `#RRGGBB` values as palette colors. Custom names cannot replace bundled names. `check-config` rejects missing or unknown roles and invalid colors.
 
-Each scheme supplies default styles and fills for sessions, dividers, Pi Workbench, Pi context, git, usage, gob, debug, and text-mode named commands. The scheme colors ordinary text in these modules too. `spacer` and `blank` contain no styled content. A scheme does not set tmux's outer `side-status-style`, change tmux's other status options, or recolor styles supplied by an external command in `tmux-styles` mode.
+Each scheme supplies default styles and fills for top, sessions, dividers, Pi Workbench, Pi context, git, usage, gob, debug, and text-mode named commands. The scheme colors ordinary text in these modules too. `spacer` and `blank` contain no styled content. A scheme does not set tmux's outer `side-status-style`, change tmux's other status options, or recolor styles supplied by an external command in `tmux-styles` mode.
 
 Explicit module styles and fills take priority over scheme defaults. A selected custom `palette` overlays colors with the same names in the scheme, so a module style such as `fg=accent` uses your palette's `accent`. Formats and indicator rules remain under your control; explicit colors in a format or rule are not replaced. Unknown scheme names and invalid colors or styles fail `check-config`. Without a colorscheme, styles use terminal colors directly unless you select a custom palette as above.
 
@@ -184,7 +199,7 @@ Available providers are `anthropic`, `copilot`, `gemini`, `antigravity`, `codex`
 
 For GPT subscription usage alone, set `providers = ["codex"]`. When Codex reports its available reset count, the heading shows a muted label, such as `Codex Plan · 1 reset` or `Codex Plan · 0 resets`. A missing count leaves the heading unchanged. Starmux reads Pi's `~/.pi/agent/auth.json` or Codex's auth file for Codex credentials; it does not require Pi or pi-usage to run. A foreground sidebar render returns cached usage immediately and starts a refresh worker when data is absent or at least 60 seconds old. One Starmux worker per provider holds the lease, so concurrent clients do not multiply requests. Failed requests preserve last-good usage and delay retries using the provider's `Retry-After` header or a 60-second fallback. The next tmux redraw shows a completed refresh. Starmux's cache and locks are separate from pi-usage; if both run, each may make a request within the same minute.
 
-Set `cache_dir` to an absolute path under `[usage]` to change the usage cache location. The default is `~/Library/Caches/starmux/usage` on macOS or `${XDG_CACHE_HOME:-~/.cache}/starmux/usage` elsewhere. Styles accept palette colors and the same validated attributes as other modules.
+Set `cache_dir` to an absolute path under `[usage]` to change the usage cache location. The default is the `usage/` directory under the shared Starmux cache root. Styles accept palette colors and the same validated attributes as other modules.
 
 ## Live Pi sessions
 
@@ -241,7 +256,7 @@ Starmux passes each array item as a separate process argument without a shell. `
 
 The module reads the selected reachable session's version 2 namespaced context file through its Pi status record. Switching panes updates the rows. No selected Pi session, an empty context, a missing file, or an invalid file produces no context rows. The Pi status scan is shared with `pi-workbench` when both modules are enabled. It shows at most 16 entries in each category.
 
-PR states come from authenticated `gh api` requests in a background worker. A sidebar render uses the cached result immediately and refreshes eligible PRs after five minutes. At most 16 PRs can start a refresh per render, matching the displayed PR limit. Concurrent clients share a lease per PR. Failed lookups retry after one minute, preserve the last known state for up to 30 minutes, then show a muted ``. A missing `gh` command or GitHub authentication leaves the association visible with unknown state. The cache lives under `${XDG_CACHE_HOME:-~/.cache}/starmux/pr-state`.
+PR states come from authenticated `gh api` requests in a background worker. A sidebar render uses the cached result immediately and refreshes eligible PRs after five minutes. At most 16 PRs can start a refresh per render, matching the displayed PR limit. Concurrent clients share a lease per PR. Failed lookups retry after one minute, preserve the last known state for up to 30 minutes, then show a muted ``. A missing `gh` command or GitHub authentication leaves the association visible with unknown state. The cache lives under `pr-state/` in the shared Starmux cache root.
 
 ## Gob jobs
 
@@ -316,9 +331,9 @@ details = true
 style = "dim"
 ```
 
-The default shows only `last 12.34 ms`; `details = true` adds rows for nonzero `tmux`, `pi`, `pr`, `usage`, `gob`, `commands`, `git`, and `format` stages. These are source query and formatting times: several sidebar modules share a source, and `commands` combines configured external commands. The total is the sum of the stages, subject to rounding when displayed. The interval begins before the tmux snapshot and ends after formatting the sidebar. It excludes process startup, reading and writing the debug cache, and tmux's evaluation of the resulting status text. Background refresh workers are not included; starting them during a redraw is included. `starmux timings` retains its JSON fields but runs its own query without starting refresh workers.
+The default shows only `last 12.34 ms`; `details = true` adds rows for nonzero `tmux`, `pi`, `pr`, `usage`, `gob`, `commands`, `git`, `format`, and `top` stages. These are source query and formatting times: several sidebar modules share a source, and `commands` combines configured external commands. The total is the sum of the stages, subject to rounding when displayed. The interval begins before the tmux snapshot and ends after formatting the sidebar. It excludes process startup, reading and writing the debug cache, and tmux's evaluation of the resulting status text. Background refresh workers are not included; starting them during a redraw is included. `starmux timings` includes `top_us` for host cache lookup and runs its own query without starting refresh workers.
 
-The first redraw shows `last --`. Each completed redraw records its measurement for the next one; the value expires after five minutes. Cache errors also show `last --` and do not interrupt the sidebar. The default cache is `${XDG_CACHE_HOME:-~/.cache}/starmux/debug`; set an absolute `cache_dir` under `[debug]` to change it. Rows have no click targets and use the configured validated style. `disabled = true` omits the rows and cache access. The default module list does not include `debug`.
+The first redraw shows `last --`. Each completed redraw records its measurement for the next one; the value expires after five minutes. Cache errors also show `last --` and do not interrupt the sidebar. The default cache is `debug/` under the shared Starmux cache root; set an absolute `cache_dir` under `[debug]` to change it. Rows have no click targets and use the configured validated style. `disabled = true` omits the rows and cache access. The default module list does not include `debug`.
 
 ## Tmux integration
 

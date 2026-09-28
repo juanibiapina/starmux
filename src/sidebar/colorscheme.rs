@@ -1,6 +1,13 @@
 use std::collections::BTreeMap;
 
 const STYLES: &str = r#"
+[top]
+heading_style = "fg=accent,bold"
+value_style = "fg=text"
+warning_style = "fg=orange"
+critical_style = "fg=danger"
+track_style = "fg=muted"
+
 [sessions]
 current_session_style = "fg=background,bg=accent,bold"
 other_session_style = "fg=text,bg=highlight,bold"

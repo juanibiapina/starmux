@@ -92,18 +92,22 @@ fn scroll_command(args: &[String], refresh: bool) -> Result<(), String> {
         );
     }
     let config = parsed.get("config").copied().unwrap_or("default");
-    load_sidebar()?.select(config)?;
+    let sidebar = load_sidebar()?.select(config)?;
+    let dir = sidebar
+        .cache_dir_for("scroll")
+        .ok_or("missing cache directory")?;
     let direction = match *parsed.get("direction").ok_or("missing --direction")? {
         "up" => starmux::ScrollDirection::Up,
         "down" => starmux::ScrollDirection::Down,
         _ => return Err("invalid --direction".into()),
     };
-    let _ = starmux::scroll_client_for(
+    let _ = starmux::scroll_client_in(
         parsed.get("socket").ok_or("missing --socket")?,
         parsed.get("client").ok_or("missing --client")?,
         direction,
         refresh,
         config,
+        &dir,
     )?;
     Ok(())
 }
@@ -125,6 +129,13 @@ fn activate_command(args: &[String]) -> Result<(), String> {
         parsed.get("client").ok_or("missing --client")?,
         parsed.get("target").ok_or("missing --target")?,
     )
+}
+
+fn top_refresh(args: &[String]) -> Result<(), String> {
+    match args {
+        [_, dir, token] => starmux::top::refresh(std::path::Path::new(dir), token),
+        _ => Err("invalid top worker arguments".into()),
+    }
 }
 
 fn run() -> Result<(), String> {
@@ -162,6 +173,9 @@ fn run() -> Result<(), String> {
     if command == "usage-refresh" {
         return usage_refresh(&args[1..]);
     }
+    if command == "top-refresh" {
+        return top_refresh(&args);
+    }
     if command == "scroll-worker" {
         return match args.as_slice() {
             [_, socket_flag, socket, client_flag, client]
@@ -175,6 +189,14 @@ fn run() -> Result<(), String> {
                     && config_flag == "--config" =>
             {
                 starmux::scroll_worker_for(socket, client, config)
+            }
+            [_, socket_flag, socket, client_flag, client, config_flag, config, dir_flag, dir]
+                if socket_flag == "--socket"
+                    && client_flag == "--client"
+                    && config_flag == "--config"
+                    && dir_flag == "--dir" =>
+            {
+                starmux::scroll_worker_in(socket, client, config, std::path::Path::new(dir))
             }
             _ => Err("invalid scroll worker arguments".into()),
         };

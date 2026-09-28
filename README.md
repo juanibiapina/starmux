@@ -2,7 +2,7 @@
 
 A fast and configurable sidebar for tmux.
 
-- View tmux sessions and windows, live Pi sessions and selected Pi context from [pi-workbench](https://github.com/juanibiapina/pi-workbench), and AI provider usage
+- View tmux sessions and windows, host CPU, memory, and battery status, live Pi sessions and selected Pi context from [pi-workbench](https://github.com/juanibiapina/pi-workbench), and AI provider usage
 - Everything is clickable with a mouse and takes you to the expected place
 - Supports colorschemes
 

@@ -22,6 +22,7 @@ time = { version = "0.3", features = ["parsing"] }
 unicode-segmentation = "1"
 unicode-width = "0.2"
 ureq = { version = "3.4.2", features = ["json"] }
+sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 
 [profile.release]
 lto = true
