@@ -151,7 +151,7 @@ Rules are checked in order. The first rule whose conditions all match wins. If n
 
 ## Divider
 
-The divider uses one visible grapheme and fills the available row width:
+The divider uses one visible grapheme and fills the available row width. When empty modules leave dividers next to each other, they appear as one line. A single divider remains visible even when nearby modules are empty. An explicit `blank` row separates dividers; a `spacer` separates them when it has room to add rows.
 
 ```toml
 [divider]

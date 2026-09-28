@@ -472,6 +472,144 @@ selected_fill = "border"
 }
 
 #[test]
+fn empty_modules_leave_one_divider_between_visible_sections() {
+    let sidebar = Sidebar::from_toml(
+        "modules = [\"sessions\", \"divider\", \"pi-workbench\", \"divider\", \"usage\"]\n[divider]\ncharacter = \"=\"",
+    )
+    .unwrap();
+    let input = snapshot();
+    let empty = sidebar.render(&input).unwrap();
+    assert_eq!(empty.matches("============================").count(), 1);
+
+    let pi = PiSession {
+        state: "idle".into(),
+        project: "/projects/starmux".into(),
+        name: "pi session".into(),
+        location: None,
+        target: None,
+        selected: false,
+    };
+    let populated = sidebar.render_with_pi_workbench(&input, &[pi]).unwrap();
+    assert_eq!(populated.matches("============================").count(), 2);
+    let first = populated.find("============================").unwrap();
+    let pi_row = populated.find("pi session").unwrap();
+    let second = populated.rfind("============================").unwrap();
+    assert!(first < pi_row && pi_row < second);
+}
+
+#[test]
+fn single_dividers_and_blank_rows_remain_visible() {
+    let input = snapshot();
+    for modules in [
+        "[\"pi-workbench\", \"divider\"]",
+        "[\"divider\", \"pi-workbench\"]",
+        "[\"divider\", \"blank\", \"divider\"]",
+    ] {
+        let config = format!("modules = {modules}\n[divider]\ncharacter = \"=\"");
+        let rendered = Sidebar::from_toml(&config).unwrap().render(&input).unwrap();
+        let expected = if modules.contains("blank") { 2 } else { 1 };
+        assert_eq!(
+            rendered.matches("============================").count(),
+            expected
+        );
+    }
+    let repeated = Sidebar::from_toml(
+        "modules = [\"divider\", \"divider\", \"divider\"]\n[divider]\ncharacter = \"=\"",
+    )
+    .unwrap()
+    .render(&input)
+    .unwrap();
+    assert_eq!(repeated.matches("============================").count(), 1);
+}
+
+#[test]
+fn collapsed_dividers_keep_bottom_alignment_and_scroll_bounds() {
+    let sidebar = Sidebar::from_toml(
+        "modules = [\"sessions\", \"divider\", \"pi-workbench\", \"divider\", \"spacer\", \"debug\"]\n[divider]\ncharacter = \"=\"",
+    )
+    .unwrap();
+    let mut input = snapshot();
+    input.client_height = 12;
+    let rendered = sidebar.render(&input).unwrap();
+    let lines: Vec<_> = rendered.split("#[nl]").collect();
+    assert_eq!(lines.len() - 1, 13);
+    assert_eq!(rendered.matches("============================").count(), 1);
+    assert!(lines[lines.len() - 2].contains("last --"));
+
+    input.client_height = 7;
+    let (_, offset, max) = sidebar
+        .render_scrolled(
+            &input,
+            starmux::RenderInputs {
+                pi_sessions: &[],
+                usage_rows: &[],
+                gob_jobs: &[],
+                context: None,
+                states: &[],
+                commands: &BTreeMap::new(),
+                git: None,
+                debug: None,
+            },
+            usize::MAX,
+        )
+        .unwrap();
+    assert_eq!(max, 1);
+    assert_eq!(offset, max);
+}
+
+#[test]
+fn command_output_separates_dividers_in_a_named_list() {
+    let sidebar = Sidebar::from_toml(
+        "modules = []\n[configs.right]\nmodules = [\"divider\", \"command.build\", \"divider\"]\n[commands.build]\nargv = [\"echo\", \"ready\"]\n[divider]\ncharacter = \"=\"",
+    )
+    .unwrap()
+    .select("right")
+    .unwrap();
+    let input = snapshot();
+    let empty = sidebar.render(&input).unwrap();
+    assert_eq!(empty.matches("============================").count(), 1);
+    let commands = BTreeMap::from([("command.build".into(), "ready".into())]);
+    let rendered = sidebar
+        .render_with_inputs(
+            &input,
+            starmux::RenderInputs {
+                pi_sessions: &[],
+                usage_rows: &[],
+                gob_jobs: &[],
+                context: None,
+                states: &[],
+                commands: &commands,
+                git: None,
+                debug: None,
+            },
+        )
+        .unwrap();
+    assert_eq!(rendered.matches("============================").count(), 2);
+    assert!(
+        rendered.find("============================").unwrap() < rendered.find("ready").unwrap()
+    );
+    assert!(
+        rendered.find("ready").unwrap() < rendered.rfind("============================").unwrap()
+    );
+}
+
+#[test]
+fn spacer_only_separates_dividers_when_it_has_room() {
+    let sidebar = Sidebar::from_toml(
+        "modules = [\"sessions\", \"divider\", \"spacer\", \"divider\", \"debug\"]\n[divider]\ncharacter = \"=\"",
+    )
+    .unwrap();
+    let mut input = snapshot();
+    input.client_height = 7;
+    let full = sidebar.render(&input).unwrap();
+    assert_eq!(full.matches("============================").count(), 1);
+    input.client_height = 10;
+    let spaced = sidebar.render(&input).unwrap();
+    assert_eq!(spaced.matches("============================").count(), 2);
+    assert_eq!(spaced.matches("#[nl]").count(), 11);
+}
+
+#[test]
 fn divider_can_separate_usage_from_pi_sessions() {
     let sidebar = Sidebar::from_toml(
         r#"

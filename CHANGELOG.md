@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- Show one divider when empty sidebar sections leave dividers next to each other.
 - Keep the sidebar visible when Gob fails, and avoid input errors during session switches.
 
 ## [0.4.0] - 2026-09-27

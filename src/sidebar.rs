@@ -1012,11 +1012,31 @@ impl Sidebar {
                 _ => return Err(format!("unknown module {name}")),
             }
         }
-        if let Some(index) = spacer {
-            // The two list marker newlines precede the visible side status rows.
-            let available = snapshot.client_height.saturating_sub(snapshot.status_lines);
+        // The two list marker newlines precede the visible side status rows.
+        let available = snapshot.client_height.saturating_sub(snapshot.status_lines);
+        let spacer_end = spacer.map(|index| {
             let padding = available.saturating_sub(rows.len());
             rows.splice(index..index, (0..padding).map(|_| Row::blank()));
+            index + padding
+        });
+        let mut previous_divider = false;
+        let mut row_index = 0;
+        let mut spacer_end_after_collapse = 0;
+        rows.retain(|row| {
+            let keep = !row.divider || !previous_divider;
+            previous_divider = row.divider;
+            if keep && spacer_end.is_some_and(|end| row_index < end) {
+                spacer_end_after_collapse += 1;
+            }
+            row_index += 1;
+            keep
+        });
+        if spacer_end.is_some() {
+            let padding = available.saturating_sub(rows.len());
+            rows.splice(
+                spacer_end_after_collapse..spacer_end_after_collapse,
+                (0..padding).map(|_| Row::blank()),
+            );
         }
         let text_color = self
             .config
@@ -1064,6 +1084,7 @@ impl Sidebar {
         Ok(lines
             .into_iter()
             .map(|text| Row {
+                divider: false,
                 spans: vec![Span {
                     text,
                     style: style.clone(),
@@ -1093,6 +1114,7 @@ impl Sidebar {
                 ("name", Value::Text(session.name.clone())),
             ]);
             rows.push(Row {
+                divider: false,
                 spans: render_format(
                     &self.sessions.session_format,
                     &values,
@@ -1134,6 +1156,7 @@ impl Sidebar {
                     ("indicator", Value::Spans(indicator)),
                 ]);
                 rows.push(Row {
+                    divider: false,
                     spans: render_format(
                         &self.sessions.window_format,
                         &values,
@@ -1210,6 +1233,7 @@ impl Sidebar {
                     }
                 }
                 rows.push(Row {
+                    divider: false,
                     spans: vec![Span {
                         text: format!(" {title}"),
                         style: resolve_style(
@@ -1273,6 +1297,7 @@ impl Sidebar {
             })
             .transpose()?;
         Ok(Row {
+            divider: false,
             spans: render_format(
                 &self.pi_workbench_format,
                 &values,
@@ -1370,6 +1395,7 @@ impl Sidebar {
             let page_range =
                 crate::usage::page_token(provider).map(|token| Range::UsagePage(token.into()));
             rows.push(Row {
+                divider: false,
                 spans,
                 fill: None,
                 range: page_range.clone(),
@@ -1403,6 +1429,7 @@ impl Sidebar {
                 let track = resolve_color(&self.config.usage.bar_track_color, &self.palette)?;
                 shade_usage_bar(&mut values, &bar_style, &track, &window_style);
                 rows.push(Row {
+                    divider: false,
                     spans: render_format(
                         &self.usage_format,
                         &values,
@@ -1438,6 +1465,7 @@ impl Sidebar {
             });
         }
         Ok(Row {
+            divider: false,
             spans,
             fill: None,
             range: None,
@@ -1507,6 +1535,7 @@ impl Sidebar {
             let (spans, present) = render_nodes(line, &values, "default", &self.palette, None)?;
             if present {
                 rows.push(Row {
+                    divider: false,
                     spans: coalesce(spans),
                     fill: None,
                     range: None,
@@ -1527,6 +1556,7 @@ impl Sidebar {
         let progress = resolve_style(&self.config.gob.progress_style, "default", &self.palette)?;
         let track = resolve_color(&self.config.gob.bar_track_color, &self.palette)?;
         let mut rows = vec![Row {
+            divider: false,
             spans: vec![Span {
                 text: " Jobs".into(),
                 style: heading,
@@ -1556,6 +1586,7 @@ impl Sidebar {
                 ),
             ]);
             rows.push(Row {
+                divider: false,
                 spans: render_format(&self.gob_format, &values, "default", &self.palette)?,
                 fill: None,
                 range: None,
@@ -1589,6 +1620,7 @@ impl Sidebar {
                     style: "default".into(),
                 });
                 rows.push(Row {
+                    divider: false,
                     spans: coalesce(spans),
                     fill: None,
                     range: None,
@@ -1638,6 +1670,7 @@ impl Sidebar {
                 style: resolve_style(style, "default", &self.palette)?,
             });
             rows.push(Row {
+                divider: false,
                 spans,
                 fill: None,
                 range,
@@ -1740,6 +1773,7 @@ impl Sidebar {
         let glyph_width = UnicodeWidthStr::width(glyph);
         let count = width.saturating_sub(2) / glyph_width;
         Ok(Row {
+            divider: true,
             spans: vec![Span {
                 text: format!(" {}", glyph.repeat(count)),
                 style: resolve_style(&self.config.divider.style, "default", &self.palette)?,
@@ -2451,6 +2485,7 @@ struct Span {
 
 #[derive(Clone, Debug)]
 struct Row {
+    divider: bool,
     spans: Vec<Span>,
     fill: Option<String>,
     range: Option<Range>,
@@ -2461,6 +2496,7 @@ struct Row {
 impl Row {
     fn blank() -> Self {
         Self {
+            divider: false,
             spans: Vec::new(),
             fill: None,
             range: None,
