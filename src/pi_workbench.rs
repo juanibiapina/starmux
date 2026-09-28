@@ -80,6 +80,10 @@ pub(crate) struct LiveEntry {
     pub context_path: Option<PathBuf>,
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "The bounded scan validates and filters each record before publishing sessions"
+)]
 pub(crate) fn list(data_dir: &Path, tmux_socket: &Path) -> Result<Vec<LiveEntry>, String> {
     let status_dir = data_dir.join("status");
     let entries = match fs::read_dir(&status_dir) {
@@ -323,6 +327,10 @@ pub struct PiContext {
 const MAX_CONTEXT_BYTES: u64 = 1024 * 1024;
 const MAX_ITEMS: usize = 16;
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "Context schema and path validation precede constructing the published context"
+)]
 pub(crate) fn read_context(path: &Path, session_id: &str) -> Option<PiContext> {
     let metadata = fs::symlink_metadata(path).ok()?;
     if !metadata.file_type().is_file() || metadata.len() > MAX_CONTEXT_BYTES {

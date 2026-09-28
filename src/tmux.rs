@@ -226,16 +226,16 @@ fn scroll_identity(client: &str, config: &str) -> String {
 pub fn scroll_client(
     socket: &str,
     client: &str,
-    down: bool,
+    direction: crate::ScrollDirection,
     refresh: bool,
 ) -> Result<bool, String> {
-    scroll_client_for(socket, client, down, refresh, "default")
+    scroll_client_for(socket, client, direction, refresh, "default")
 }
 
 pub fn scroll_client_for(
     socket: &str,
     client: &str,
-    down: bool,
+    direction: crate::ScrollDirection,
     refresh: bool,
     config: &str,
 ) -> Result<bool, String> {
@@ -243,7 +243,7 @@ pub fn scroll_client_for(
         return Err("missing tmux socket or client name".into());
     }
     let identity = scroll_identity(client, config);
-    let movement = crate::scroll::move_by(socket, &identity, down, !refresh)
+    let movement = crate::scroll::move_by(socket, &identity, direction, !refresh)
         .map_err(|error| format!("scroll state failed: {error}"))?;
     if movement.start_worker {
         let spawn = std::env::current_exe()

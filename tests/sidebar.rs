@@ -1153,7 +1153,19 @@ fn pi_context_pr_state_icons_use_distinct_styles() {
         ),
     ] {
         let rendered = sidebar
-            .render_with_context(&snapshot(), &[], &[], &[], Some(&context), &[state])
+            .render_with_inputs(
+                &snapshot(),
+                starmux::RenderInputs {
+                    pi_sessions: &[],
+                    usage_rows: &[],
+                    gob_jobs: &[],
+                    context: Some(&context),
+                    states: &[state],
+                    commands: &BTreeMap::new(),
+                    git: None,
+                    debug: None,
+                },
+            )
             .unwrap();
         assert!(
             rendered.contains(&format!("#[{style}]{icon}")),
@@ -1186,13 +1198,18 @@ fn pi_context_icons_and_clipping_work_at_narrow_widths() {
         let mut input = snapshot();
         input.width = width;
         let rendered = sidebar
-            .render_with_context(
+            .render_with_inputs(
                 &input,
-                &[],
-                &[],
-                &[],
-                Some(&context),
-                &[starmux::pr_state::PrState::Draft],
+                starmux::RenderInputs {
+                    pi_sessions: &[],
+                    usage_rows: &[],
+                    gob_jobs: &[],
+                    context: Some(&context),
+                    states: &[starmux::pr_state::PrState::Draft],
+                    commands: &BTreeMap::new(),
+                    git: None,
+                    debug: None,
+                },
             )
             .unwrap();
         assert!(
@@ -1235,7 +1252,19 @@ fn pi_context_icons_and_clipping_work_at_narrow_widths() {
     let mut input = snapshot();
     input.width = 16;
     let rendered = sidebar
-        .render_with_context(&input, &[], &[], &[], Some(&long), &[])
+        .render_with_inputs(
+            &input,
+            starmux::RenderInputs {
+                pi_sessions: &[],
+                usage_rows: &[],
+                gob_jobs: &[],
+                context: Some(&long),
+                states: &[],
+                commands: &BTreeMap::new(),
+                git: None,
+                debug: None,
+            },
+        )
         .unwrap();
     assert!(rendered.contains("…##4242"), "{rendered}");
     std::fs::remove_dir_all(dir).unwrap();

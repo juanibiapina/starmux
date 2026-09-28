@@ -493,6 +493,10 @@ impl Sidebar {
         Self::compile(Config::default())
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Configuration validation and compiled formats form one atomic construction pass"
+    )]
     fn compile(config: Config) -> Result<Self, String> {
         let known = [
             "sessions",
@@ -910,26 +914,14 @@ impl Sidebar {
         usage_rows: &[crate::usage::UsageRow],
         gob_jobs: &[crate::gob::GobJob],
     ) -> Result<String, String> {
-        self.render_with_context(snapshot, pi_sessions, usage_rows, gob_jobs, None, &[])
-    }
-
-    pub fn render_with_context(
-        &self,
-        snapshot: &Snapshot,
-        pi_sessions: &[crate::PiSession],
-        usage_rows: &[crate::usage::UsageRow],
-        gob_jobs: &[crate::gob::GobJob],
-        context: Option<&crate::PiContext>,
-        states: &[crate::pr_state::PrState],
-    ) -> Result<String, String> {
         self.render_with_inputs(
             snapshot,
             RenderInputs {
                 pi_sessions,
                 usage_rows,
                 gob_jobs,
-                context,
-                states,
+                context: None,
+                states: &[],
                 commands: &BTreeMap::new(),
                 git: None,
                 debug: None,
@@ -1013,37 +1005,13 @@ impl Sidebar {
             }
         }
         // The two list marker newlines precede the visible side status rows.
-        let available = snapshot.client_height.saturating_sub(snapshot.status_lines);
-        let spacer_end = spacer.map(|index| {
-            let padding = available.saturating_sub(rows.len());
-            rows.splice(index..index, (0..padding).map(|_| Row::blank()));
-            index + padding
-        });
-        let mut previous_divider = false;
-        let mut row_index = 0;
-        let mut spacer_end_after_collapse = 0;
-        rows.retain(|row| {
-            let keep = !row.divider || !previous_divider;
-            previous_divider = row.divider;
-            if keep && spacer_end.is_some_and(|end| row_index < end) {
-                spacer_end_after_collapse += 1;
-            }
-            row_index += 1;
-            keep
-        });
-        if spacer_end.is_some() {
-            let padding = available.saturating_sub(rows.len());
-            rows.splice(
-                spacer_end_after_collapse..spacer_end_after_collapse,
-                (0..padding).map(|_| Row::blank()),
-            );
-        }
+        let height = snapshot.client_height.saturating_sub(snapshot.status_lines);
+        let rows = layout_rows(rows, spacer, height);
         let text_color = self
             .config
             .colorscheme
             .as_ref()
             .and_then(|_| self.palette.get("text"));
-        let height = snapshot.client_height.saturating_sub(snapshot.status_lines);
         let max_offset = rows.len().saturating_sub(height);
         let offset = offset.min(max_offset);
         Ok((
@@ -1315,6 +1283,10 @@ impl Sidebar {
         })
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Usage rows share formatting and width decisions across providers"
+    )]
     fn render_usage(
         &self,
         usage_rows: &[crate::usage::UsageRow],
@@ -1632,6 +1604,10 @@ impl Sidebar {
         Ok(rows)
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Context rows share icon, style, and click range assembly"
+    )]
     fn render_pi_context(
         &self,
         context: &crate::PiContext,
@@ -2504,6 +2480,34 @@ impl Row {
             selected: false,
         }
     }
+}
+
+fn layout_rows(mut rows: Vec<Row>, spacer: Option<usize>, height: usize) -> Vec<Row> {
+    let spacer_end = spacer.map(|index| {
+        let padding = height.saturating_sub(rows.len());
+        rows.splice(index..index, (0..padding).map(|_| Row::blank()));
+        index + padding
+    });
+    let mut previous_divider = false;
+    let mut row_index = 0;
+    let mut spacer_end_after_collapse = 0;
+    rows.retain(|row| {
+        let keep = !row.divider || !previous_divider;
+        previous_divider = row.divider;
+        if keep && spacer_end.is_some_and(|end| row_index < end) {
+            spacer_end_after_collapse += 1;
+        }
+        row_index += 1;
+        keep
+    });
+    if spacer_end.is_some() {
+        let padding = height.saturating_sub(rows.len());
+        rows.splice(
+            spacer_end_after_collapse..spacer_end_after_collapse,
+            (0..padding).map(|_| Row::blank()),
+        );
+    }
+    rows
 }
 
 #[derive(Clone, Debug)]

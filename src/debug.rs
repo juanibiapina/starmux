@@ -50,7 +50,7 @@ fn key(socket: &str, client: &str) -> String {
     format!("{:016x}", hasher.finish())
 }
 
-pub fn default_dir() -> Option<PathBuf> {
+pub(crate) fn default_dir() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
     Some(
         std::env::var_os("XDG_CACHE_HOME")
@@ -60,7 +60,7 @@ pub fn default_dir() -> Option<PathBuf> {
     )
 }
 
-pub fn read(dir: &Path, socket: &str, client: &str) -> Option<Diagnostics> {
+pub(crate) fn read(dir: &Path, socket: &str, client: &str) -> Option<Diagnostics> {
     let key = key(socket, client);
     read_record(dir, &key).map(|record| record.diagnostics)
 }
@@ -94,7 +94,7 @@ fn read_record(dir: &Path, key: &str) -> Option<Record> {
         .then_some(record)
 }
 
-pub fn write(
+pub(crate) fn write(
     dir: &Path,
     socket: &str,
     client: &str,

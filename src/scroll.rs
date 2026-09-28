@@ -35,7 +35,7 @@ struct State {
     worker_until_ms: u64,
 }
 
-pub struct Move {
+pub(crate) struct Move {
     pub changed: bool,
     pub start_worker: bool,
 }
@@ -97,7 +97,7 @@ fn read_at(dir: &Path, key: &str) -> Option<State> {
     })
 }
 
-pub fn read(socket: &str, client: &str) -> usize {
+pub(crate) fn read(socket: &str, client: &str) -> usize {
     dir()
         .and_then(|dir| read_at(&dir, &key(socket, client)))
         .unwrap_or_default()
@@ -167,16 +167,26 @@ fn update(
     Ok((current, next))
 }
 
-pub fn move_by(socket: &str, client: &str, down: bool, worker: bool) -> std::io::Result<Move> {
+#[derive(Clone, Copy)]
+pub enum ScrollDirection {
+    Up,
+    Down,
+}
+
+pub(crate) fn move_by(
+    socket: &str,
+    client: &str,
+    direction: ScrollDirection,
+    worker: bool,
+) -> std::io::Result<Move> {
     let now = now_ms().unwrap_or_default();
     let (previous, next) = update(socket, client, |mut state| {
-        let offset = if down {
-            state
+        let offset = match direction {
+            ScrollDirection::Down => state
                 .offset
                 .saturating_add(1)
-                .min(state.max.unwrap_or(MAX_OFFSET))
-        } else {
-            state.offset.saturating_sub(1)
+                .min(state.max.unwrap_or(MAX_OFFSET)),
+            ScrollDirection::Up => state.offset.saturating_sub(1),
         };
         if offset != state.offset {
             state.offset = offset;
@@ -193,13 +203,13 @@ pub fn move_by(socket: &str, client: &str, down: bool, worker: bool) -> std::io:
     })
 }
 
-pub fn worker_generation(socket: &str, client: &str) -> Option<u64> {
+pub(crate) fn worker_generation(socket: &str, client: &str) -> Option<u64> {
     dir()
         .and_then(|dir| read_at(&dir, &key(socket, client)))
         .map(|state| state.generation)
 }
 
-pub fn worker_next(socket: &str, client: &str, painted: u64) -> std::io::Result<bool> {
+pub(crate) fn worker_next(socket: &str, client: &str, painted: u64) -> std::io::Result<bool> {
     let now = now_ms().unwrap_or_default();
     let (_, next) = update(socket, client, |mut state| {
         state.worker_until_ms = if state.generation == painted {
@@ -212,14 +222,14 @@ pub fn worker_next(socket: &str, client: &str, painted: u64) -> std::io::Result<
     Ok(next.worker_until_ms != 0)
 }
 
-pub fn stop_worker(socket: &str, client: &str) {
+pub(crate) fn stop_worker(socket: &str, client: &str) {
     let _ = update(socket, client, |mut state| {
         state.worker_until_ms = 0;
         state
     });
 }
 
-pub fn set_bound(socket: &str, client: &str, max: usize) -> std::io::Result<()> {
+pub(crate) fn set_bound(socket: &str, client: &str, max: usize) -> std::io::Result<()> {
     let max = max.min(MAX_OFFSET);
     if dir()
         .and_then(|dir| read_at(&dir, &key(socket, client)))

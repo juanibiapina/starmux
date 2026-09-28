@@ -1,3 +1,5 @@
+#![cfg_attr(not(test), warn(clippy::too_many_lines, unreachable_pub))]
+
 use starmux::{Application, Focus, ProcessTmux, Sidebar};
 use std::{collections::BTreeMap, path::PathBuf};
 
@@ -65,6 +67,66 @@ fn query_arguments(values: &[String]) -> Result<(usize, &str, &str, Option<Focus
     Ok((width, socket, client, focus, config))
 }
 
+fn usage_refresh(args: &[String]) -> Result<(), String> {
+    let parsed = flags(args)?;
+    if parsed.len() != 2 {
+        return Err("usage: starmux usage-refresh --provider=NAME --data-dir=PATH".into());
+    }
+    let provider = parsed.get("provider").ok_or("missing --provider")?;
+    let dir = parsed.get("data-dir").ok_or("missing --data-dir")?;
+    let mut token = String::new();
+    use std::io::Read;
+    std::io::stdin()
+        .take(128)
+        .read_to_string(&mut token)
+        .map_err(|error| error.to_string())?;
+    starmux::usage::refresh(provider, std::path::Path::new(dir), &token)
+}
+
+fn scroll_command(args: &[String], refresh: bool) -> Result<(), String> {
+    let parsed = flags(args)?;
+    if parsed.len() != 3 + usize::from(parsed.contains_key("config")) {
+        return Err(
+            "usage: starmux scroll --socket=PATH --client=NAME --direction=up|down [--config=NAME]"
+                .into(),
+        );
+    }
+    let config = parsed.get("config").copied().unwrap_or("default");
+    load_sidebar()?.select(config)?;
+    let direction = match *parsed.get("direction").ok_or("missing --direction")? {
+        "up" => starmux::ScrollDirection::Up,
+        "down" => starmux::ScrollDirection::Down,
+        _ => return Err("invalid --direction".into()),
+    };
+    let _ = starmux::scroll_client_for(
+        parsed.get("socket").ok_or("missing --socket")?,
+        parsed.get("client").ok_or("missing --client")?,
+        direction,
+        refresh,
+        config,
+    )?;
+    Ok(())
+}
+
+fn activate_command(args: &[String]) -> Result<(), String> {
+    let parsed = flags(args)?;
+    if parsed.len() != 3 + usize::from(parsed.contains_key("config")) {
+        return Err(
+            "usage: starmux activate --socket=PATH --client=NAME --target=TOKEN [--config=NAME]"
+                .into(),
+        );
+    }
+    let app = Application::new(
+        load_sidebar()?.select(parsed.get("config").copied().unwrap_or("default"))?,
+        ProcessTmux,
+    );
+    app.activate(
+        parsed.get("socket").ok_or("missing --socket")?,
+        parsed.get("client").ok_or("missing --client")?,
+        parsed.get("target").ok_or("missing --target")?,
+    )
+}
+
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let command = args
@@ -98,19 +160,7 @@ fn run() -> Result<(), String> {
         };
     }
     if command == "usage-refresh" {
-        let parsed = flags(&args[1..])?;
-        if parsed.len() != 2 {
-            return Err("usage: starmux usage-refresh --provider=NAME --data-dir=PATH".into());
-        }
-        let provider = parsed.get("provider").ok_or("missing --provider")?;
-        let dir = parsed.get("data-dir").ok_or("missing --data-dir")?;
-        let mut token = String::new();
-        use std::io::Read;
-        std::io::stdin()
-            .take(128)
-            .read_to_string(&mut token)
-            .map_err(|error| error.to_string())?;
-        return starmux::usage::refresh(provider, std::path::Path::new(dir), &token);
+        return usage_refresh(&args[1..]);
     }
     if command == "scroll-worker" {
         return match args.as_slice() {
@@ -130,44 +180,10 @@ fn run() -> Result<(), String> {
         };
     }
     if matches!(command, "scroll" | "scroll-event") {
-        let parsed = flags(&args[1..])?;
-        if parsed.len() != 3 + usize::from(parsed.contains_key("config")) {
-            return Err(
-                "usage: starmux scroll --socket=PATH --client=NAME --direction=up|down [--config=NAME]".into(),
-            );
-        }
-        let config = parsed.get("config").copied().unwrap_or("default");
-        load_sidebar()?.select(config)?;
-        let down = match *parsed.get("direction").ok_or("missing --direction")? {
-            "up" => false,
-            "down" => true,
-            _ => return Err("invalid --direction".into()),
-        };
-        let _ = starmux::scroll_client_for(
-            parsed.get("socket").ok_or("missing --socket")?,
-            parsed.get("client").ok_or("missing --client")?,
-            down,
-            command == "scroll",
-            config,
-        )?;
-        return Ok(());
+        return scroll_command(&args[1..], command == "scroll");
     }
     if command == "activate" {
-        let parsed = flags(&args[1..])?;
-        if parsed.len() != 3 + usize::from(parsed.contains_key("config")) {
-            return Err(
-                "usage: starmux activate --socket=PATH --client=NAME --target=TOKEN [--config=NAME]".into(),
-            );
-        }
-        let app = Application::new(
-            load_sidebar()?.select(parsed.get("config").copied().unwrap_or("default"))?,
-            ProcessTmux,
-        );
-        return app.activate(
-            parsed.get("socket").ok_or("missing --socket")?,
-            parsed.get("client").ok_or("missing --client")?,
-            parsed.get("target").ok_or("missing --target")?,
-        );
+        return activate_command(&args[1..]);
     }
 
     let sidebar = load_sidebar()?;

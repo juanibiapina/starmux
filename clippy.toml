@@ -1,0 +1,2 @@
+too-many-arguments-threshold = 6
+max-fn-params-bools = 1

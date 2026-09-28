@@ -1,3 +1,5 @@
+#![cfg_attr(not(test), warn(clippy::too_many_lines, unreachable_pub))]
+
 mod command;
 mod debug;
 mod git;
@@ -9,6 +11,7 @@ pub use gob::GobJob;
 mod pi_workbench;
 pub mod pr_state;
 mod scroll;
+pub use scroll::ScrollDirection;
 mod sidebar;
 mod tmux;
 pub mod usage;

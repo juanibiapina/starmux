@@ -43,7 +43,7 @@ jobs:
           make -j2 install
           echo "$RUNNER_TEMP/tmux/bin" >> "$GITHUB_PATH"
       - run: cargo fmt --check
-      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo clippy --quiet --locked --all-targets -- -D warnings -W clippy::fn_params_excessive_bools
       - run: cargo test --locked
         env:
           STARMUX_REQUIRE_SIDE_STATUS: ${{ runner.os == 'macOS' && '1' || '' }}

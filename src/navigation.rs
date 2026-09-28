@@ -1,5 +1,5 @@
 // tmux user ranges hold at most 15 bytes. Recheck the current pane and URL on click.
-pub fn pr_token(pane: &str, url: &str, index: usize) -> Result<String, String> {
+pub(crate) fn pr_token(pane: &str, url: &str, index: usize) -> Result<String, String> {
     if index >= 16
         || !pane
             .strip_prefix('%')
@@ -15,7 +15,11 @@ pub fn pr_token(pane: &str, url: &str, index: usize) -> Result<String, String> {
     Ok(format!("sr{index:02x}{:010x}", hash & 0xffffffffff))
 }
 
-pub fn pr_target<'a>(token: &str, pane: &str, urls: &'a [String]) -> Result<&'a str, String> {
+pub(crate) fn pr_target<'a>(
+    token: &str,
+    pane: &str,
+    urls: &'a [String],
+) -> Result<&'a str, String> {
     if token.len() != 14 || !token.starts_with("sr") {
         return Err("invalid PR click target".into());
     }
@@ -29,7 +33,7 @@ pub fn pr_target<'a>(token: &str, pane: &str, urls: &'a [String]) -> Result<&'a 
     Ok(url)
 }
 
-pub fn file_token(
+pub(crate) fn file_token(
     kind: &str,
     pane: &str,
     path: &std::path::Path,
@@ -54,18 +58,18 @@ pub fn file_token(
     Ok(format!("{kind}{index:02x}{:010x}", hash & 0xffffffffff))
 }
 
-pub fn file_index(token: &str) -> Result<usize, String> {
+pub(crate) fn file_index(token: &str) -> Result<usize, String> {
     if token.len() != 14 || !(token.starts_with("sl") || token.starts_with("ss")) {
         return Err("invalid file click target".into());
     }
     usize::from_str_radix(&token[2..4], 16).map_err(|_| "invalid file click target".into())
 }
 
-pub fn session_token(session: &str) -> Result<String, String> {
+pub(crate) fn session_token(session: &str) -> Result<String, String> {
     Ok(format!("st{}", id(session, '$')?))
 }
 
-pub fn session_target(token: &str) -> Result<String, String> {
+pub(crate) fn session_target(token: &str) -> Result<String, String> {
     let digits = token.strip_prefix("st").ok_or("invalid click target")?;
     let id = id(&format!("${digits}"), '$')?;
     let target = format!("${id}");
@@ -84,7 +88,7 @@ fn id(value: &str, prefix: char) -> Result<u32, String> {
 }
 
 // A user range holds 15 bytes; two u32 IDs fit in 13 base-36 digits plus "sw".
-pub fn token(session: &str, window: &str) -> Result<String, String> {
+pub(crate) fn token(session: &str, window: &str) -> Result<String, String> {
     let session = id(session, '$')?;
     let window = id(window, '@')?;
     let mut value = (u64::from(session) << 32) | u64::from(window);
@@ -105,14 +109,14 @@ pub fn token(session: &str, window: &str) -> Result<String, String> {
     Ok(format!("sw{}", String::from_utf8(digits).unwrap()))
 }
 
-pub fn pane_token(pane: &str, window: &str) -> Result<String, String> {
+pub(crate) fn pane_token(pane: &str, window: &str) -> Result<String, String> {
     let pane = id(pane, '%')?;
     let window = id(window, '@')?;
     let encoded = token(&format!("${pane}"), &format!("@{window}"))?;
     Ok(format!("sp{}", &encoded[2..]))
 }
 
-pub fn pane_target(value: &str) -> Result<(String, String), String> {
+pub(crate) fn pane_target(value: &str) -> Result<(String, String), String> {
     let digits = value.strip_prefix("sp").ok_or("invalid click target")?;
     let encoded = format!("sw{digits}");
     let packed = target(&encoded)?;
@@ -120,7 +124,7 @@ pub fn pane_target(value: &str) -> Result<(String, String), String> {
     Ok((format!("%{}", &pane[1..]), window.to_owned()))
 }
 
-pub fn target(token: &str) -> Result<String, String> {
+pub(crate) fn target(token: &str) -> Result<String, String> {
     let digits = token.strip_prefix("sw").ok_or("invalid click target")?;
     if digits.is_empty()
         || digits.len() > 13

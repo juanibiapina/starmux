@@ -8,6 +8,7 @@ Starmux is a Rust CLI for a vertical tmux sidebar. It requires a tmux build with
 - `src/tmux.rs`: tmux queries, snapshots, focus validation, and activation
 - `src/sidebar.rs`: configuration, safe formatting, and rendering
 - `src/navigation.rs`: cross-session click targets
+- `src/usage/providers/`: provider credentials, requests, and response parsing
 - `tests/tmux.rs`: live attached-client contracts
 
 See [docs/configuration.md](docs/configuration.md) for configuration and [docs/releasing.md](docs/releasing.md) for releases.
@@ -16,9 +17,11 @@ See [docs/configuration.md](docs/configuration.md) for configuration and [docs/r
 
 ```sh
 cargo fmt --check
-cargo clippy --locked --all-targets -- -D warnings
+cargo clippy --quiet --locked --all-targets -- -D warnings -W clippy::fn_params_excessive_bools
 cargo test --locked
 ```
+
+`clippy.toml` limits functions to 6 arguments and boolean parameters to 1. The library and binary roots enable the 100-line function and `unreachable_pub` lints for production builds; tests are exempt from those two rules. Clippy is silent on success and prints full diagnostics on failure. Review the caller interface before changing code to satisfy a count. For an export change, inspect `src/lib.rs` and its callers: count new public names, fields, and required inputs, and check whether the module hides more behavior behind the same interface. Existing long production paths carry local `#[expect]` reasons.
 
 Live sidebar tests skip when tmux lacks side-status. On a supported build, require them with:
 ```sh

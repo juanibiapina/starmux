@@ -10,7 +10,7 @@ From this repository:
 
 ```sh
 cargo fmt --check
-cargo clippy --locked --all-targets -- -D warnings
+cargo clippy --quiet --locked --all-targets -- -D warnings -W clippy::fn_params_excessive_bools
 cargo test --locked
 cargo build --release --locked
 package_target="$(mktemp -d)"
