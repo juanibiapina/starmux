@@ -78,6 +78,28 @@ fn wheel_at_top_is_a_noop_without_a_tmux_refresh() {
     let result = scroll("down");
     assert!(!result.status.success());
     assert!(result.stdout.is_empty());
+
+    // scroll-event starts a detached worker; wait for its final cache write.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        let finished = std::fs::read_dir(cache.join("starmux/scroll"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+            .any(|entry| {
+                let record: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(entry.path()).unwrap()).unwrap();
+                record["worker_until_ms"] == 0
+            });
+        if finished {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "scroll worker did not finish"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     std::fs::remove_dir_all(cache).unwrap();
 }
 
