@@ -219,6 +219,7 @@ Add `pi-context` to show the plans, pull requests, and loaded skills recorded by
 modules = ["sessions", "divider", "pi-workbench", "divider", "pi-context"]
 
 [pi-context]
+heading_style = "fg=magenta,bold"
 category_style = "dim"
 text_style = "default"
 plan_style = "fg=magenta"
@@ -230,7 +231,7 @@ closed_style = "fg=red"
 unknown_style = "fg=brightblack"
 ```
 
-Only nonempty Plans, PRs, and Skills sections appear. `◇` marks a plan and `✦` marks a loaded skill. A PR row shows `owner/repo#number` with Nerd Font Codicon icons: green `` for open, muted `` for draft, purple `` for merged, and red `` for closed. Unknown state uses a muted ``. Draft and closed rows include a word when space permits. Click a PR row to open its GitHub page. Click a plan to open its Markdown file or a skill to open its `SKILL.md` with the system's file handler. Set `open_command` under `[pi-context]` to override that handler:
+When context has entries, a `π` heading shows the selected Pi session's name above the nonempty Plans, PRs, and Skills sections. This heading appears even when `pi-context` is used without `pi-workbench`. Category labels align with the heading; item rows have one indent. `heading_style` controls the heading color and weight. `◇` marks a plan and `✦` marks a loaded skill. A PR row shows `owner/repo#number` with Nerd Font Codicon icons: green `` for open, muted `` for draft, purple `` for merged, and red `` for closed. Unknown state uses a muted ``. Draft and closed rows include a word when space permits. Click a PR row to open its GitHub page. Click a plan to open its Markdown file or a skill to open its `SKILL.md` with the system's file handler. Set `open_command` under `[pi-context]` to override that handler:
 
 ```toml
 open_command = ["dev", "tmux", "edit", "{file}", "{pane}", "{socket}"]

@@ -1385,7 +1385,7 @@ mod tests {
             .render_query("/tmp/starmux-current.sock", "client", 40, None)
             .unwrap();
         assert!(
-            !other_rendered.contains(" Plans") && !other_rendered.contains("Build search"),
+            !other_rendered.contains(" π") && !other_rendered.contains("Build search"),
             "{other_rendered}"
         );
         let context_only = format!(
@@ -1398,7 +1398,9 @@ mod tests {
             .render_query("/tmp/starmux-current.sock", "client", 40, None)
             .unwrap();
         assert!(
-            context_rendered.contains("Build search") && !context_rendered.contains("unnamed"),
+            context_rendered.contains(" π ##[fg=red]##{oops}")
+                && context_rendered.contains("Build search")
+                && !context_rendered.contains("unnamed"),
             "{context_rendered}"
         );
         let plan_token = crate::navigation::file_token("sl", "%0", &plan_path, 0).unwrap();
@@ -1477,7 +1479,7 @@ mod tests {
         assert!(rendered.contains("✦"), "{rendered}");
         assert!(rendered.find("##[fg=red]").unwrap() < rendered.find("unnamed").unwrap());
         assert!(!rendered.contains("stale"), "{rendered}");
-        assert_eq!(rendered.matches("#[range=").count(), 8);
+        assert_eq!(rendered.matches("#[range=").count(), 9);
         app.activate("/tmp/starmux-current.sock", "client", "sp9")
             .unwrap();
         assert_eq!(

@@ -1131,6 +1131,101 @@ fn pi_context_open_command_requires_one_file_argument_and_separate_placeholders(
 }
 
 #[test]
+fn pi_context_names_the_selected_session_above_its_entries() {
+    let sidebar = Sidebar::from_toml("modules = [\"pi-context\"]").unwrap();
+    let context = starmux::PiContext {
+        plans: vec![starmux::PiPlan {
+            title: "Inspect hierarchy".into(),
+            path: "/missing/plan.md".into(),
+        }],
+        skills: vec![starmux::PiSkill {
+            name: "vocabulary".into(),
+            path: None,
+        }],
+        ..Default::default()
+    };
+    let sessions = [
+        PiSession {
+            name: "another session".into(),
+            project: "/project".into(),
+            state: "idle".into(),
+            location: None,
+            target: None,
+            selected: false,
+        },
+        PiSession {
+            name: "Plan #[fg=red] dividers".into(),
+            project: "/project".into(),
+            state: "working".into(),
+            location: None,
+            target: None,
+            selected: true,
+        },
+    ];
+    let render = |context: Option<&starmux::PiContext>, pi_sessions: &[PiSession]| {
+        sidebar
+            .render_with_inputs(
+                &snapshot(),
+                starmux::RenderInputs {
+                    pi_sessions,
+                    usage_rows: &[],
+                    gob_jobs: &[],
+                    context,
+                    states: &[],
+                    commands: &BTreeMap::new(),
+                    git: None,
+                    debug: None,
+                },
+            )
+            .unwrap()
+    };
+    let rendered = render(Some(&context), &sessions);
+    let lines: Vec<_> = rendered.split("#[nl]").collect();
+    let title = lines
+        .iter()
+        .position(|line| line.contains(" π Plan ##[fg=red] dividers"))
+        .unwrap();
+    let plans = lines
+        .iter()
+        .position(|line| line.contains(" Plans"))
+        .unwrap();
+    let item = lines
+        .iter()
+        .position(|line| line.contains("Inspect hierarchy"))
+        .unwrap();
+    let skills = lines
+        .iter()
+        .position(|line| line.contains(" Skills"))
+        .unwrap();
+    assert!(title < plans && plans < item && item < skills, "{rendered}");
+    assert!(!rendered.contains("another session"), "{rendered}");
+    assert!(lines[title].contains("#[range=user|sv "), "{rendered}");
+    assert!(render(Some(&context), &[]).contains(" π"));
+    for width in [16, 24] {
+        let mut narrow = snapshot();
+        narrow.width = width;
+        let output = sidebar
+            .render_with_inputs(
+                &narrow,
+                starmux::RenderInputs {
+                    pi_sessions: &sessions,
+                    usage_rows: &[],
+                    gob_jobs: &[],
+                    context: Some(&context),
+                    states: &[],
+                    commands: &BTreeMap::new(),
+                    git: None,
+                    debug: None,
+                },
+            )
+            .unwrap();
+        assert!(output.contains(" π Plan ##[fg=red"), "{output}");
+    }
+    assert!(!render(Some(&starmux::PiContext::default()), &sessions).contains(" π"));
+    assert!(!render(None, &sessions).contains(" π"));
+}
+
+#[test]
 fn pi_context_pr_state_icons_use_distinct_styles() {
     let sidebar = Sidebar::from_toml("modules = [\"pi-context\"]").unwrap();
     let context = starmux::PiContext {
@@ -1224,7 +1319,7 @@ fn pi_context_icons_and_clipping_work_at_narrow_widths() {
                 "{rendered}"
             );
         }
-        assert_eq!(rendered.matches("#[range=").count(), 6, "{rendered}");
+        assert_eq!(rendered.matches("#[range=").count(), 7, "{rendered}");
         for row in rendered.split("#[nl]").filter(|row| {
             ["sl", "sr", "ss"]
                 .iter()
@@ -1239,8 +1334,8 @@ fn pi_context_icons_and_clipping_work_at_narrow_widths() {
                 .unwrap();
             assert_eq!(token.len(), 14);
         }
-        assert_eq!(rendered.matches("#[nl]").count(), 8);
-        assert!(!rendered.contains(" Context"), "{rendered}");
+        assert_eq!(rendered.matches("#[nl]").count(), 9);
+        assert!(rendered.contains(" π"), "{rendered}");
         if width == 30 {
             assert!(rendered.contains("owner/repo##42 draft"), "{rendered}");
         }

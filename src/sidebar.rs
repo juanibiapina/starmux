@@ -98,6 +98,7 @@ struct PiContextConfig {
     disabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     open_command: Option<Vec<String>>,
+    heading_style: String,
     category_style: String,
     text_style: String,
     plan_style: String,
@@ -114,6 +115,7 @@ impl Default for PiContextConfig {
         Self {
             disabled: false,
             open_command: None,
+            heading_style: "fg=magenta,bold".into(),
             category_style: "dim".into(),
             text_style: "default".into(),
             plan_style: "fg=magenta".into(),
@@ -706,6 +708,7 @@ impl Sidebar {
             &config.usage.critical_bar_style,
             &config.usage.stale_style,
             &config.usage.unavailable_style,
+            &config.pi_context.heading_style,
             &config.pi_context.category_style,
             &config.pi_context.text_style,
             &config.pi_context.plan_style,
@@ -973,12 +976,18 @@ impl Sidebar {
                 }
                 "pi-context" if !self.config.pi_context.disabled => {
                     if let Some(context) = context {
-                        rows.extend(self.render_pi_context(
-                            context,
-                            states,
-                            snapshot.width,
-                            &snapshot.current_pane,
-                        )?);
+                        rows.extend(
+                            self.render_pi_context(
+                                context,
+                                pi_sessions
+                                    .iter()
+                                    .find(|session| session.selected)
+                                    .map(|session| session.name.as_str()),
+                                states,
+                                snapshot.width,
+                                &snapshot.current_pane,
+                            )?,
+                        );
                     }
                 }
                 "gob" if !self.config.gob.disabled => {
@@ -1611,6 +1620,7 @@ impl Sidebar {
     fn render_pi_context(
         &self,
         context: &crate::PiContext,
+        selected_name: Option<&str>,
         states: &[crate::pr_state::PrState],
         width: usize,
         pane: &str,
@@ -1655,6 +1665,8 @@ impl Sidebar {
             });
             Ok(())
         };
+        let heading = selected_name.map_or_else(|| " π".to_owned(), |name| format!(" π {name}"));
+        push(heading, &cfg.heading_style, None, None)?;
         if !context.plans.is_empty() {
             push(" Plans".into(), &cfg.category_style, None, None)?;
             for (index, plan) in context.plans.iter().enumerate() {

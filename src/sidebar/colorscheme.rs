@@ -25,6 +25,7 @@ selected_style = "fg=accent,bg=border,bold"
 selected_fill = "border"
 
 [pi-context]
+heading_style = "fg=accent,bold"
 category_style = "fg=muted"
 text_style = "fg=text"
 plan_style = "fg=accent"
