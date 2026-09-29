@@ -1030,7 +1030,9 @@ impl Sidebar {
         let mut spacer = None;
         for name in self.modules() {
             match name.as_str() {
-                "top" if !self.config.top.disabled => rows.extend(self.render_top(top)?),
+                "top" if !self.config.top.disabled => {
+                    rows.extend(self.render_top(top, snapshot.width)?)
+                }
                 "sessions" if !self.sessions.config.disabled => {
                     rows.extend(self.render_sessions(snapshot)?)
                 }
@@ -1115,7 +1117,11 @@ impl Sidebar {
         clippy::too_many_lines,
         reason = "Host rows share width, theme, and state decisions"
     )]
-    fn render_top(&self, status: Option<&crate::top::HostStatus>) -> Result<Vec<Row>, String> {
+    fn render_top(
+        &self,
+        status: Option<&crate::top::HostStatus>,
+        width: usize,
+    ) -> Result<Vec<Row>, String> {
         let config = &self.config.top;
         if config.metrics.is_empty() {
             return Ok(Vec::new());
@@ -1176,25 +1182,29 @@ impl Sidebar {
             } else {
                 &config.value_style
             };
+            let percent = value.map_or_else(|| "--".into(), |v| format!("{v}%"));
+            let label = format!(" {icon} {label}   {percent:>4}");
             let mut spans = vec![Span {
-                text: format!(
-                    " {icon} {label}   {}",
-                    value.map_or_else(|| "--".into(), |v| format!("{v}%"))
-                ),
+                text: label.clone(),
                 style: style(color)?,
             }];
             if let Some(value) = value {
-                if metric != "battery" {
-                    let filled = usize::from(value).div_ceil(13).min(8);
-                    spans.push(Span {
-                        text: format!("  {}", "▰".repeat(filled)),
-                        style: style(color)?,
-                    });
-                    spans.push(Span {
-                        text: "▱".repeat(8 - filled),
-                        style: style(&config.track_style)?,
-                    });
+                let available = width.saturating_sub(UnicodeWidthStr::width(label.as_str()) + 2);
+                let length = if metric == "battery" && available > suffix.len() {
+                    8.min(available - suffix.len())
                 } else {
+                    8.min(available)
+                };
+                let filled = (usize::from(value) * length).div_ceil(13 * 8).min(length);
+                spans.push(Span {
+                    text: format!("  {}", "▰".repeat(filled)),
+                    style: style(color)?,
+                });
+                spans.push(Span {
+                    text: "▱".repeat(length - filled),
+                    style: style(&config.track_style)?,
+                });
+                if metric == "battery" {
                     spans.push(Span {
                         text: suffix.into(),
                         style: style(&config.track_style)?,

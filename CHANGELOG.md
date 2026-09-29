@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Align host status bars across percentages and show a battery bar.
 - Show the specific error and configuration parse details in the sidebar when a render fails.
 
 ## [0.5.0] - 2026-09-28
