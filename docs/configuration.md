@@ -2,7 +2,7 @@
 
 Starmux reads `$XDG_CONFIG_HOME/starmux.toml`, falling back to `~/.config/starmux.toml`. Set `STARMUX_CONFIG` to select another file. An absent or empty file uses portable defaults.
 
-Run `starmux print-config` to print the complete configuration. Run `starmux check-config` to validate module names, formats, styles, palettes, and tmux option aliases.
+Run `starmux print-config` to print the complete configuration. Run `starmux check-config` to validate module names, formats, styles, palettes, and tmux option aliases. If a sidebar render fails, Starmux shows the error in red, including configuration parse details. It wraps long lines to the sidebar width; rows beyond the available height may be hidden. Run `starmux check-config` for the full configuration error, or run the failing `starmux render-query` command in a terminal for other errors.
 
 ## Modules
 

@@ -2,6 +2,8 @@
 
 use starmux::{Application, Focus, ProcessTmux, Sidebar};
 use std::{collections::BTreeMap, path::PathBuf};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 fn config_path() -> Option<PathBuf> {
     if let Some(value) = std::env::var_os("STARMUX_CONFIG") {
@@ -240,14 +242,55 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
+fn error_width(args: &[String]) -> usize {
+    args.iter()
+        .filter_map(|arg| arg.strip_prefix("--width="))
+        .find_map(|value| {
+            value
+                .parse::<usize>()
+                .ok()
+                .filter(|width| (1..=300).contains(width))
+        })
+        .unwrap_or(30)
+}
+
+fn render_error(error: &str, width: usize) -> String {
+    let mut result = String::from("#[fg=red]");
+    let mut column = 0;
+    for (index, line) in error.split('\n').enumerate() {
+        if index > 0 {
+            result.push_str("#[nl]#[fg=red]");
+            column = 0;
+        }
+        for grapheme in line.graphemes(true) {
+            let text = if grapheme.chars().any(char::is_control) {
+                " "
+            } else {
+                grapheme
+            };
+            let size = UnicodeWidthStr::width(text);
+            if column > 0 && column + size > width {
+                result.push_str("#[nl]#[fg=red]");
+                column = 0;
+            }
+            result.push_str(&text.replace('#', "##"));
+            column += size;
+        }
+    }
+    result.push_str("#[default]");
+    result
+}
+
 fn main() {
     if let Err(error) = run() {
-        eprintln!("starmux: {error}");
-        if !matches!(
-            std::env::args().nth(1).as_deref(),
-            Some("scroll" | "scroll-event" | "scroll-worker")
-        ) {
-            println!("#[fg=red] starmux: input error#[default]");
+        let diagnostic = format!("starmux: {error}");
+        eprintln!("{diagnostic}");
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        if args
+            .first()
+            .is_some_and(|command| command == "render-query")
+        {
+            println!("{}", render_error(&diagnostic, error_width(&args[1..])));
         }
         std::process::exit(2);
     }

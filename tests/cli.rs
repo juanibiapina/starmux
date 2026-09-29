@@ -142,6 +142,73 @@ fn render_query_requires_a_valid_explicit_width_before_calling_tmux() {
     }
 }
 
+#[test]
+fn render_query_shows_multiline_config_diagnostic_without_interpreting_tmux_text() {
+    let root = std::env::temp_dir().join(format!(
+        "starmux-error-{}-#[fg=green]#{{client_name}}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("config.toml");
+    std::fs::write(&path, "modules = [\"sessions\"\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_starmux"))
+        .args([
+            "render-query",
+            "--width=300",
+            "--socket=/dev/nonexistent",
+            "--client=none",
+        ])
+        .env("STARMUX_CONFIG", &path)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stderr.contains(&path.display().to_string()), "{stderr}");
+    assert!(stderr.contains("line 1"), "{stderr}");
+    assert!(stdout.contains("##[fg=green]##{client_name}"), "{stdout}");
+    assert!(stdout.contains("line 1"), "{stdout}");
+    assert!(stdout.contains("#[nl]"), "{stdout}");
+    assert!(!stdout.contains("input error"));
+    assert_eq!(stdout.matches("##[fg=green]##{client_name}").count(), 1);
+
+    let checked = Command::new(env!("CARGO_BIN_EXE_starmux"))
+        .arg("check-config")
+        .env("STARMUX_CONFIG", &path)
+        .output()
+        .unwrap();
+    assert_eq!(checked.status.code(), Some(2));
+    assert!(checked.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&checked.stderr).contains("line 1"));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn render_query_wraps_tmux_query_failures_and_keeps_full_stderr() {
+    let output = binary(&[
+        "render-query",
+        "--width=20",
+        "--socket=/dev/nonexistent-starmux-socket",
+        "--client=none",
+    ]);
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stderr.contains("tmux query failed"), "{stderr}");
+    assert!(
+        stderr.contains("/dev/nonexistent-starmux-socket"),
+        "{stderr}"
+    );
+    assert!(stdout.contains("#[nl]"), "{stdout}");
+    assert!(!stdout.contains("input error"));
+    let visible = stdout
+        .replace("#[fg=red]", "")
+        .replace("#[nl]", "")
+        .replace("#[default]", "")
+        .replace("##", "#");
+    assert_eq!(visible.trim_end(), stderr.trim_end());
+}
+
 #[cfg(unix)]
 #[test]
 fn usage_click_opens_only_a_known_provider_page() {

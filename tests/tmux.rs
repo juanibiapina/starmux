@@ -24,6 +24,103 @@ fn attached_client(socket: &str, target: &str) -> std::process::Command {
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
+fn attached_side_status_shows_config_error_details() {
+    use std::{
+        fs,
+        process::{Command, Stdio},
+        thread,
+        time::Duration,
+    };
+
+    let root = std::env::temp_dir().join(format!("starmux-live-error-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let socket = format!("starmux-error-{}", std::process::id());
+    let binary = env!("CARGO_BIN_EXE_starmux");
+    let config = root.join("config.toml");
+    fs::write(&config, "modules = [\"sessions\"\n").unwrap();
+    let adapter = String::from_utf8(
+        Command::new(binary)
+            .args(["init", "tmux"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .replace("starmux render-query", &format!("{binary} render-query"));
+    let adapter_path = root.join("adapter.conf");
+    fs::write(&adapter_path, adapter).unwrap();
+    let tmux = |args: &[&str]| {
+        let output = Command::new("tmux")
+            .args(["-L", &socket])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    tmux(&[
+        "-f",
+        "/dev/null",
+        "new-session",
+        "-d",
+        "-s",
+        "main",
+        "sleep 15",
+    ]);
+    let supported = Command::new("tmux")
+        .args(["-L", &socket, "show-options", "-gv", "side-status"])
+        .output()
+        .unwrap()
+        .status
+        .success();
+    if !supported {
+        tmux(&["kill-server"]);
+        fs::remove_dir_all(root).unwrap();
+        assert_ne!(
+            std::env::var_os("STARMUX_REQUIRE_SIDE_STATUS"),
+            Some("1".into())
+        );
+        return;
+    }
+    tmux(&[
+        "set-environment",
+        "-g",
+        "STARMUX_CONFIG",
+        config.to_str().unwrap(),
+    ]);
+    tmux(&["set", "-g", "status-interval", "1"]);
+    tmux(&["set", "-g", "side-status", "left"]);
+    tmux(&["set", "-g", "side-status-width", "30"]);
+    tmux(&["source-file", adapter_path.to_str().unwrap()]);
+    let capture = root.join("client.out");
+    let mut client = attached_client(&socket, "main")
+        .env("TERM", "xterm-256color")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::from(fs::File::create(&capture).unwrap()))
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let _input = client.stdin.take();
+    let mut paint = String::new();
+    for _ in 0..35 {
+        thread::sleep(Duration::from_millis(100));
+        paint = fs::read_to_string(&capture).unwrap();
+        if paint.contains("starmux:") && paint.contains("invalid array") {
+            break;
+        }
+    }
+    tmux(&["kill-server"]);
+    let _ = client.wait();
+    fs::remove_dir_all(root).unwrap();
+    assert!(paint.contains("starmux:") && paint.contains("invalid array"));
+    assert!(!paint.contains("input error"));
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
 fn gob_failures_leave_other_rows_and_diagnostics_available() {
     use std::{
         fs,
