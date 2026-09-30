@@ -1,5 +1,5 @@
 //! Provider adapters for subscription usage. Credentials stay in the worker process.
-use super::{FetchError, UsageSnapshot, UsageWindow};
+use super::{FetchError, RefreshFailure, UsageSnapshot, UsageWindow};
 use serde_json::Value;
 use std::{fs, path::PathBuf, time::Duration};
 
@@ -32,7 +32,10 @@ fn host_token(entry: &Value) -> Option<String> {
 }
 
 fn failure() -> FetchError {
-    FetchError { retry_after: None }
+    FetchError {
+        retry_after: None,
+        kind: RefreshFailure::RefreshFailed,
+    }
 }
 fn snapshot(
     provider: &str,
@@ -131,7 +134,14 @@ fn request(
             .map(Duration::from_secs);
         return Err(RequestError {
             status: Some(status),
-            fetch: FetchError { retry_after },
+            fetch: FetchError {
+                retry_after,
+                kind: if status == 401 {
+                    RefreshFailure::SignInAgain
+                } else {
+                    RefreshFailure::RefreshFailed
+                },
+            },
         });
     }
     response
@@ -214,42 +224,64 @@ mod tests {
     }
 
     #[test]
-    fn sends_provider_request_and_observes_retry_after() {
+    fn provider_request_distinguishes_rejected_sign_in_from_other_failures() {
         use std::io::{Read, Write};
         use std::net::TcpListener;
 
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .unwrap();
-            let mut buffer = [0; 4096];
-            let size = stream.read(&mut buffer).unwrap();
-            let request = String::from_utf8_lossy(&buffer[..size]).to_ascii_lowercase();
-            assert!(request.starts_with("post /usage http/1.1"));
-            assert!(request.contains("authorization: bearer test-token"));
-            assert!(request.contains("content-type: application/json"));
-            stream.write_all(b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 120\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
-        });
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .timeout_global(Some(Duration::from_secs(2)))
-            .build()
-            .into();
-        let error = request(
-            &agent,
-            &format!("http://{address}/usage"),
-            "Bearer test-token",
-            &[],
-            Some(&json!({})),
-        )
-        .err()
-        .unwrap();
-        server.join().unwrap();
-        assert_eq!(error.status, Some(429));
-        assert_eq!(error.fetch.retry_after, Some(Duration::from_secs(120)));
+        for (response, status, kind, retry) in [
+            (
+                "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                401,
+                RefreshFailure::SignInAgain,
+                None,
+            ),
+            (
+                "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                403,
+                RefreshFailure::RefreshFailed,
+                None,
+            ),
+            (
+                "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 120\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                429,
+                RefreshFailure::RefreshFailed,
+                Some(Duration::from_secs(120)),
+            ),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut buffer = [0; 4096];
+                let size = stream.read(&mut buffer).unwrap();
+                let request = String::from_utf8_lossy(&buffer[..size]).to_ascii_lowercase();
+                assert!(request.starts_with("post /usage http/1.1"));
+                assert!(request.contains("authorization: bearer test-token"));
+                assert!(request.contains("content-type: application/json"));
+                stream.write_all(response.as_bytes()).unwrap();
+            });
+            let agent: ureq::Agent = ureq::Agent::config_builder()
+                .http_status_as_error(false)
+                .timeout_global(Some(Duration::from_secs(2)))
+                .build()
+                .into();
+            let error = request(
+                &agent,
+                &format!("http://{address}/usage"),
+                "Bearer test-token",
+                &[],
+                Some(&json!({})),
+            )
+            .err()
+            .unwrap();
+            server.join().unwrap();
+            assert_eq!(error.status, Some(status));
+            assert_eq!(error.fetch.kind, kind);
+            assert_eq!(error.fetch.retry_after, retry);
+        }
     }
 
     #[test]

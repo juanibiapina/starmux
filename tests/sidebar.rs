@@ -1,4 +1,4 @@
-use starmux::usage::{UsageRow, UsageWindow};
+use starmux::usage::{RefreshFailure, UsageRow, UsageWindow};
 use starmux::{PiSession, PiTarget, Session, Sidebar, Snapshot, Window};
 use std::collections::BTreeMap;
 
@@ -637,6 +637,7 @@ providers = ["codex"]
         stale: false,
         fetched_at: Some(100),
         unavailable: false,
+        refresh_failure: None,
     };
     let pi = PiSession {
         state: "idle".into(),
@@ -692,6 +693,7 @@ fn usage_defaults_show_plan_days_remaining_time_and_day_blocks() {
         stale: false,
         fetched_at: Some(now * 1000),
         unavailable: false,
+        refresh_failure: None,
     };
     let rendered = sidebar
         .render_with_usage(&snapshot(), &[], &[usage])
@@ -724,6 +726,7 @@ fn low_usage_uses_a_bottom_fill_over_the_empty_bar_track() {
         stale: false,
         fetched_at: Some(now * 1000),
         unavailable: false,
+        refresh_failure: None,
     };
     let rendered = sidebar
         .render_with_usage(&snapshot(), &[], &[usage])
@@ -768,6 +771,7 @@ fn default_usage_columns_align_across_providers() {
         stale: false,
         fetched_at: Some(now * 1000),
         unavailable: false,
+        refresh_failure: None,
     };
     let rendered = sidebar
         .render_with_usage(
@@ -861,6 +865,7 @@ critical_bar_style = "fg=danger"
         stale: false,
         fetched_at: Some(now * 1000),
         unavailable: false,
+        refresh_failure: None,
     };
     let render = |percent, reset_at| {
         sidebar
@@ -922,6 +927,7 @@ stale_style = "fg=muted"
                 - if stale { 31 * 60_000 } else { 60_000 },
         ),
         unavailable: false,
+        refresh_failure: None,
     };
     let mut input = snapshot();
     input.width = 50;
@@ -957,6 +963,7 @@ stale_style = "fg=muted"
         stale: false,
         fetched_at: None,
         unavailable: true,
+        refresh_failure: None,
     };
     let unavailable_rendered = sidebar
         .render_with_usage(&input, &[], &[unavailable])
@@ -985,6 +992,7 @@ fn codex_heading_shows_available_resets() {
         stale: false,
         fetched_at: None,
         unavailable: false,
+        refresh_failure: None,
     };
     for (count, text) in [
         (Some(1), " · 1 reset"),
@@ -1014,6 +1022,65 @@ fn codex_heading_shows_available_resets() {
 }
 
 #[test]
+fn failed_codex_refresh_keeps_cached_percentage_with_a_visible_status() {
+    let sidebar =
+        Sidebar::from_toml("modules = [\"usage\"]\n[usage]\nproviders = [\"codex\"]").unwrap();
+    let mut input = snapshot();
+    input.width = 70;
+    let mut usage = UsageRow {
+        provider: "codex".into(),
+        display_name: "Codex Plan".into(),
+        available_resets: Some(2),
+        windows: vec![UsageWindow {
+            label: "5h".into(),
+            used_percent: 100.0,
+            duration_seconds: Some(18_000),
+            reset_at: None,
+        }],
+        stale: false,
+        fetched_at: Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64
+                - 60_000,
+        ),
+        unavailable: false,
+        refresh_failure: Some(RefreshFailure::SignInAgain),
+    };
+    let failed = sidebar
+        .render_with_usage(&input, &[], &[usage.clone()])
+        .unwrap();
+    assert!(failed.contains("Codex Plan (sign in again)"), "{failed}");
+    assert!(failed.contains("cached 1m old"), "{failed}");
+    assert!(failed.contains("100%"), "{failed}");
+    assert!(!failed.contains(" · 2 resets"), "{failed}");
+    assert!(failed.contains("#[range=user|su4 ]"), "{failed}");
+    input.width = 30;
+    let narrow = sidebar
+        .render_with_usage(&input, &[], &[usage.clone()])
+        .unwrap();
+    assert!(narrow.contains("sign in again)"), "{narrow}");
+    assert!(narrow.contains("cached 1m old"), "{narrow}");
+    input.width = 70;
+
+    usage.refresh_failure = None;
+    usage.windows[0].used_percent = 2.0;
+    let recovered = sidebar
+        .render_with_usage(&input, &[], &[usage.clone()])
+        .unwrap();
+    assert!(!recovered.contains("sign in again"), "{recovered}");
+    assert!(!recovered.contains("cached "), "{recovered}");
+    assert!(recovered.contains("2%"), "{recovered}");
+
+    usage.unavailable = true;
+    usage.windows.clear();
+    usage.refresh_failure = Some(RefreshFailure::RefreshFailed);
+    let unavailable = sidebar.render_with_usage(&input, &[], &[usage]).unwrap();
+    assert!(unavailable.contains("refresh failed"), "{unavailable}");
+}
+
+#[test]
 fn usage_plan_rows_link_to_their_provider_page() {
     let sidebar =
         Sidebar::from_toml("modules = [\"usage\"]\n[usage]\nproviders = [\"codex\"]").unwrap();
@@ -1033,6 +1100,7 @@ fn usage_plan_rows_link_to_their_provider_page() {
         stale: true,
         fetched_at: None,
         unavailable: false,
+        refresh_failure: None,
     };
     let rendered = sidebar
         .render_with_usage(&snapshot(), &[], &[usage])
@@ -1063,6 +1131,7 @@ fn usage_without_a_web_page_has_no_click_target() {
         stale: false,
         fetched_at: None,
         unavailable: false,
+        refresh_failure: None,
     };
     let rendered = sidebar
         .render_with_usage(&snapshot(), &[], &[usage])
@@ -1584,6 +1653,7 @@ providers = ["codex"]
         }],
         stale: false,
         unavailable: false,
+        refresh_failure: None,
         fetched_at: None,
     };
     let job = starmux::GobJob {

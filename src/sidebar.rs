@@ -1516,30 +1516,38 @@ impl Sidebar {
             };
             let heading_style = if usage.unavailable {
                 &self.config.usage.unavailable_style
-            } else if usage.stale {
+            } else if usage.stale || usage.refresh_failure.is_some() {
                 &self.config.usage.stale_style
             } else {
                 &self.config.usage.provider_style
             };
-            let suffix = if usage.unavailable {
-                " (unavailable)".to_owned()
-            } else if usage.stale {
-                usage.fetched_at.map_or_else(String::new, |fetched_at| {
+            let failure = usage.refresh_failure.map(|kind| match kind {
+                crate::usage::RefreshFailure::SignInAgain => "sign in again",
+                crate::usage::RefreshFailure::RefreshFailed => "refresh failed",
+            });
+            let age = if usage.stale || failure.is_some() {
+                usage.fetched_at.map(|fetched_at| {
                     format!(
-                        " ({} old)",
+                        "{} old",
                         format_usage_age((now.as_millis() as u64).saturating_sub(fetched_at))
                     )
                 })
             } else {
-                String::new()
+                None
+            };
+            let suffix = match (failure, age.as_deref()) {
+                (Some(failure), _) => format!(" ({failure})"),
+                (None, Some(age)) => format!(" ({age})"),
+                (None, None) if usage.unavailable => " (unavailable)".to_owned(),
+                (None, None) => String::new(),
             };
             let heading_style =
                 usage_normal_style(&resolve_style(heading_style, "default", &self.palette)?);
             let mut spans = vec![Span {
-                text: format!(" {}", usage.display_name),
-                style: heading_style.clone(),
+                text: format!(" {}{suffix}", usage.display_name),
+                style: heading_style,
             }];
-            if provider == "codex" && !usage.unavailable {
+            if provider == "codex" && !usage.unavailable && failure.is_none() {
                 if let Some(count) = usage.available_resets {
                     let noun = if count == 1 { "reset" } else { "resets" };
                     spans.push(Span {
@@ -1552,14 +1560,6 @@ impl Sidebar {
                     });
                 }
             }
-            if spans.len() == 1 {
-                spans[0].text.push_str(&suffix);
-            } else if !suffix.is_empty() {
-                spans.push(Span {
-                    text: suffix,
-                    style: heading_style,
-                });
-            }
             let page_range =
                 crate::usage::page_token(provider).map(|token| Range::UsagePage(token.into()));
             rows.push(Row {
@@ -1570,6 +1570,25 @@ impl Sidebar {
                 focus: false,
                 selected: false,
             });
+            if failure.is_some() {
+                if let Some(age) = age {
+                    rows.push(Row {
+                        divider: false,
+                        spans: vec![Span {
+                            text: format!("  cached {age}"),
+                            style: usage_normal_style(&resolve_style(
+                                &self.config.usage.stale_style,
+                                "default",
+                                &self.palette,
+                            )?),
+                        }],
+                        fill: None,
+                        range: page_range.clone(),
+                        focus: false,
+                        selected: false,
+                    });
+                }
+            }
             let window_style = if usage.stale {
                 &self.config.usage.stale_style
             } else {

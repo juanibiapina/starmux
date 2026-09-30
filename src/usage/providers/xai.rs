@@ -63,14 +63,10 @@ fn fetch_windows(
         ("Accept", "application/json"),
         ("x-xai-token-auth", "xai-grok-cli"),
     ];
-    let monthly = request(agent, monthly_url, bearer, &headers, None);
-    if let Err(error) = &monthly {
-        if matches!(error.status, Some(401 | 403)) {
-            return Err(FetchError {
-                retry_after: error.fetch.retry_after,
-            });
-        }
-    }
+    let monthly = match request(agent, monthly_url, bearer, &headers, None) {
+        Err(error) if matches!(error.status, Some(401 | 403)) => return Err(error.into()),
+        result => result,
+    };
     let mut result = monthly.as_ref().ok().map(month_windows).unwrap_or_default();
     let weekly = request(agent, weekly_url, bearer, &headers, None);
     match weekly {

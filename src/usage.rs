@@ -97,11 +97,20 @@ pub struct UsageRow {
     pub stale: bool,
     pub fetched_at: Option<u64>,
     pub unavailable: bool,
+    pub refresh_failure: Option<RefreshFailure>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RefreshFailure {
+    SignInAgain,
+    RefreshFailed,
 }
 
 #[derive(Debug)]
 pub(crate) struct FetchError {
     pub retry_after: Option<Duration>,
+    pub kind: RefreshFailure,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -115,6 +124,8 @@ struct State {
     version: u8,
     last_good: Option<LastGood>,
     retry_at: Option<u64>,
+    #[serde(default)]
+    refresh_failure: Option<RefreshFailure>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -332,6 +343,7 @@ fn row(provider: &str, state: &State) -> UsageRow {
             stale: now_ms().saturating_sub(good.fetched_at) > STALE_MS,
             fetched_at: Some(good.fetched_at),
             unavailable: false,
+            refresh_failure: state.refresh_failure,
         },
         None => UsageRow {
             provider: provider.to_owned(),
@@ -341,6 +353,7 @@ fn row(provider: &str, state: &State) -> UsageRow {
             stale: false,
             fetched_at: None,
             unavailable: true,
+            refresh_failure: state.refresh_failure,
         },
     }
 }
@@ -424,6 +437,7 @@ fn refresh_owned_with(
                 usage: snapshot,
             }),
             retry_at: None,
+            refresh_failure: None,
         },
         Err(error) => State {
             version: 1,
@@ -436,6 +450,7 @@ fn refresh_owned_with(
                         .as_millis() as u64,
                 ),
             ),
+            refresh_failure: Some(error.kind),
         },
     };
     write_state(dir, provider, &next, token)
@@ -513,6 +528,7 @@ mod tests {
                 usage: snapshot(),
             }),
             retry_at: None,
+            refresh_failure: None,
         };
         write_state(&dir, "codex", &state, &lease).unwrap();
         assert_eq!(
@@ -528,6 +544,44 @@ mod tests {
     }
 
     #[test]
+    fn missing_cache_shows_the_failed_refresh_and_old_cache_still_loads() {
+        let dir = temp_dir();
+        let lease = try_lease(&dir, "codex").unwrap();
+        refresh_owned_with("codex", &dir, &lease, |_, _| {
+            Err(FetchError {
+                retry_after: None,
+                kind: RefreshFailure::RefreshFailed,
+            })
+        })
+        .unwrap();
+        release_lease(&dir, "codex", &lease);
+        let failed = &resolve(&["codex".into()], &dir, false)[0];
+        assert!(failed.unavailable);
+        assert_eq!(failed.refresh_failure, Some(RefreshFailure::RefreshFailed));
+
+        let mut legacy = serde_json::to_value(State {
+            version: 1,
+            last_good: Some(LastGood {
+                fetched_at: now_ms(),
+                usage: snapshot(),
+            }),
+            retry_at: None,
+            refresh_failure: None,
+        })
+        .unwrap();
+        legacy.as_object_mut().unwrap().remove("refresh_failure");
+        fs::write(
+            state_path(&dir, "codex"),
+            serde_json::to_vec(&legacy).unwrap(),
+        )
+        .unwrap();
+        let loaded = &resolve(&["codex".into()], &dir, false)[0];
+        assert_eq!(loaded.windows[0].used_percent, 37.0);
+        assert_eq!(loaded.refresh_failure, None);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn usage_only_becomes_stale_after_thirty_minutes() {
         let now = now_ms();
         let mut state = State {
@@ -537,6 +591,7 @@ mod tests {
                 usage: snapshot(),
             }),
             retry_at: Some(now + 60_000),
+            refresh_failure: None,
         };
         assert!(!row("codex", &state).stale);
         state.last_good.as_mut().unwrap().fetched_at = now - 31 * 60_000;
@@ -557,6 +612,7 @@ mod tests {
                     usage: snapshot(),
                 }),
                 retry_at: None,
+                refresh_failure: None,
             },
             &lease,
         )
@@ -564,6 +620,7 @@ mod tests {
         refresh_owned_with("codex", &dir, &lease, |_, _| {
             Err(FetchError {
                 retry_after: Some(Duration::from_secs(120)),
+                kind: RefreshFailure::SignInAgain,
             })
         })
         .unwrap();
@@ -571,12 +628,27 @@ mod tests {
         let row = &resolve(&["codex".into()], &dir, false)[0];
         assert!(!row.stale);
         assert_eq!(row.windows[0].used_percent, 37.0);
+        assert_eq!(row.refresh_failure, Some(RefreshFailure::SignInAgain));
         let next = try_lease(&dir, "codex").unwrap();
         refresh_owned_with("codex", &dir, &next, |_, _| {
             panic!("retry deadline must suppress fetch")
         })
         .unwrap();
         release_lease(&dir, "codex", &next);
+        let lease = try_lease(&dir, "codex").unwrap();
+        let mut state = read_state(&dir, "codex");
+        state.retry_at = None;
+        write_state(&dir, "codex", &state, &lease).unwrap();
+        refresh_owned_with("codex", &dir, &lease, |_, _| {
+            let mut updated = snapshot();
+            updated.windows[0].used_percent = 2.0;
+            Ok(updated)
+        })
+        .unwrap();
+        release_lease(&dir, "codex", &lease);
+        let recovered = &resolve(&["codex".into()], &dir, false)[0];
+        assert_eq!(recovered.windows[0].used_percent, 2.0);
+        assert_eq!(recovered.refresh_failure, None);
         fs::remove_dir_all(dir).unwrap();
     }
 }
