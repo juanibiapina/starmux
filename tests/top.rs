@@ -143,18 +143,18 @@ fn top_shows_battery_and_keeps_values_when_the_sidebar_is_narrow() {
     };
     let wide = render(&sidebar, Some(&status), 30);
     assert!(
-        wide.contains("BAT") && wide.contains("19%") && wide.contains("charging"),
+        wide.contains("BAT") && wide.contains("19%") && wide.contains("󰂄"),
         "{wide}"
     );
     assert!(wide.contains("75s old") && wide.contains("--"), "{wide}");
     let battery = metric_row(&wide, "BAT");
     assert_eq!(
         battery.chars().filter(|&ch| ch == '▰' || ch == '▱').count(),
-        6
+        8
     );
     assert_eq!(bar_column(&battery), 15);
     assert!(
-        battery.contains("▰") && battery.ends_with(" charging"),
+        battery.contains("▰") && !battery.contains("charging"),
         "{wide}"
     );
     let narrow = render(&sidebar, Some(&status), 15);
@@ -163,6 +163,7 @@ fn top_shows_battery_and_keeps_values_when_the_sidebar_is_narrow() {
         "{narrow}"
     );
     assert!(!metric_row(&narrow, "BAT").contains('▰'));
+    assert!(UnicodeWidthStr::width(metric_row(&narrow, "BAT").as_str()) <= 15);
     let compact = metric_row(&render(&sidebar, Some(&status), 16), "BAT");
     assert!(compact.contains("19%  ▰") && !compact.contains("charging"));
     assert!(UnicodeWidthStr::width(compact.as_str()) <= 16);
@@ -174,15 +175,62 @@ fn top_shows_battery_and_keeps_values_when_the_sidebar_is_narrow() {
     };
     let critical = render(&sidebar, Some(&fresh), 30);
     assert!(critical.contains("#[fg=red]  ▰"), "{critical}");
-    let full = HostStatus {
-        battery: Some(Battery {
-            percent: 100,
-            charging: false,
-            full: true,
-        }),
-        ..fresh
-    };
-    assert!(metric_row(&render(&sidebar, Some(&full), 30), "BAT").contains(" full"));
+}
+
+#[test]
+fn top_battery_icons_show_state_without_shortening_the_bar() {
+    let sidebar = Sidebar::from_toml("modules = [\"top\"]").unwrap();
+    for (percent, charging, full, icon) in [
+        (100, false, true, "󱟢"),
+        (98, true, true, "󱟢"),
+        (98, true, false, "󰂄"),
+        (19, true, false, "󰂄"),
+        (20, false, false, "󰁺"),
+        (21, false, false, "󰁹"),
+        (100, false, false, "󰁹"),
+    ] {
+        let status = HostStatus {
+            cpu: Some(12),
+            memory: Some(42),
+            battery: Some(Battery {
+                percent,
+                charging,
+                full,
+            }),
+            age_seconds: None,
+        };
+        for width in [15, 16, 30] {
+            let output = render(&sidebar, Some(&status), width);
+            let battery = metric_row(&output, "BAT");
+            assert!(battery.starts_with(&format!(" {icon} BAT")), "{output}");
+            assert!(battery.contains(&format!("{percent}%")), "{output}");
+            assert!(
+                !battery.contains("charging") && !battery.contains("full"),
+                "{output}"
+            );
+            assert!(
+                UnicodeWidthStr::width(battery.as_str()) <= width,
+                "{output}"
+            );
+            let cells = battery.chars().filter(|&ch| ch == '▰' || ch == '▱').count();
+            assert_eq!(
+                cells,
+                match width {
+                    15 => 0,
+                    16 => 1,
+                    _ => 8,
+                },
+                "{output}"
+            );
+            if width == 30 {
+                for metric in ["CPU", "MEM", "BAT"] {
+                    assert_eq!(bar_column(&metric_row(&output, metric)), 15, "{output}");
+                }
+            }
+        }
+    }
+    let unavailable = metric_row(&render(&sidebar, None, 30), "BAT");
+    assert!(unavailable.starts_with(" 󰁹 BAT") && unavailable.contains("--"));
 }
 
 #[test]

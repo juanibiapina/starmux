@@ -5,7 +5,7 @@
 ### Fixed
 
 - Show a sign-in warning when a usage credential is rejected, with the age of the last cached reading.
-- Align host status bars across percentages and show a battery bar.
+- Align host status bars across percentages and show a battery bar, with battery state in its icon instead of clipped text.
 - Show the specific error and configuration parse details in the sidebar when a render fails.
 
 ## [0.5.0] - 2026-09-28

@@ -1113,10 +1113,6 @@ impl Sidebar {
         self.modules()
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "Host rows share width, theme, and state decisions"
-    )]
     fn render_top(
         &self,
         status: Option<&crate::top::HostStatus>,
@@ -1144,12 +1140,14 @@ impl Sidebar {
             if metric == "battery" && battery.is_none() && status.is_some() {
                 continue;
             }
-            let (icon, label, value, suffix) = match metric.as_str() {
-                "cpu" => ("󰻠", "CPU", status.and_then(|s| s.cpu), ""),
-                "memory" => ("󰍛", "MEM", status.and_then(|s| s.memory), ""),
+            let (icon, label, value) = match metric.as_str() {
+                "cpu" => ("󰻠", "CPU", status.and_then(|s| s.cpu)),
+                "memory" => ("󰍛", "MEM", status.and_then(|s| s.memory)),
                 "battery" => (
                     battery.map_or("󰁹", |b| {
-                        if b.charging {
+                        if b.full {
+                            "󱟢"
+                        } else if b.charging {
                             "󰂄"
                         } else if b.percent <= 20 {
                             "󰁺"
@@ -1159,15 +1157,6 @@ impl Sidebar {
                     }),
                     "BAT",
                     battery.map(|b| b.percent),
-                    battery.map_or("", |b| {
-                        if b.full {
-                            " full"
-                        } else if b.charging {
-                            " charging"
-                        } else {
-                            ""
-                        }
-                    }),
                 ),
                 _ => continue,
             };
@@ -1190,11 +1179,7 @@ impl Sidebar {
             }];
             if let Some(value) = value {
                 let available = width.saturating_sub(UnicodeWidthStr::width(label.as_str()) + 2);
-                let length = if metric == "battery" && available > suffix.len() {
-                    8.min(available - suffix.len())
-                } else {
-                    8.min(available)
-                };
+                let length = 8.min(available);
                 let filled = (usize::from(value) * length).div_ceil(13 * 8).min(length);
                 spans.push(Span {
                     text: format!("  {}", "▰".repeat(filled)),
@@ -1204,12 +1189,6 @@ impl Sidebar {
                     text: "▱".repeat(length - filled),
                     style: style(&config.track_style)?,
                 });
-                if metric == "battery" {
-                    spans.push(Span {
-                        text: suffix.into(),
-                        style: style(&config.track_style)?,
-                    });
-                }
             }
             rows.push(Row {
                 divider: false,
