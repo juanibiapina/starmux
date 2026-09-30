@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-30
+
 ### Fixed
 
 - Show a sign-in warning when a usage credential is rejected, with the age of the last cached reading.
