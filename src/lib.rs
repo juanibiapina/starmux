@@ -1,5 +1,6 @@
 #![cfg_attr(not(test), warn(clippy::too_many_lines, unreachable_pub))]
 
+mod actions;
 mod cache;
 mod command;
 mod debug;

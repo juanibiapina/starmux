@@ -41,6 +41,10 @@ pub struct Snapshot {
 #[serde(default, deny_unknown_fields)]
 struct Config {
     modules: Vec<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    actions: BTreeMap<String, crate::actions::Action>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    clicks: Vec<crate::actions::Rule>,
     #[serde(skip_serializing_if = "Option::is_none")]
     cache_dir: Option<String>,
     top: TopConfig,
@@ -317,6 +321,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             modules: vec!["sessions".into(), "divider".into()],
+            actions: BTreeMap::new(),
+            clicks: Vec::new(),
             cache_dir: None,
             top: TopConfig::default(),
             configs: BTreeMap::new(),
@@ -476,6 +482,7 @@ pub struct Sidebar {
     usage_format: Vec<Node>,
     gob_format: Vec<Node>,
     git_lines: Vec<Vec<Node>>,
+    actions: crate::actions::Actions,
 }
 
 fn merge_missing(input: &mut toml::Value, defaults: toml::Value) {
@@ -532,6 +539,12 @@ impl Sidebar {
         reason = "Configuration validation and compiled formats form one atomic construction pass"
     )]
     fn compile(config: Config) -> Result<Self, String> {
+        let actions = crate::actions::Actions::compile(
+            &config.actions,
+            &config.clicks,
+            &config.configs.keys().cloned().collect(),
+            &config.commands.keys().cloned().collect(),
+        )?;
         let known = [
             "top",
             "sessions",
@@ -833,6 +846,7 @@ impl Sidebar {
             sessions,
             pi_workbench_format,
             usage_format,
+            actions,
             gob_format,
             git_lines,
         })
@@ -1014,6 +1028,27 @@ impl Sidebar {
         input: RenderInputs<'_>,
         offset: usize,
     ) -> Result<(String, usize, usize), String> {
+        let height = snapshot.client_height.saturating_sub(snapshot.status_lines);
+        let rows = self.rows(snapshot, input)?;
+        let text_color = self
+            .config
+            .colorscheme
+            .as_ref()
+            .and_then(|_| self.palette.get("text"));
+        let max_offset = rows.len().saturating_sub(height);
+        let offset = offset.min(max_offset);
+        Ok((
+            render_rows(
+                &rows[offset..rows.len().min(offset.saturating_add(height))],
+                snapshot.width,
+                text_color.map(String::as_str),
+            ),
+            offset,
+            max_offset,
+        ))
+    }
+
+    fn rows(&self, snapshot: &Snapshot, input: RenderInputs<'_>) -> Result<Vec<Row>, String> {
         let RenderInputs {
             top,
             pi_sessions,
@@ -1028,7 +1063,11 @@ impl Sidebar {
         validate_snapshot(snapshot)?;
         let mut rows = Vec::new();
         let mut spacer = None;
+        let mut instances = BTreeMap::<String, usize>::new();
         for name in self.modules() {
+            let instance = instances.entry(name.clone()).or_default();
+            *instance += 1;
+            let before = rows.len();
             match name.as_str() {
                 "top" if !self.config.top.disabled => {
                     rows.extend(self.render_top(top, snapshot.width)?)
@@ -1083,26 +1122,89 @@ impl Sidebar {
                 | "pi-context" | "debug" | "top" => {}
                 _ => return Err(format!("unknown module {name}")),
             }
+            for row in &mut rows[before..] {
+                row.identity.module = name.clone();
+                row.identity.instance = *instance;
+            }
         }
         // The two list marker newlines precede the visible side status rows.
         let height = snapshot.client_height.saturating_sub(snapshot.status_lines);
-        let rows = layout_rows(rows, spacer, height);
-        let text_color = self
-            .config
-            .colorscheme
-            .as_ref()
-            .and_then(|_| self.palette.get("text"));
-        let max_offset = rows.len().saturating_sub(height);
-        let offset = offset.min(max_offset);
-        Ok((
-            render_rows(
-                &rows[offset..rows.len().min(offset.saturating_add(height))],
-                snapshot.width,
-                text_color.map(String::as_str),
-            ),
-            offset,
-            max_offset,
-        ))
+        let mut rows = layout_rows(rows, spacer, height);
+        self.apply_actions(&mut rows, snapshot)?;
+        Ok(rows)
+    }
+
+    fn apply_actions(&self, rows: &mut [Row], snapshot: &Snapshot) -> Result<(), String> {
+        let mut padding_slot = 0;
+        let mut occurrences = BTreeMap::<String, usize>::new();
+        for row in rows {
+            if row.identity.module.is_empty() {
+                padding_slot += 1;
+                row.identity = crate::actions::Identity::new("padding").field("slot", padding_slot);
+                row.identity.module = "spacer".into();
+                row.identity.instance = 1;
+            }
+            let key = format!("{:?}", row.identity);
+            let occurrence = occurrences.entry(key).or_default();
+            *occurrence += 1;
+            row.identity = row.identity.clone().field("occurrence", *occurrence);
+            match self
+                .actions
+                .resolve(&row.identity, snapshot, &self.selected)?
+            {
+                crate::actions::Choice::Default | crate::actions::Choice::Unavailable(_) => {}
+                crate::actions::Choice::None => row.range = None,
+                crate::actions::Choice::Command { token, .. } => {
+                    row.range = Some(Range::Action(token))
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn action_warnings(
+        &self,
+        snapshot: &Snapshot,
+        input: RenderInputs<'_>,
+    ) -> Result<Vec<String>, String> {
+        self.rows(snapshot, input)?
+            .iter()
+            .filter_map(|row| {
+                match self
+                    .actions
+                    .resolve(&row.identity, snapshot, &self.selected)
+                {
+                    Ok(crate::actions::Choice::Unavailable(reason)) => Some(Ok(format!(
+                        "{} {:?}: {reason}",
+                        row.identity.module, row.identity
+                    ))),
+                    Err(error) => Some(Err(error)),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    pub(crate) fn action_args(
+        &self,
+        snapshot: &Snapshot,
+        input: RenderInputs<'_>,
+        request: (&str, &str, &str),
+    ) -> Result<Vec<String>, String> {
+        let (token, socket, client) = request;
+        let rows = self.rows(snapshot, input)?;
+        let mut matches = rows
+            .iter()
+            .filter(|row| matches!(&row.range, Some(Range::Action(current)) if current == token));
+        let row = matches
+            .next()
+            .ok_or("action click target is no longer present")?;
+        if matches.next().is_some() {
+            return Err("ambiguous action click target".into());
+        }
+        self.actions
+            .instantiate(&row.identity, snapshot, (&self.selected, socket, client))?
+            .ok_or_else(|| "action is no longer available".into())
     }
 
     pub fn print_config(&self) -> Result<String, String> {
@@ -1125,6 +1227,7 @@ impl Sidebar {
         let style = |value: &str| resolve_style(value, "default", &self.palette);
         let mut rows = vec![Row {
             divider: false,
+            identity: crate::actions::Identity::new("heading"),
             spans: vec![Span {
                 text: " SYSTEM".into(),
                 style: style(&config.heading_style)?,
@@ -1192,6 +1295,7 @@ impl Sidebar {
             }
             rows.push(Row {
                 divider: false,
+                identity: crate::actions::Identity::new("metric").field("metric", metric),
                 spans,
                 fill: None,
                 range: None,
@@ -1213,21 +1317,28 @@ impl Sidebar {
         let mut lines = Vec::new();
         match previous {
             Some(previous) => {
-                lines.push(format!(" last {}", debug_duration(previous.total())));
+                lines.push((
+                    crate::actions::Identity::new("total"),
+                    format!(" last {}", debug_duration(previous.total())),
+                ));
                 if self.config.debug.details {
                     for (name, micros) in crate::debug::STAGES.iter().zip(previous.stages) {
                         if micros > 0 {
-                            lines.push(format!("  {name} {}", debug_duration(micros)));
+                            lines.push((
+                                crate::actions::Identity::new("stage").field("stage", name),
+                                format!("  {name} {}", debug_duration(micros)),
+                            ));
                         }
                     }
                 }
             }
-            None => lines.push(" last --".into()),
+            None => lines.push((crate::actions::Identity::new("total"), " last --".into())),
         }
         Ok(lines
             .into_iter()
-            .map(|text| Row {
+            .map(|(identity, text)| Row {
                 divider: false,
+                identity,
                 spans: vec![Span {
                     text,
                     style: style.clone(),
@@ -1258,6 +1369,9 @@ impl Sidebar {
             ]);
             rows.push(Row {
                 divider: false,
+                identity: crate::actions::Identity::new("session")
+                    .field("target_session", &session.id)
+                    .field("name", &session.name),
                 spans: render_format(
                     &self.sessions.session_format,
                     &values,
@@ -1300,6 +1414,11 @@ impl Sidebar {
                 ]);
                 rows.push(Row {
                     divider: false,
+                    identity: crate::actions::Identity::new("window")
+                        .field("target_session", &session.id)
+                        .field("target_window", &window.id)
+                        .field("index", window.index)
+                        .field("name", &window.name),
                     spans: render_format(
                         &self.sessions.window_format,
                         &values,
@@ -1377,6 +1496,8 @@ impl Sidebar {
                 }
                 rows.push(Row {
                     divider: false,
+                    identity: crate::actions::Identity::new("project")
+                        .field("project", &session.project),
                     spans: vec![Span {
                         text: format!(" {title}"),
                         style: resolve_style(
@@ -1441,6 +1562,17 @@ impl Sidebar {
             .transpose()?;
         Ok(Row {
             divider: false,
+            identity: {
+                let mut identity = crate::actions::Identity::new("session")
+                    .field("project", &session.project)
+                    .field("name", &session.name);
+                if let Some(target) = &session.target {
+                    identity = identity
+                        .field("target_pane", &target.pane)
+                        .field("target_window", &target.window);
+                }
+                identity
+            },
             spans: render_format(
                 &self.pi_workbench_format,
                 &values,
@@ -1543,6 +1675,7 @@ impl Sidebar {
                 crate::usage::page_token(provider).map(|token| Range::UsagePage(token.into()));
             rows.push(Row {
                 divider: false,
+                identity: crate::actions::Identity::new("provider").field("provider", provider),
                 spans,
                 fill: None,
                 range: page_range.clone(),
@@ -1553,6 +1686,8 @@ impl Sidebar {
                 if let Some(age) = age {
                     rows.push(Row {
                         divider: false,
+                        identity: crate::actions::Identity::new("cache-age")
+                            .field("provider", provider),
                         spans: vec![Span {
                             text: format!("  cached {age}"),
                             style: usage_normal_style(&resolve_style(
@@ -1596,6 +1731,15 @@ impl Sidebar {
                 shade_usage_bar(&mut values, &bar_style, &track, &window_style);
                 rows.push(Row {
                     divider: false,
+                    identity: {
+                        let mut identity = crate::actions::Identity::new("window")
+                            .field("provider", provider)
+                            .field("label", &window.label);
+                        if let Some(duration) = window.duration_seconds {
+                            identity = identity.field("duration_seconds", duration);
+                        }
+                        identity
+                    },
                     spans: render_format(
                         &self.usage_format,
                         &values,
@@ -1632,6 +1776,7 @@ impl Sidebar {
         }
         Ok(Row {
             divider: false,
+            identity: crate::actions::Identity::new("output"),
             spans,
             fill: None,
             range: None,
@@ -1697,11 +1842,12 @@ impl Sidebar {
             );
         }
         let mut rows = Vec::new();
-        for line in &self.git_lines {
+        for (slot, line) in self.git_lines.iter().enumerate() {
             let (spans, present) = render_nodes(line, &values, "default", &self.palette, None)?;
             if present {
                 rows.push(Row {
                     divider: false,
+                    identity: crate::actions::Identity::new("line").field("slot", slot + 1),
                     spans: coalesce(spans),
                     fill: None,
                     range: None,
@@ -1723,6 +1869,7 @@ impl Sidebar {
         let track = resolve_color(&self.config.gob.bar_track_color, &self.palette)?;
         let mut rows = vec![Row {
             divider: false,
+            identity: crate::actions::Identity::new("heading"),
             spans: vec![Span {
                 text: " Jobs".into(),
                 style: heading,
@@ -1753,6 +1900,10 @@ impl Sidebar {
             ]);
             rows.push(Row {
                 divider: false,
+                identity: crate::actions::Identity::new("job")
+                    .field("job_id", &job.id)
+                    .field("name", &job.name)
+                    .field("part", "name"),
                 spans: render_format(&self.gob_format, &values, "default", &self.palette)?,
                 fill: None,
                 range: None,
@@ -1787,6 +1938,10 @@ impl Sidebar {
                 });
                 rows.push(Row {
                     divider: false,
+                    identity: crate::actions::Identity::new("job")
+                        .field("job_id", &job.id)
+                        .field("name", &job.name)
+                        .field("part", "progress"),
                     spans: coalesce(spans),
                     fill: None,
                     range: None,
@@ -1819,7 +1974,8 @@ impl Sidebar {
         let mut push = |text: String,
                         style: &str,
                         icon: Option<(&str, &str)>,
-                        range: Option<Range>|
+                        range: Option<Range>,
+                        identity: crate::actions::Identity|
          -> Result<(), String> {
             let mut spans = Vec::new();
             if let Some((glyph, icon_style)) = icon {
@@ -1842,6 +1998,7 @@ impl Sidebar {
             });
             rows.push(Row {
                 divider: false,
+                identity,
                 spans,
                 fill: None,
                 range,
@@ -1851,9 +2008,21 @@ impl Sidebar {
             Ok(())
         };
         let heading = selected_name.map_or_else(|| " π".to_owned(), |name| format!(" π {name}"));
-        push(heading, &cfg.heading_style, None, None)?;
+        push(
+            heading,
+            &cfg.heading_style,
+            None,
+            None,
+            crate::actions::Identity::new("heading"),
+        )?;
         if !context.plans.is_empty() {
-            push(" Plans".into(), &cfg.category_style, None, None)?;
+            push(
+                " Plans".into(),
+                &cfg.category_style,
+                None,
+                None,
+                crate::actions::Identity::new("category").field("category", "plans"),
+            )?;
             for (index, plan) in context.plans.iter().enumerate() {
                 let range = plan
                     .path
@@ -1866,11 +2035,26 @@ impl Sidebar {
                     &cfg.text_style,
                     Some(("◇", &cfg.plan_style)),
                     range,
+                    {
+                        let identity =
+                            crate::actions::Identity::new("plan").field("title", &plan.title);
+                        if plan.path.is_file() {
+                            identity.field("file", plan.path.display())
+                        } else {
+                            identity
+                        }
+                    },
                 )?;
             }
         }
         if !context.pull_requests.is_empty() {
-            push(" PRs".into(), &cfg.category_style, None, None)?;
+            push(
+                " PRs".into(),
+                &cfg.category_style,
+                None,
+                None,
+                crate::actions::Identity::new("category").field("category", "prs"),
+            )?;
             for (index, url) in context.pull_requests.iter().enumerate() {
                 let Some((label, _)) = crate::pr_state::parse_url(url) else {
                     continue;
@@ -1917,11 +2101,18 @@ impl Sidebar {
                     &cfg.text_style,
                     Some((glyph, style)),
                     Some(Range::PullRequest(token)),
+                    crate::actions::Identity::new("pr").field("url", url),
                 )?;
             }
         }
         if !context.skills.is_empty() {
-            push(" Skills".into(), &cfg.category_style, None, None)?;
+            push(
+                " Skills".into(),
+                &cfg.category_style,
+                None,
+                None,
+                crate::actions::Identity::new("category").field("category", "skills"),
+            )?;
             for (index, skill) in context.skills.iter().enumerate() {
                 let range = skill
                     .path
@@ -1935,6 +2126,14 @@ impl Sidebar {
                     &cfg.text_style,
                     Some(("✦", &cfg.skill_style)),
                     range,
+                    {
+                        let mut identity =
+                            crate::actions::Identity::new("skill").field("name", &skill.name);
+                        if let Some(path) = skill.path.as_ref().filter(|path| path.is_file()) {
+                            identity = identity.field("file", path.display());
+                        }
+                        identity
+                    },
                 )?;
             }
         }
@@ -1947,6 +2146,7 @@ impl Sidebar {
         let count = width.saturating_sub(2) / glyph_width;
         Ok(Row {
             divider: true,
+            identity: crate::actions::Identity::new("divider"),
             spans: vec![Span {
                 text: format!(" {}", glyph.repeat(count)),
                 style: resolve_style(&self.config.divider.style, "default", &self.palette)?,
@@ -2659,6 +2859,7 @@ struct Span {
 #[derive(Clone, Debug)]
 struct Row {
     divider: bool,
+    identity: crate::actions::Identity,
     spans: Vec<Span>,
     fill: Option<String>,
     range: Option<Range>,
@@ -2669,6 +2870,7 @@ struct Row {
 impl Row {
     fn blank() -> Self {
         Self {
+            identity: crate::actions::Identity::new("blank"),
             divider: false,
             spans: Vec::new(),
             fill: None,
@@ -2715,6 +2917,7 @@ enum Range {
     UsagePage(String),
     PullRequest(String),
     File(String),
+    Action(String),
 }
 
 fn command_spans(text: &str, base: &str, palette: &BTreeMap<String, String>) -> Vec<Span> {
@@ -2814,7 +3017,8 @@ fn render_rows(rows: &[Row], width: usize, text_color: Option<&str>) -> String {
                 | Range::PiPane(token)
                 | Range::UsagePage(token)
                 | Range::PullRequest(token)
-                | Range::File(token),
+                | Range::File(token)
+                | Range::Action(token),
             ) => token.as_str(),
             None => "sv",
         };

@@ -1,6 +1,7 @@
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn attached_client(socket: &str, target: &str) -> std::process::Command {
     let mut command = std::process::Command::new("script");
+    command.env_remove("TMUX").env_remove("TMUX_PANE");
     #[cfg(target_os = "macos")]
     command.args([
         "-q",
@@ -906,6 +907,89 @@ fn clicking_usage_opens_the_provider_page() {
         fs::read_to_string(&args_file).unwrap(),
         "https://chatgpt.com/settings/usage\n"
     );
+    fs::create_dir_all(root.join("cache")).unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    fs::write(
+        root.join("cache/provider-codex.json"),
+        serde_json::json!({
+            "version": 1, "last_good": {"fetched_at": now, "usage": {
+                "provider": "codex", "displayName": "codex", "windows": [
+                    {"label": "five", "usedPercent": 20, "durationSeconds": 18000},
+                    {"label": "week", "usedPercent": 30, "durationSeconds": 604800}
+                ]
+            }}, "retry_at": now + 60000
+        })
+        .to_string(),
+    )
+    .unwrap();
+    fs::write(&config, format!("{}\n[actions.first]\nargv = [{:?}, \"first\", \"{{provider}}\", \"{{label}}\"]\n[actions.second]\nargv = [{:?}, \"second\", \"{{provider}}\", \"{{label}}\"]\n[[clicks]]\nmodule = \"usage\"\nmatch = {{ kind = \"window\", duration_seconds = 18000 }}\naction = \"first\"\n[[clicks]]\nmodule = \"usage\"\nmatch = {{ kind = \"window\", label = \"week\" }}\naction = \"second\"\n", fs::read_to_string(&config).unwrap(), opener.display().to_string(), opener.display().to_string())).unwrap();
+    let query = |args: &[&str]| {
+        String::from_utf8(
+            Command::new("tmux")
+                .args(["-L", &socket])
+                .args(args)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_owned()
+    };
+    let client_name = query(&["list-clients", "-F", "#{client_name}"]);
+    let socket_path = query(&[
+        "display-message",
+        "-p",
+        "-c",
+        &client_name,
+        "#{socket_path}",
+    ]);
+    let rendered = Command::new(binary)
+        .args([
+            "render-query",
+            "--width=30",
+            &format!("--socket={socket_path}"),
+            &format!("--client={client_name}"),
+        ])
+        .env("STARMUX_CONFIG", &config)
+        .output()
+        .unwrap();
+    assert!(rendered.status.success());
+    let rendered = String::from_utf8(rendered.stdout).unwrap();
+    let targets: Vec<_> = rendered
+        .split("#[range=user|")
+        .skip(1)
+        .filter_map(|part| {
+            let token = part.split(' ').next().unwrap();
+            token.starts_with("sc").then_some(token)
+        })
+        .collect();
+    assert_eq!(targets.len(), 2, "{rendered}");
+    for (token, expected) in targets
+        .iter()
+        .zip(["first\ncodex\nfive\n", "second\ncodex\nweek\n"])
+    {
+        let output = Command::new(binary)
+            .args([
+                "activate",
+                &format!("--socket={socket_path}"),
+                &format!("--client={client_name}"),
+                &format!("--target={token}"),
+            ])
+            .env("STARMUX_CONFIG", &config)
+            .env("STARMUX_TEST_ARGS", &args_file)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(fs::read_to_string(&args_file).unwrap(), expected);
+    }
     tmux(&["kill-server"]);
     let _ = client.wait();
     fs::remove_dir_all(root).unwrap();
@@ -1280,6 +1364,89 @@ fn pi_attention_row_click_selects_its_pane() {
             )
         );
     }
+    let custom_rules = r#"
+[actions.plan]
+argv = ["dev", "plan-action", "{file}"]
+[actions.skill]
+argv = ["dev", "skill-action", "{file}"]
+[[clicks]]
+module = "pi-context"
+match = { kind = "plan", title = "attention plan" }
+action = "plan"
+[[clicks]]
+module = "pi-context"
+match = { kind = "skill", name = "testing" }
+action = "skill"
+"#;
+    fs::write(
+        &config,
+        format!("{}{custom_rules}", fs::read_to_string(&config).unwrap()),
+    )
+    .unwrap();
+    let custom = Command::new(binary)
+        .args([
+            "render-query",
+            "--width=30",
+            &format!("--socket={socket_path}"),
+            &format!("--client={client_name}"),
+        ])
+        .env("STARMUX_CONFIG", &config)
+        .output()
+        .unwrap();
+    assert!(custom.status.success());
+    let custom = String::from_utf8(custom.stdout).unwrap();
+    for (label, action, expected) in [
+        (
+            "attention plan",
+            "plan-action",
+            root.join("attention.jsonl.plans/0123456789abcdef01234567.md"),
+        ),
+        ("✦", "skill-action", root.join("skills/attention/SKILL.md")),
+    ] {
+        let custom_row = custom
+            .split("#[nl]")
+            .find(|line| line.contains(label))
+            .unwrap();
+        let token = custom_row
+            .split("#[range=user|")
+            .nth(1)
+            .unwrap()
+            .split(' ')
+            .next()
+            .unwrap();
+        assert!(token.starts_with("sc"));
+        let activate = || {
+            Command::new(binary)
+                .args([
+                    "activate",
+                    &format!("--socket={socket_path}"),
+                    &format!("--client={client_name}"),
+                    &format!("--target={token}"),
+                ])
+                .env("STARMUX_CONFIG", &config)
+                .env("STARMUX_TEST_ARGS", &opened)
+                .env(
+                    "PATH",
+                    format!("{}:{}", root.display(), std::env::var("PATH").unwrap()),
+                )
+                .output()
+                .unwrap()
+        };
+        let output = activate();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            fs::read_to_string(&opened).unwrap(),
+            format!("{action}\n{}\n", expected.display())
+        );
+        fs::remove_file(&opened).unwrap();
+        fs::remove_file(&expected).unwrap();
+        assert!(!activate().status.success());
+        assert!(!opened.exists());
+    }
     let token = row
         .split("#[range=user|")
         .nth(1)
@@ -1619,5 +1786,266 @@ fn wheel_scrolls_all_sidebar_rows_without_switching_windows() {
     tmux(&["kill-server"]);
     let _ = second_client.wait();
     let _ = client.wait();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn configured_actions_split_panes_and_select_each_jobs_window_through_mouse_clicks() {
+    use std::{
+        fs,
+        io::Write,
+        os::unix::fs::PermissionsExt,
+        process::{Command, Stdio},
+        thread,
+        time::{Duration, Instant},
+    };
+    let root = std::env::temp_dir().join(format!("starmux-actions-live-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let root = fs::canonicalize(root).unwrap();
+    let socket = format!("starmux-actions-live-{}", std::process::id());
+    let binary = env!("CARGO_BIN_EXE_starmux");
+    let tmux = |args: &[&str]| -> String {
+        let output = Command::new("tmux")
+            .args(["-L", &socket])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "tmux {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().into()
+    };
+    tmux(&[
+        "-f",
+        "/dev/null",
+        "new-session",
+        "-d",
+        "-s",
+        "main",
+        "-c",
+        root.to_str().unwrap(),
+        "sleep 60",
+    ]);
+    if !Command::new("tmux")
+        .args(["-L", &socket, "show-options", "-gv", "side-status"])
+        .output()
+        .unwrap()
+        .status
+        .success()
+    {
+        tmux(&["kill-server"]);
+        fs::remove_dir_all(root).unwrap();
+        assert_ne!(
+            std::env::var_os("STARMUX_REQUIRE_SIDE_STATUS"),
+            Some("1".into())
+        );
+        return;
+    }
+    tmux(&[
+        "new-window",
+        "-d",
+        "-t",
+        "main:4",
+        "-c",
+        root.to_str().unwrap(),
+        "sleep 60",
+    ]);
+    tmux(&[
+        "new-window",
+        "-d",
+        "-t",
+        "main:5",
+        "-c",
+        root.to_str().unwrap(),
+        "sleep 60",
+    ]);
+    tmux(&[
+        "new-session",
+        "-d",
+        "-s",
+        "other",
+        "-c",
+        root.to_str().unwrap(),
+        "sleep 60",
+    ]);
+    let config = root.join("config.toml");
+    let marker = root.join("clicked-blank");
+    fs::write(&config, format!(r#"
+modules = ["top", "gob", "blank"]
+cache_dir = {:?}
+[top]
+metrics = ["cpu"]
+[actions.monitor]
+argv = ["tmux", "-S", "{{socket}}", "split-window", "-t", "{{pane}}", "-c", "{{path}}", "sleep", "60"]
+[actions.jobs]
+argv = ["tmux", "-S", "{{socket}}", "switch-client", "-c", "{{client}}", "-t", "{{session}}:4"]
+[actions.test-job]
+argv = ["tmux", "-S", "{{socket}}", "switch-client", "-c", "{{client}}", "-t", "{{session}}:5"]
+[actions.blank]
+argv = ["touch", {:?}]
+[[clicks]]
+module = "top"
+match = {{ kind = "metric" }}
+action = "monitor"
+[[clicks]]
+module = "gob"
+match = {{ kind = "job" }}
+action = "jobs"
+[[clicks]]
+module = "gob"
+match = {{ job_id = "test" }}
+action = "test-job"
+[[clicks]]
+module = "blank"
+action = "blank"
+"#, root.join("cache").display().to_string(), marker.display().to_string())).unwrap();
+    let gob = root.join("gob");
+    let jobs = root.join("jobs.json");
+    fs::write(&jobs, serde_json::to_string(&serde_json::json!([
+        {"id":"build", "status":"running", "command":["build"], "description":"Build assets", "workdir":root, "started_at":"2020-01-01T00:00:00Z", "avg_duration_ms":1000},
+        {"id":"test", "status":"running", "command":["test"], "description":"Test assets", "workdir":root}
+    ])).unwrap()).unwrap();
+    fs::write(&gob, format!("#!/bin/sh\ncat '{}'\n", jobs.display())).unwrap();
+    fs::set_permissions(&gob, fs::Permissions::from_mode(0o700)).unwrap();
+    let generated = Command::new(binary)
+        .args(["init", "tmux"])
+        .output()
+        .unwrap();
+    assert!(generated.status.success());
+    let invocation = format!(
+        "env STARMUX_CONFIG={} PATH={}:{} {binary}",
+        config.display(),
+        root.display(),
+        std::env::var("PATH").unwrap()
+    );
+    let activation_log = root.join("activation.log");
+    let adapter = String::from_utf8(generated.stdout)
+        .unwrap()
+        .replace("starmux ", &format!("{invocation} "))
+        .replace(
+            "--target=#{q/s:mouse_status_range}",
+            &format!(
+                "--target=#{{q/s:mouse_status_range}} 2>>{}",
+                activation_log.display()
+            ),
+        );
+    let adapter_path = root.join("adapter.conf");
+    fs::write(&adapter_path, adapter).unwrap();
+    tmux(&["set", "-g", "mouse", "on"]);
+    tmux(&["set", "-g", "status-interval", "1"]);
+    tmux(&["set", "-g", "side-status", "left"]);
+    tmux(&["set", "-g", "side-status-width", "30"]);
+    tmux(&["source-file", adapter_path.to_str().unwrap()]);
+    let capture = root.join("client.out");
+    let mut client = attached_client(&socket, "main")
+        .env("TERM", "xterm-256color")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::from(fs::File::create(&capture).unwrap()))
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut input = client.stdin.take().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !fs::read_to_string(&capture)
+        .unwrap()
+        .contains("Test assets")
+        && Instant::now() < deadline
+    {
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert!(fs::read_to_string(&capture)
+        .unwrap()
+        .contains("Test assets"));
+    let client_name = tmux(&["list-clients", "-F", "#{client_name}"]);
+    let mut other_client = attached_client(&socket, "other")
+        .env("TERM", "xterm-256color")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while tmux(&["list-clients", "-t", "other", "-F", "#{client_name}"]).is_empty()
+        && Instant::now() < deadline
+    {
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert!(!tmux(&["list-clients", "-t", "other", "-F", "#{client_name}"]).is_empty());
+    let focus = || {
+        tmux(&[
+            "list-clients",
+            "-F",
+            "#{client_name}|#{session_name}:#{window_index}",
+        ])
+        .lines()
+        .find_map(|line| line.strip_prefix(&format!("{client_name}|")))
+        .unwrap()
+        .to_owned()
+    };
+    let click = |row: u8, input: &mut std::process::ChildStdin| {
+        write!(input, "\x1b[<0;20;{row}M\x1b[<0;20;{row}m").unwrap();
+        input.flush().unwrap();
+    };
+    let wait = |predicate: &dyn Fn() -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !predicate() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(50));
+        }
+        assert!(
+            predicate(),
+            "focus={} activation={}",
+            focus(),
+            fs::read_to_string(&activation_log).unwrap_or_default()
+        );
+    };
+    assert_eq!(focus(), "main:0");
+    click(2, &mut input);
+    wait(&|| {
+        tmux(&["list-panes", "-t", "main:0", "-F", "#{pane_id}"])
+            .lines()
+            .count()
+            == 2
+    });
+    assert_eq!(
+        tmux(&["list-panes", "-t", "other:0", "-F", "#{pane_id}"])
+            .lines()
+            .count(),
+        1
+    );
+    for (row, expected) in [(4, "main:4"), (6, "main:5"), (5, "main:4")] {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while focus() != expected && Instant::now() < deadline {
+            tmux(&["refresh-client", "-S", "-t", &client_name]);
+            click(row, &mut input);
+            thread::sleep(Duration::from_millis(200));
+        }
+        assert_eq!(
+            focus(),
+            expected,
+            "{}",
+            fs::read_to_string(&activation_log).unwrap_or_default()
+        );
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !marker.exists() && Instant::now() < deadline {
+        tmux(&["refresh-client", "-S", "-t", &client_name]);
+        click(7, &mut input);
+        thread::sleep(Duration::from_millis(200));
+    }
+    assert!(
+        marker.exists(),
+        "{}",
+        fs::read_to_string(&activation_log).unwrap_or_default()
+    );
+    assert_eq!(
+        tmux(&["list-clients", "-t", "other", "-F", "#{window_index}"]),
+        "0"
+    );
+    tmux(&["kill-server"]);
+    let _ = client.wait();
+    let _ = other_client.wait();
     fs::remove_dir_all(root).unwrap();
 }

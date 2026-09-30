@@ -67,6 +67,8 @@ pub trait Tmux {
 
     fn open_url(&self, url: &str) -> Result<(), String>;
 
+    fn run_action(&self, args: &[String], directory: &std::path::Path) -> Result<(), String>;
+
     fn open_file(
         &self,
         path: &std::path::Path,
@@ -78,6 +80,9 @@ pub trait Tmux {
 pub struct ProcessTmux;
 
 impl Tmux for ProcessTmux {
+    fn run_action(&self, args: &[String], directory: &std::path::Path) -> Result<(), String> {
+        crate::actions::run(args, directory)
+    }
     fn panes(&self, socket: &str) -> Result<Vec<Pane>, String> {
         if socket.is_empty() {
             return Err("missing tmux socket".into());
@@ -111,9 +116,24 @@ impl Tmux for ProcessTmux {
             return Err("missing tmux socket or client name".into());
         }
         validate_width(width)?;
+        let target = client_target(socket, client)?;
+        let pane_target = format!(
+            "{}:{}.{}",
+            target.focus.session, target.focus.window, target.pane
+        );
         let output = Command::new("tmux")
-            .args(["-S", socket, "display-message", "-p", "-c", client, "--"])
-            .arg(transport(window_options))
+            .args([
+                "-S",
+                socket,
+                "display-message",
+                "-p",
+                "-c",
+                client,
+                "-t",
+                &pane_target,
+                "--",
+            ])
+            .arg(transport(window_options, &target))
             .output()
             .map_err(|error| format!("tmux query failed: {error}"))?;
         if !output.status.success() {
@@ -126,7 +146,12 @@ impl Tmux for ProcessTmux {
             return Err("tmux snapshot exceeds 128 KiB".into());
         }
         let output = String::from_utf8(output.stdout).map_err(|_| "tmux snapshot is not UTF-8")?;
-        parse_snapshot(&words(&output)?, width, window_options)
+        let snapshot = parse_snapshot(&words(&output)?, width, window_options)?;
+        target.focus.verify(&snapshot)?;
+        if snapshot.current_pane != target.pane {
+            return Err(FOCUS_CHANGED.into());
+        }
+        Ok(snapshot)
     }
 
     fn open_url(&self, url: &str) -> Result<(), String> {
@@ -190,6 +215,55 @@ impl Tmux for ProcessTmux {
         };
         tmux_switch(socket, client, &target)
     }
+}
+
+struct ClientTarget {
+    focus: Focus,
+    pane: String,
+    width: usize,
+    height: usize,
+    status_lines: usize,
+}
+
+fn client_target(socket: &str, client: &str) -> Result<ClientTarget, String> {
+    let output = Command::new("tmux").args(["-S", socket, "list-clients", "-F", "--client=#{q/s:client_name} --session=#{session_id} --window=#{window_id} --pane=#{pane_id} --width=#{client_width} --height=#{client_height} --status=#{?#{==:#{status},off},0,#{?#{==:#{status},on},1,#{status}}}"]).output().map_err(|error| format!("tmux query failed: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "tmux query failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    if output.stdout.len() > 128 * 1024 {
+        return Err("tmux client query exceeds 128 KiB".into());
+    }
+    let text = String::from_utf8(output.stdout).map_err(|_| "tmux client query is not UTF-8")?;
+    let values = words(&text)?;
+    let mut fields = Fields {
+        values: &values,
+        cursor: 0,
+    };
+    let mut found = None;
+    while fields.cursor < values.len() {
+        let name = fields.take("client")?;
+        let focus = Focus::new(fields.id("session", '$')?, fields.id("window", '@')?)?;
+        let pane = fields.id("pane", '%')?;
+        let width = fields.number("width", 10000)?;
+        let height = fields.number("height", 10000)?;
+        let status_lines = fields.number("status", height)?;
+        if name == client {
+            if found.is_some() {
+                return Err("ambiguous tmux client".into());
+            }
+            found = Some(ClientTarget {
+                focus,
+                pane,
+                width,
+                height,
+                status_lines,
+            });
+        }
+    }
+    found.ok_or_else(|| "tmux client is no longer attached".into())
 }
 
 fn open_browser_url(url: &str) -> Result<(), String> {
@@ -405,6 +479,9 @@ impl MemoryTmux {
 
 #[cfg(test)]
 impl Tmux for MemoryTmux {
+    fn run_action(&self, args: &[String], directory: &std::path::Path) -> Result<(), String> {
+        crate::actions::run(args, directory)
+    }
     fn open_file(
         &self,
         path: &std::path::Path,
@@ -737,47 +814,17 @@ impl<T: Tmux> Application<T> {
         focus: Option<&Focus>,
     ) -> Result<String, String> {
         let snapshot = self.snapshot(socket, client, width, focus)?;
-        let mut result = format!(
-            "modules: {}\nclient: {}x{} pane {}\n",
-            self.sidebar.module_names().join(", "),
-            snapshot.client_width,
-            snapshot.client_height,
-            snapshot.current_pane
-        );
-        for session in &snapshot.sessions {
-            result.push_str(&format!("session {} {:?}\n", session.id, session.name));
-            for window in &session.windows {
-                result.push_str(&format!(
-                    "  window {} index={} pane={} path={:?} selected={}\n",
-                    window.id, window.index, window.pane, window.path, window.selected
-                ));
-            }
-        }
         let (mut pi_sessions, context) = self.pi_sessions(socket, &snapshot)?;
         crate::pi_workbench::sort_sessions(&mut pi_sessions);
-        for session in pi_sessions {
-            result.push_str(&format!(
-                "pi-workbench project={:?} {:?} {:?} target={:?} selected={}\n",
-                session.project, session.state, session.name, session.target, session.selected
-            ));
-        }
-        if let Some(context) = context {
-            result.push_str(&format!(
-                "pi-context plans={} prs={} skills={}\n",
-                context.plans.len(),
-                context.pull_requests.len(),
-                context.skills.len()
-            ));
-        }
-        for usage in self.usage_rows(false)? {
-            result.push_str(&format!(
-                "usage provider={} stale={} unavailable={} windows={}\n",
-                usage.provider,
-                usage.stale,
-                usage.unavailable,
-                usage.windows.len()
-            ));
-        }
+        let usage_rows = self.usage_rows(false)?;
+        let mut result = source_explanation(
+            &snapshot,
+            self.sidebar.module_names(),
+            &pi_sessions,
+            context.as_ref(),
+            &usage_rows,
+        );
+        let mut top = None;
         if self.sidebar.top_enabled() {
             if let Some(dir) = self.sidebar.cache_dir("top") {
                 let status = crate::top::resolve(&dir, false);
@@ -788,13 +835,15 @@ impl<T: Tmux> Application<T> {
                     status.battery.as_ref().map(|battery| battery.percent),
                     status.age_seconds
                 ));
+                top = Some(status);
             } else {
                 result.push_str("top: cache directory unavailable\n");
             }
         }
+        let mut gob_jobs = Vec::new();
         match self.gob_jobs(&snapshot) {
             Ok(jobs) => {
-                for job in jobs {
+                for job in &jobs {
                     result.push_str(&format!(
                         "gob id={:?} name={:?} progress={:?}\n",
                         job.id,
@@ -802,22 +851,58 @@ impl<T: Tmux> Application<T> {
                         job.percent(time::OffsetDateTime::now_utc())
                     ));
                 }
+                gob_jobs = jobs;
             }
             Err(error) => result.push_str(&format!("gob: {error}\n")),
         }
+        let mut git = None;
         if self.sidebar.git_enabled() {
             match self.git_status(&snapshot) {
-                Ok(Some(status)) => result.push_str(&format!("git {status:?}\n")),
+                Ok(Some(status)) => {
+                    result.push_str(&format!("git {status:?}\n"));
+                    git = Some(status);
+                }
                 Ok(None) => result.push_str("git: outside repository\n"),
                 Err(error) => result.push_str(&format!("git: {error}\n")),
             }
         }
         let (commands, errors) = self.commands(&snapshot);
-        for (name, output) in commands {
+        for (name, output) in &commands {
             result.push_str(&format!("{name} output={output:?}\n"));
         }
         for error in errors {
             result.push_str(&format!("{error}\n"));
+        }
+        let debug = self
+            .sidebar
+            .debug_cache_dir()
+            .and_then(|configured| {
+                configured
+                    .map(std::path::PathBuf::from)
+                    .or_else(|| self.sidebar.cache_dir("debug"))
+            })
+            .and_then(|dir| {
+                crate::debug::read(
+                    &dir,
+                    socket,
+                    &scroll_identity(client, self.sidebar.selected_config()),
+                )
+            });
+        for warning in self.sidebar.action_warnings(
+            &snapshot,
+            crate::RenderInputs {
+                top: top.as_ref(),
+                pi_sessions: &pi_sessions,
+                usage_rows: &usage_rows,
+                gob_jobs: &gob_jobs,
+                context: context.as_ref(),
+                commands: &commands,
+                git: git.as_ref(),
+                debug: debug.as_ref(),
+                states: &[],
+            },
+        )? {
+            result.push_str(&format!("click: {warning}\n"));
         }
         Ok(result)
     }
@@ -848,6 +933,9 @@ impl<T: Tmux> Application<T> {
     }
 
     pub fn activate(&self, socket: &str, client: &str, token: &str) -> Result<(), String> {
+        if token.starts_with("sc") {
+            return self.activate_action(socket, client, token);
+        }
         if token.starts_with("sl") || token.starts_with("ss") {
             if !self.sidebar.pi_context_enabled() {
                 return Err("file click target is not enabled".into());
@@ -903,6 +991,92 @@ impl<T: Tmux> Application<T> {
         self.tmux.activate(socket, client, token)
     }
 
+    fn activate_action(&self, socket: &str, client: &str, token: &str) -> Result<(), String> {
+        let module = crate::actions::token_module(token)?;
+        let snapshot = self.snapshot(socket, client, 30, None)?;
+        let structural = matches!(module, "spacer" | "divider" | "blank");
+        let (pi_sessions, context) =
+            if structural || matches!(module, "pi-context" | "pi-workbench") {
+                self.pi_sessions(socket, &snapshot)?
+            } else {
+                (Vec::new(), None)
+            };
+        let usage = if structural || module == "usage" {
+            self.usage_rows(false)?
+        } else {
+            Vec::new()
+        };
+        let jobs = if module == "gob" {
+            self.gob_jobs(&snapshot)?
+        } else if structural {
+            self.gob_jobs(&snapshot).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let top = if structural || module == "top" {
+            self.sidebar
+                .cache_dir("top")
+                .map(|dir| crate::top::resolve(&dir, false))
+        } else {
+            None
+        };
+        let git = if module == "git" {
+            self.git_status(&snapshot)?
+        } else if structural {
+            self.git_status(&snapshot).ok().flatten()
+        } else {
+            None
+        };
+        let commands = self
+            .sidebar
+            .module_names()
+            .iter()
+            .filter(|name| name.starts_with("command."))
+            .map(|name| (name.clone(), String::new()))
+            .collect();
+        let debug_dir = self.sidebar.debug_cache_dir().and_then(|configured| {
+            configured
+                .map(std::path::PathBuf::from)
+                .or_else(|| self.sidebar.cache_dir("debug"))
+        });
+        let debug = debug_dir.as_deref().and_then(|dir| {
+            crate::debug::read(
+                dir,
+                socket,
+                &scroll_identity(client, self.sidebar.selected_config()),
+            )
+        });
+        let args = self.sidebar.action_args(
+            &snapshot,
+            crate::RenderInputs {
+                top: top.as_ref(),
+                pi_sessions: &pi_sessions,
+                usage_rows: &usage,
+                gob_jobs: &jobs,
+                context: context.as_ref(),
+                states: &[],
+                commands: &commands,
+                git: git.as_ref(),
+                debug: debug.as_ref(),
+            },
+            (token, socket, client),
+        )?;
+        let window = snapshot
+            .sessions
+            .iter()
+            .find(|session| session.id == snapshot.current_session)
+            .and_then(|session| session.windows.iter().find(|window| window.selected))
+            .ok_or("missing focused window")?;
+        let focus = Focus::new(&snapshot.current_session, &window.id)?;
+        let current = self.snapshot(socket, client, 30, Some(&focus))?;
+        if current.current_pane != snapshot.current_pane || current.pane_path != snapshot.pane_path
+        {
+            return Err("tmux pane changed during activation".into());
+        }
+        self.tmux
+            .run_action(&args, std::path::Path::new(&snapshot.pane_path))
+    }
+
     fn snapshot(
         &self,
         socket: &str,
@@ -924,6 +1098,55 @@ impl<T: Tmux> Application<T> {
     }
 }
 
+fn source_explanation(
+    snapshot: &Snapshot,
+    modules: &[String],
+    pi_sessions: &[crate::PiSession],
+    context: Option<&crate::PiContext>,
+    usage_rows: &[crate::usage::UsageRow],
+) -> String {
+    let mut result = format!(
+        "modules: {}\nclient: {}x{} pane {}\n",
+        modules.join(", "),
+        snapshot.client_width,
+        snapshot.client_height,
+        snapshot.current_pane
+    );
+    for session in &snapshot.sessions {
+        result.push_str(&format!("session {} {:?}\n", session.id, session.name));
+        for window in &session.windows {
+            result.push_str(&format!(
+                "  window {} index={} pane={} path={:?} selected={}\n",
+                window.id, window.index, window.pane, window.path, window.selected
+            ));
+        }
+    }
+    for session in pi_sessions {
+        result.push_str(&format!(
+            "pi-workbench project={:?} {:?} {:?} target={:?} selected={}\n",
+            session.project, session.state, session.name, session.target, session.selected
+        ));
+    }
+    if let Some(context) = &context {
+        result.push_str(&format!(
+            "pi-context plans={} prs={} skills={}\n",
+            context.plans.len(),
+            context.pull_requests.len(),
+            context.skills.len()
+        ));
+    }
+    for usage in usage_rows {
+        result.push_str(&format!(
+            "usage provider={} stale={} unavailable={} windows={}\n",
+            usage.provider,
+            usage.stale,
+            usage.unavailable,
+            usage.windows.len()
+        ));
+    }
+    result
+}
+
 fn validate_width(width: usize) -> Result<(), String> {
     if width == 0 || width > MAX_WIDTH {
         Err(format!("width must be 1..{MAX_WIDTH}"))
@@ -932,14 +1155,14 @@ fn validate_width(width: usize) -> Result<(), String> {
     }
 }
 
-fn transport(window_options: &[(String, String)]) -> String {
+fn transport(window_options: &[(String, String)], target: &ClientTarget) -> String {
     let session = "--session-id=#{q/s:session_id} --session-name=#{q/s:session_name} --window-count=#{session_windows}";
     let mut window = String::from("--window-id=#{window_id} --window-index=#{window_index} --window-name=#{q/s:window_name} --selected=#{window_active} --window-pane=#{pane_id} --window-path=#{q/s:pane_current_path}");
     for (alias, option) in window_options {
         window.push_str(&format!(" --window-option-{alias}=#{{q/s:{option}}}"));
     }
     window.push_str(" --end-window");
-    format!("--input-version=3 --client-width=#{{client_width}} --client-height=#{{client_height}} --status=#{{status}} --current-session=#{{q/s:session_id}} --current-pane=#{{pane_id}} --pane-path=#{{q/s:pane_current_path}} --session-count=#{{server_sessions}} #{{S:{session} #{{W:{window} }} --end-session }}")
+    format!("--input-version=3 --client-width={} --client-height={} --status={} --current-session=#{{q/s:session_id}} --current-pane=#{{pane_id}} --pane-path=#{{q/s:pane_current_path}} --session-count=#{{server_sessions}} #{{S:{session} #{{W:{window} }} --end-session }}", target.width, target.height, target.status_lines)
 }
 
 struct Fields<'a> {

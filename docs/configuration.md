@@ -14,7 +14,7 @@ modules = ["sessions", "divider"]
 
 The built-ins are `top`, `sessions`, `divider`, `pi-workbench`, `pi-context`, `usage`, `gob`, `git`, `debug`, `spacer`, and `blank`. Named external commands use `command.<name>`. Unknown names and duplicate names other than `divider` and `blank` are errors. Repeat `divider` to separate multiple sections, for example `modules = ["sessions", "divider", "pi-workbench", "divider", "usage", "divider", "gob"]`. Each divider uses the same `[divider]` settings. `top`, `pi-workbench`, `pi-context`, `usage`, `gob`, `git`, and `debug` are not enabled by default.
 
-Place one `spacer` between modules to push the following rows to the bottom of the sidebar. For example, `modules = ["sessions", "spacer", "divider", "usage"]` keeps sessions at the top and usage at the bottom. The spacer takes only the rows left after all other modules render. It adds no rows if the sidebar is full, and it has no style or click target. Its size updates when the client is resized. Add `blank` after `usage` to leave one empty row below it: `modules = ["sessions", "spacer", "divider", "usage", "blank"]`. Each `blank` entry adds one empty row without a style or click target; repeat it for more space.
+Place one `spacer` between modules to push the following rows to the bottom of the sidebar. For example, `modules = ["sessions", "spacer", "divider", "usage"]` keeps sessions at the top and usage at the bottom. The spacer takes only the rows left after all other modules render. It adds no rows if the sidebar is full, and it has no style or default click action. Its size updates when the client is resized. Add `blank` after `usage` to leave one empty row below it: `modules = ["sessions", "spacer", "divider", "usage", "blank"]`. Each `blank` entry adds one empty row without a style or default click action; repeat it for more space.
 
 ### Multiple module lists
 
@@ -37,6 +37,132 @@ Run `starmux render-query --config=right --width=30 --socket=PATH --client=NAME`
 
 `starmux init tmux` selects `default`. For another tmux render area, copy its generated render invocation and add `--config=right` after `render-query`. Pass the same `--config=right` to custom `starmux activate`, `starmux scroll`, and `starmux scroll-event` bindings for that area. Scroll positions are separate for each list on a client. Tmux controls the placement and width of each area; Starmux renders its selected rows within the supplied width and available height.
 
+## Click actions
+
+Every row supports a configurable click action. This includes headings, dividers, blanks, and spacer padding. Existing navigation remains the default.
+
+Define named commands under `[actions.NAME]`. Use ordered `[[clicks]]` rules to select rows:
+
+```toml
+[actions.monitor]
+argv = ["tmux", "-S", "{socket}", "split-window", "-t", "{pane}", "-c", "{path}", "htop"]
+
+[actions.jobs]
+argv = ["tmux", "-S", "{socket}", "switch-client", "-c", "{client}", "-t", "{session}:4"]
+
+[[clicks]]
+module = "top"
+match = { kind = "metric" }
+action = "monitor"
+
+[[clicks]]
+module = "gob"
+match = { kind = "job" }
+action = "jobs"
+```
+
+Each metric click creates a new pane. Each job click selects window index 4 in the originating client's session. A missing window produces an error. Gob does not provide a job's tmux location.
+
+### Rule order and defaults
+
+The last matching rule wins. Put broad defaults before individual overrides. All fields in `match` use exact equality. Rules do not support expressions, patterns, or screen row numbers.
+
+- Omit `module` for a default across all modules.
+- Omit `match` for a default across all rows in that module.
+- Set `config = "NAME"` to restrict a rule to one named module list.
+- Set `instance = 2` to select the second occurrence of a module, such as a repeated divider.
+- Set `action = "none"` to disable the row's click action.
+- Set `action = "default"` to restore the row's built-in action.
+
+`none` and `default` are reserved action names. An unmatched row retains its built-in action. Module settings and unscoped rules apply to all named lists.
+
+### Individual rows
+
+These overrides follow the defaults in the first example:
+
+```toml
+[actions.build]
+argv = ["/absolute/path/to/open-build", "{job_id}", "{socket}", "{client}"]
+
+[actions.usage-details]
+argv = ["/absolute/path/to/show-usage", "{provider}", "{label}"]
+
+[actions.edit]
+argv = ["/absolute/path/to/edit-in-tmux", "{file}", "{pane}", "{socket}"]
+
+[[clicks]]
+module = "gob"
+match = { kind = "job", name = "Build assets" }
+action = "build"
+
+[[clicks]]
+module = "top"
+match = { metric = "battery" }
+action = "none"
+
+[[clicks]]
+module = "usage"
+match = { kind = "window", provider = "anthropic", duration_seconds = 18000 }
+action = "usage-details"
+
+[[clicks]]
+module = "pi-context"
+match = { kind = "plan", file = "/absolute/path/to/plan.md" }
+action = "edit"
+
+[[clicks]]
+module = "pi-context"
+match = { kind = "skill", name = "documentation" }
+action = "edit"
+```
+
+Gob `name` is the raw name before clipping: description, command fallback, or ID fallback. A name rule also applies to future jobs with that name. Use `job_id` for one particular job. Job name and progress rows share a rule unless `part` selects one of them.
+
+Usage windows expose their raw provider labels and optional durations. The example selects a five-hour duration without assuming its label. File selectors use absolute paths. A skill can have no file path.
+
+### Selector catalog
+
+`kind`, `part`, and `occurrence` are available in every `match` table. Other selectors depend on the row kind:
+
+| Module | `kind` | Additional selectors |
+| --- | --- | --- |
+| `top` | `heading`, `metric` | `metric`: `cpu`, `memory`, `battery` |
+| `gob` | `heading`, `job` | `job_id`, `name` |
+| `usage` | `provider`, `cache-age`, `window` | `provider`; windows also have `label`, optional `duration_seconds` |
+| `pi-context` | `heading`, `category`, `plan`, `skill`, `pr` | Categories: `category` (`plans`, `skills`, `prs`); plans: `file`, `title`; skills: `name`, optional `file`; PRs: `url` |
+| `sessions` | `session`, `window` | `target_session`, `name`; windows also have `target_window`, `index` |
+| `pi-workbench` | `project`, `session` | `project`; sessions also have `name`, optional `target_pane`, `target_window` |
+| `git` | `line` | `slot`: entry in the configured `git.lines` list |
+| `command.NAME` | `output` | Select the command through its full module name |
+| `debug` | `total`, `stage` | `stage`: `tmux`, `pi`, `pr`, `usage`, `gob`, `commands`, `git`, `format`, `top` |
+| `divider` | `divider` | Select repeated dividers through `instance` |
+| `blank` | `blank` | Select repeated blanks through `instance` |
+| `spacer` | `padding` | `slot`: position within the spacer allocation |
+
+`part` is `main` for ordinary rows. Gob uses `name` and `progress`. `occurrence` distinguishes otherwise identical descriptors in source order. `instance`, `slot`, and `occurrence` start at 1. Window `index` starts at 0. These values and `duration_seconds` are integers. Other selectors are strings.
+
+Git `slot` includes configured lines that currently produce no output. Spacer slots follow the current allocation. They do not identify a screen row after scrolling.
+
+### Command arguments and errors
+
+Common placeholders are `{socket}`, `{client}`, `{session}`, `{window}`, `{pane}`, `{path}`, `{module}`, `{kind}`, and `{part}`. Focus placeholders refer to the originating client. `{path}` is its selected pane's directory.
+
+Source placeholders use the selector names in the catalog, including `{occurrence}`. Foreign session, window, and pane rows expose their targets through `{target_session}`, `{target_window}`, and `{target_pane}`. Optional metadata is available only when the source provides it. File placeholders require an existing regular file.
+
+Placeholders can occur inside an argument, such as `{session}:4`. Doubled braces produce literal braces: `{{literal}}` becomes `{literal}`. Inserted values remain literal and receive no further substitution.
+
+If an action requires unavailable metadata, the row retains its built-in action. `starmux explain` reports the unavailable placeholder. An earlier rule does not replace the winning rule.
+
+Starmux runs argument arrays directly in the originating pane's directory. It does not interpret a shell, tmux formats, environment variables, or `~`. Scripts support more complex commands. Interactive programs need a terminal, such as the pane in the monitor example.
+
+Action definitions accept 1–16 arguments, each at most 1024 bytes, without NUL bytes. The executable must be a nonempty literal. Expanded arguments use the same limits. The configuration accepts at most 64 actions and 128 rules.
+
+Commands have a two-second deadline and a 16 KiB stderr limit. Starmux kills and reaps the direct child after a timeout. Scripts own the lifetime of their descendants. Missing executables, nonzero exits, and invalid directories return an activation error. Errors do not run a fallback action.
+
+Custom clicks validate the current source identity, module list, action definition, and pane context. Removed items and changed context invalidate old clicks. Usage clicks read cached data without a provider refresh. Command rows use the configured command identity without rerunning the status command. Other dynamic rows must still exist during validation.
+
+Regenerate and source `starmux init tmux` after installing this feature. Custom mouse and wheel bindings must route `sc` ranges with the existing Starmux ranges.
+
 ## Host status and persistent state
 
 Add `top` to a module list to show host CPU, memory, and battery status. Put it after `spacer` to keep it near the bottom:
@@ -48,7 +174,7 @@ modules = ["sessions", "spacer", "divider", "top", "divider", "git"]
 metrics = ["cpu", "memory", "battery"]
 ```
 
-The module shows a `SYSTEM` heading and compact rows with Nerd Font icons, percentages, and aligned CPU, memory, and battery bars. CPU is whole-host usage measured over an interval; memory is used physical memory. A battery row appears when a battery is detected, with its icon showing normal, low (at or below 20%), charging (lightning bolt), or full (check mark) state. Full state takes priority over charging. Hosts without a battery show only CPU and memory. An unavailable metric shows `--`; cached data older than one minute is dimmed and marked with its age, and expires after five minutes. Short widths keep the numeric value and reduce or omit the bar. Rows are not clickable. Set `disabled = true` to hide the section. Use `heading_style`, `value_style`, `warning_style`, `critical_style`, and `track_style` in `[top]` to override colorscheme defaults. CPU and memory turn red at 80%; battery turns red at or below 20%. Sampling happens in a background process roughly every ten seconds; a completed sample appears on the next tmux redraw.
+The module shows a `SYSTEM` heading and compact rows with Nerd Font icons, percentages, and aligned CPU, memory, and battery bars. CPU is whole-host usage measured over an interval; memory is used physical memory. A battery row appears when a battery is detected, with its icon showing normal, low (at or below 20%), charging (lightning bolt), or full (check mark) state. Full state takes priority over charging. Hosts without a battery show only CPU and memory. An unavailable metric shows `--`; cached data older than one minute is dimmed and marked with its age, and expires after five minutes. Short widths keep the numeric value and reduce or omit the bar. Rows have no click action by default. See [click actions](#click-actions) for overrides. Set `disabled = true` to hide the section. Use `heading_style`, `value_style`, `warning_style`, `critical_style`, and `track_style` in `[top]` to override colorscheme defaults. CPU and memory turn red at 80%; battery turns red at or below 20%. Sampling happens in a background process roughly every ten seconds; a completed sample appears on the next tmux redraw.
 
 Starmux stores persistent state beneath `$XDG_CACHE_HOME/starmux` when `XDG_CACHE_HOME` is set, `~/Library/Caches/starmux` by default on macOS, and `~/.cache/starmux` by default on Linux. Separate `top/`, `usage/`, `pr-state/`, `debug/`, and `scroll/` directories keep their records apart. Set a top-level absolute `cache_dir` to change the root. Existing `[usage].cache_dir` and `[debug].cache_dir` settings take priority for their respective modules. Older macOS PR, debug, and scroll caches under `~/.cache/starmux` are disposable and expire in place.
 
@@ -273,7 +399,7 @@ progress_style = "fg=green"
 bar_track_color = "colour238"
 ```
 
-The section shows `Jobs`, then a green dot and description for each running job. If a job has no description, `$name` shows its command or job ID. The format also accepts `$id`. A job with a previous successful-run average gets a second row with a horizontal progress track below its name. The track fills the space after its indentation and before a four-column percentage field that fits `100%`, with two more spaces to its right; filled cells show elapsed time divided by the previous average, capped at 100%. A job can still be running when the track is full. When history or a valid start time is absent, there is no progress row. Narrow widths reduce the indentation to keep a track cell when both the track and percentage fit; the percentage takes priority at smaller widths. Rows do not have click targets. All job text is escaped and clipped.
+The section shows `Jobs`, then a green dot and description for each running job. If a job has no description, `$name` shows its command or job ID. The format also accepts `$id`. A job with a previous successful-run average gets a second row with a horizontal progress track below its name. The track fills the space after its indentation and before a four-column percentage field that fits `100%`, with two more spaces to its right; filled cells show elapsed time divided by the previous average, capped at 100%. A job can still be running when the track is full. When history or a valid start time is absent, there is no progress row. Narrow widths reduce the indentation to keep a track cell when both the track and percentage fit; the percentage takes priority at smaller widths. Rows have no click action by default. See [click actions](#click-actions) for overrides. All job text is escaped and clipped.
 
 Starmux runs `gob list --json` from the selected pane's `pane_current_path`. Gob matches the workdir exactly: a job started in a nested directory appears only when the pane is in that directory. Switching panes can change the list. If gob is missing or the directory has no running jobs, the section has no rows. Gob starts its daemon when `list` runs and the daemon is absent. Starmux bounds the command to 1.5 seconds and 2 MiB of output. If the query fails or returns invalid data, the Gob rows are omitted for that redraw; `starmux explain` reports the error while the other sidebar modules remain visible.
 
@@ -296,7 +422,7 @@ style = "fg=green"
 
 Starmux runs each argument array directly, without a shell, from the selected pane's current directory. A leading `~/` in an argument expands to the user's `HOME` directory; other shell expansions are not performed. Gitmux uses the pane directory by default. Commands run in module order on each sidebar redraw. Each command has a 500 ms deadline; four commands can take up to two seconds if all stall. Stdout is limited to 16 KiB and only its first line is displayed as one row when nonempty. A missing executable, invalid directory, empty output, failure, or timeout adds no row. `starmux explain` reports command failures; `starmux timings` includes `command_us`. `starmux check-config` validates names, references, arguments, modes, and styles. A command may have at most 16 arguments, each at most 1024 bytes.
 
-`prefix` adds literal text before the output; it defaults to empty and accepts up to 64 bytes without control characters. The default `output = "text"` escapes command output and applies `style` (default `default`). Set `output = "tmux-styles"` for gitmux's colored output. This mode accepts only `#[none]` and validated tmux text styles such as `#[fg=green,bold]`. All other directives and tmux formats remain literal text. Command rows have no click target. Output is clipped to the sidebar width.
+`prefix` adds literal text before the output; it defaults to empty and accepts up to 64 bytes without control characters. The default `output = "text"` escapes command output and applies `style` (default `default`). Set `output = "tmux-styles"` for gitmux's colored output. This mode accepts only `#[none]` and validated tmux text styles such as `#[fg=green,bold]`. All other directives and tmux formats remain literal text. Command rows have no click action by default. See [click actions](#click-actions) for overrides. Output is clipped to the sidebar width.
 
 ## Git status
 
@@ -313,7 +439,7 @@ lines = [
 ]
 ```
 
-Each string in `lines` is one sidebar row. An entry with no nonempty variables produces no row. Remove `$upstream` to hide the upstream name, or move it to its own string to give it a separate row. The safe formatter supports optional groups and validated styled groups. Variables are `$branch`, `$upstream`, `$ahead`, `$behind`, `$divergence`, `$staged`, `$modified`, `$untracked`, `$conflicts`, `$stash`, `$added`, `$deleted`, `$clean`, and `$state`. Zero counts are empty. Branch names are escaped and clipped. The rows have no click targets. Set `disabled = true` in `[git]` to omit the section.
+Each string in `lines` is one sidebar row. An entry with no nonempty variables produces no row. Remove `$upstream` to hide the upstream name, or move it to its own string to give it a separate row. The safe formatter supports optional groups and validated styled groups. Variables are `$branch`, `$upstream`, `$ahead`, `$behind`, `$divergence`, `$staged`, `$modified`, `$untracked`, `$conflicts`, `$stash`, `$added`, `$deleted`, `$clean`, and `$state`. Zero counts are empty. Branch names are escaped and clipped. The rows have no click action by default. See [click actions](#click-actions) for overrides. Set `disabled = true` in `[git]` to omit the section.
 
 `$staged`, `$modified`, `$untracked`, and `$conflicts` count files; one file can be both staged and modified. `$added` and `$deleted` count tracked line changes against HEAD across staged and unstaged edits. Untracked files and binary changes have no line totals. `$clean` shows `✔` when no files have changed and no Git operation is active; stashes do not make the worktree dirty. `$stash` counts repository stashes, shared across linked worktrees. `$upstream` and `$divergence` use local refs without fetching. `$state` shows an active merge, rebase, cherry-pick, or revert. Detached HEAD shows a short commit ID. Outside a repository or when Git is missing, the section has no rows. Queries have a 1.5 second deadline and a 2 MiB output limit; failures omit the section and appear in `starmux explain`.
 
@@ -333,7 +459,7 @@ style = "dim"
 
 The default shows only `last 12.34 ms`; `details = true` adds rows for nonzero `tmux`, `pi`, `pr`, `usage`, `gob`, `commands`, `git`, `format`, and `top` stages. These are source query and formatting times: several sidebar modules share a source, and `commands` combines configured external commands. The total is the sum of the stages, subject to rounding when displayed. The interval begins before the tmux snapshot and ends after formatting the sidebar. It excludes process startup, reading and writing the debug cache, and tmux's evaluation of the resulting status text. Background refresh workers are not included; starting them during a redraw is included. `starmux timings` includes `top_us` for host cache lookup and runs its own query without starting refresh workers.
 
-The first redraw shows `last --`. Each completed redraw records its measurement for the next one; the value expires after five minutes. Cache errors also show `last --` and do not interrupt the sidebar. The default cache is `debug/` under the shared Starmux cache root; set an absolute `cache_dir` under `[debug]` to change it. Rows have no click targets and use the configured validated style. `disabled = true` omits the rows and cache access. The default module list does not include `debug`.
+The first redraw shows `last --`. Each completed redraw records its measurement for the next one; the value expires after five minutes. Cache errors also show `last --` and do not interrupt the sidebar. The default cache is `debug/` under the shared Starmux cache root; set an absolute `cache_dir` under `[debug]` to change it. Rows have no click action by default and use the configured validated style. `disabled = true` omits the rows and cache access. The default module list does not include `debug`.
 
 ## Tmux integration
 

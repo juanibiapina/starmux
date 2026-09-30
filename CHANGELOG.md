@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Configure click actions for any sidebar row, with shared defaults and overrides for individual jobs, metrics, usage windows, plans, and skills.
+
+### Fixed
+
+- Keep sidebar content and click actions on the correct client when multiple tmux clients are attached.
+
 ## [0.5.1] - 2026-09-30
 
 ### Fixed

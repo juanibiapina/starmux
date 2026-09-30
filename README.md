@@ -3,7 +3,7 @@
 A fast and configurable sidebar for tmux.
 
 - View tmux sessions and windows, host CPU, memory, and battery status, live Pi sessions and selected Pi context from [pi-workbench](https://github.com/juanibiapina/pi-workbench), and AI provider usage
-- Everything is clickable with a mouse and takes you to the expected place
+- Navigate with a mouse and configure click actions for any sidebar row
 - Supports colorschemes
 
 ![Starmux sidebar showing sessions and windows](docs/images/sidebar.png)
