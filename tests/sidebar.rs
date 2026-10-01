@@ -74,6 +74,193 @@ fn portable_defaults_render_navigation_without_personal_options() {
 }
 
 #[test]
+fn active_only_sessions_follow_focus_and_round_trip() {
+    let sidebar = Sidebar::from_toml("[sessions]\nactive_only = true").unwrap();
+    let printed = sidebar.print_config().unwrap();
+    assert!(printed.contains("active_only = true"));
+    let sidebar = Sidebar::from_toml(&printed).unwrap();
+    let mut input = snapshot();
+    let rendered = sidebar.render(&input).unwrap();
+    assert!(rendered.contains("range=user|st0 "));
+    assert!(rendered.contains("range=user|sw0 list=focus "));
+    assert!(rendered.contains("range=user|sw1 "));
+    assert!(rendered.contains("##[fg=red] x##{oops}"));
+    assert!(!rendered.contains("range=user|st1 "));
+    assert!(!rendered.contains("range=user|sw1z141z6 "));
+
+    input.current_session = "$1".into();
+    input.current_pane = "%2".into();
+    let rendered = sidebar.render(&input).unwrap();
+    assert!(rendered.contains("range=user|st1 "));
+    assert!(rendered.contains("range=user|sw1z141z6 list=focus "));
+    assert!(!rendered.contains("range=user|st0 "));
+    assert!(!rendered.contains("range=user|sw0 "));
+    assert!(!rendered.contains("range=user|sw1 "));
+
+    let all = Sidebar::from_toml("[sessions]\nactive_only = false").unwrap();
+    assert_eq!(
+        all.render(&input).unwrap(),
+        Sidebar::defaults().unwrap().render(&input).unwrap()
+    );
+}
+
+#[test]
+fn active_only_respects_layout_visibility_named_lists_and_folding() {
+    for (settings, width, windows) in [
+        ("", 30, true),
+        ("show_windows = false", 30, false),
+        ("", 2, false),
+        ("[slim]\nshow_windows = true", 2, true),
+        ("show_windows = false\n[slim]\nshow_windows = true", 2, true),
+    ] {
+        let config = format!(
+            "[sessions]\nactive_only = true\n{settings}\n[configs.right]\nmodules = ['sessions']"
+        );
+        let sidebar = Sidebar::from_toml(&config).unwrap();
+        let folded = Sidebar::from_toml(&config.replace(
+            "active_only = true",
+            "active_only = true\nfold_inactive = true",
+        ))
+        .unwrap();
+        let mut input = snapshot();
+        input.width = width;
+        for (sidebar, folded) in [
+            (sidebar.clone(), folded.clone()),
+            (
+                sidebar.select("right").unwrap(),
+                folded.select("right").unwrap(),
+            ),
+        ] {
+            let rendered = sidebar.render(&input).unwrap();
+            assert_eq!(rendered, folded.render(&input).unwrap());
+            assert!(!rendered.contains("range=user|st1 "));
+            assert!(!rendered.contains("range=user|sw1z141z6 "));
+            if windows {
+                assert!(rendered.contains("range=user|sw0 list=focus "));
+                assert!(rendered.contains("range=user|sw1 "));
+            } else {
+                assert!(rendered.contains("range=user|st0 list=focus "));
+                assert!(!rendered.contains("range=user|sw"));
+            }
+        }
+    }
+}
+
+#[test]
+fn folding_inactive_sessions_follows_tmux_focus_and_preserves_headings() {
+    let sidebar = Sidebar::from_toml("[sessions]\nfold_inactive = true").unwrap();
+    let printed = sidebar.print_config().unwrap();
+    assert!(printed.contains("fold_inactive = true"));
+    let sidebar = Sidebar::from_toml(&printed).unwrap();
+    let mut input = snapshot();
+    let rendered = sidebar.render(&input).unwrap();
+    assert!(rendered.contains("range=user|st0 "));
+    assert!(rendered.contains("range=user|st1 "));
+    assert!(rendered.contains("range=user|sw0 list=focus "));
+    assert!(rendered.contains("range=user|sw1 "));
+    assert!(rendered.contains("##[fg=red] x##{oops}"));
+    assert!(!rendered.contains("range=user|sw1z141z6 "));
+
+    input.current_session = "$1".into();
+    input.current_pane = "%2".into();
+    let rendered = sidebar.render(&input).unwrap();
+    assert!(rendered.contains("range=user|st0 "));
+    assert!(rendered.contains("range=user|st1 "));
+    assert!(rendered.contains("range=user|sw1z141z6 list=focus "));
+    assert!(!rendered.contains("range=user|sw0 "));
+    assert!(!rendered.contains("range=user|sw1 "));
+
+    let unfolded = Sidebar::from_toml("[sessions]\nfold_inactive = false").unwrap();
+    assert_eq!(
+        unfolded.render(&input).unwrap(),
+        Sidebar::defaults().unwrap().render(&input).unwrap()
+    );
+}
+
+#[test]
+fn folding_respects_full_and_slim_window_visibility_and_named_lists() {
+    for (settings, width, windows) in [
+        ("", 30, true),
+        ("show_windows = false", 30, false),
+        ("", 2, false),
+        ("[slim]\nshow_windows = true", 2, true),
+        ("show_windows = false\n[slim]\nshow_windows = true", 2, true),
+    ] {
+        let config = format!(
+            "[sessions]\nfold_inactive = true\n{settings}\n[configs.right]\nmodules = ['sessions']"
+        );
+        let sidebar = Sidebar::from_toml(&config).unwrap();
+        let mut input = snapshot();
+        input.width = width;
+        for sidebar in [sidebar.clone(), sidebar.select("right").unwrap()] {
+            let rendered = sidebar.render(&input).unwrap();
+            assert!(rendered.contains("range=user|st1 "));
+            assert!(!rendered.contains("range=user|sw1z141z6 "));
+            if windows {
+                assert!(rendered.contains("range=user|sw0 list=focus "));
+                assert!(rendered.contains("range=user|sw1 "));
+            } else {
+                assert!(rendered.contains("range=user|st0 list=focus "));
+                assert!(!rendered.contains("range=user|sw"));
+            }
+        }
+    }
+}
+
+#[test]
+fn folded_scroll_bounds_follow_content_without_changing_expansion() {
+    let sidebar = Sidebar::from_toml(
+        "modules = ['sessions', 'spacer', 'divider', 'pi-workbench']\n[sessions]\nfold_inactive = true",
+    ).unwrap();
+    let pi = PiSession {
+        name: "working session".into(),
+        location: None,
+        state: "working".into(),
+        selected: false,
+        project: "project".into(),
+        target: None,
+    };
+    let commands = BTreeMap::new();
+    let mut input = snapshot();
+    let mut render = |height, pi_sessions, offset| {
+        input.client_height = height;
+        sidebar
+            .render_scrolled(
+                &input,
+                starmux::RenderInputs {
+                    top: None,
+                    pi_sessions,
+                    usage_rows: &[],
+                    gob_jobs: &[],
+                    context: None,
+                    states: &[],
+                    commands: &commands,
+                    git: None,
+                    debug: None,
+                },
+                offset,
+            )
+            .unwrap()
+    };
+    for pi_sessions in [&[][..], std::slice::from_ref(&pi)] {
+        let (rendered, offset, max) = render(20, pi_sessions, usize::MAX);
+        assert_eq!((offset, max), (0, 0));
+        assert!(rendered.contains("range=user|st1 "));
+        assert!(rendered.contains("range=user|sw0 list=focus "));
+        assert!(rendered.contains("range=user|sw1 "));
+        assert!(!rendered.contains("range=user|sw1z141z6 "));
+    }
+    // Four navigation rows and one divider in a four-row viewport.
+    let (_, offset, max) = render(5, &[], usize::MAX);
+    assert_eq!((offset, max), (1, 1));
+    // A Pi project heading and session add two rows without expanding tmux sessions.
+    let (_, offset, max) = render(5, std::slice::from_ref(&pi), usize::MAX);
+    assert_eq!((offset, max), (3, 3));
+    let (_, offset, max) = render(5, &[], 3);
+    assert_eq!((offset, max), (1, 1));
+}
+
+#[test]
 fn spacer_places_following_rows_at_the_bottom_and_collapses_on_overflow() {
     let sidebar = Sidebar::from_toml(
         "modules = [\"sessions\", \"gob\", \"spacer\", \"divider\"]\n[gob]\ndisabled = true",

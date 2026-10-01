@@ -241,6 +241,26 @@ The module shows a `SYSTEM` heading and compact rows with Nerd Font icons, perce
 
 Starmux stores persistent state beneath `$XDG_CACHE_HOME/starmux` when `XDG_CACHE_HOME` is set, `~/Library/Caches/starmux` by default on macOS, and `~/.cache/starmux` by default on Linux. Separate `top/`, `usage/`, `pr-state/`, `debug/`, and `scroll/` directories keep their records apart. Set a top-level absolute `cache_dir` to change the root. Existing `[usage].cache_dir` and `[debug].cache_dir` settings take priority for their respective modules. Older macOS PR, debug, and scroll caches under `~/.cache/starmux` are disposable and expire in place.
 
+## Session visibility
+
+Show only the active tmux session's windows while keeping every session heading:
+
+```toml
+[sessions]
+fold_inactive = true
+```
+
+`fold_inactive` defaults to `false`. Switching tmux sessions expands the new active session and folds the previous one. Sidebar height and Pi content do not affect folding. The setting applies to all named lists and both layouts. Window visibility still follows `[sessions].show_windows` in full layout and `[slim].show_windows` in slim layout; when windows are disabled, only session headings appear. Folding reduces the row count; content that still exceeds the available height remains scrollable.
+
+To hide inactive tmux sessions entirely, including their headings:
+
+```toml
+[sessions]
+active_only = true
+```
+
+`active_only` defaults to `false` and applies to all named lists and both layouts. The active session follows tmux focus, independent of sidebar height and Pi content. Its windows follow the layout's window visibility setting. With `active_only = true`, `fold_inactive` has no additional effect because inactive sessions are hidden.
+
 ## Row formats
 
 Session and window rows use a safe formatter rather than raw tmux syntax:

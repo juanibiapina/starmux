@@ -283,6 +283,8 @@ struct UsageConfig {
 struct SessionsConfig {
     disabled: bool,
     show_windows: bool,
+    fold_inactive: bool,
+    active_only: bool,
     session_format: String,
     window_format: String,
     current_session_style: String,
@@ -407,6 +409,8 @@ impl Default for SessionsConfig {
         Self {
             disabled: false,
             show_windows: true,
+            fold_inactive: false,
+            active_only: false,
             session_format: " $name ".into(),
             window_format: " $index: $name".into(),
             current_session_style: "reverse,bold".into(),
@@ -1473,6 +1477,9 @@ impl Sidebar {
         let mut rows = Vec::new();
         for session in &snapshot.sessions {
             let current = session.id == snapshot.current_session;
+            if self.sessions.config.active_only && !current {
+                continue;
+            }
             let style = if current {
                 &self.sessions.config.current_session_style
             } else {
@@ -1507,7 +1514,7 @@ impl Sidebar {
                 selected: false,
             });
 
-            if !self.show_windows() {
+            if !self.show_windows() || (self.sessions.config.fold_inactive && !current) {
                 continue;
             }
             for window in &session.windows {
