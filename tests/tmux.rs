@@ -1316,22 +1316,19 @@ fn pi_attention_row_click_selects_its_pane() {
     tmux(&["set-option", "-p", "-t", &working, "@pi_state", "working"]);
     let pi_socket = root.join("sockets/pi.sock");
     let listener = UnixListener::bind(&pi_socket).unwrap();
-    listener.set_nonblocking(true).unwrap();
     let running = Arc::new(AtomicBool::new(true));
     let listening = running.clone();
     let responder = thread::spawn(move || {
-        while listening.load(Ordering::Relaxed) {
-            match listener.accept() {
-                Ok((mut stream, _)) => {
-                    let mut request = [0; 128];
-                    if stream.read(&mut request).is_ok_and(|count| count > 0) {
-                        let _ = stream.write_all(b"{\"ok\":true,\"result\":{\"type\":\"pong\"}}\n");
-                    }
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(10))
-                }
-                Err(error) => panic!("Pi test socket: {error}"),
+        while let Ok((mut stream, _)) = listener.accept() {
+            if !listening.load(Ordering::Relaxed) {
+                break;
+            }
+            stream
+                .set_read_timeout(Some(Duration::from_millis(40)))
+                .unwrap();
+            let mut request = [0; 128];
+            if stream.read(&mut request).is_ok_and(|count| count > 0) {
+                let _ = stream.write_all(b"{\"ok\":true,\"result\":{\"type\":\"pong\"}}\n");
             }
         }
     });
@@ -1724,6 +1721,7 @@ action = "skill"
     foreign_tmux(&["kill-server"]);
     let _ = client.wait();
     running.store(false, Ordering::Relaxed);
+    std::os::unix::net::UnixStream::connect(&pi_socket).unwrap();
     responder.join().unwrap();
     fs::remove_dir_all(root).unwrap();
 }
