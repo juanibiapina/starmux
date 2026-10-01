@@ -126,6 +126,7 @@ fn catalog(module: &str) -> Vec<(&'static str, &'static [&'static str])> {
             ),
         ],
         "pi-workbench" => vec![
+            ("heading", &[]),
             ("project", &["project"]),
             (
                 "session",

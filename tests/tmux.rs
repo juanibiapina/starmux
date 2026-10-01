@@ -1481,7 +1481,17 @@ fn pi_attention_row_click_selects_its_pane() {
         .unwrap();
     assert!(row.contains("#[fg=magenta]●"), "{row}");
     assert!(row.contains("#[range=user|sp"), "{row}");
-    write!(input, "\x1b[<0;29;6M\x1b[<0;29;6m").unwrap();
+    let attention_row = rendered
+        .split("#[nl]")
+        .skip(2)
+        .position(|row| row.contains("attention"))
+        .unwrap()
+        + 1;
+    write!(
+        input,
+        "\x1b[<0;29;{attention_row}M\x1b[<0;29;{attention_row}m"
+    )
+    .unwrap();
     input.flush().unwrap();
     let target_window = tmux(&["display-message", "-p", "-t", &attention, "#{window_id}"]);
     for _ in 0..30 {

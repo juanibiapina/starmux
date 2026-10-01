@@ -24,6 +24,7 @@ other_window_fill = "background"
 style = "fg=border,nobold"
 
 [pi-workbench]
+heading_style = "fg=accent,bold"
 project_style = "fg=text,bold"
 idle_style = "fg=muted"
 working_style = "fg=warning"

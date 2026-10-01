@@ -194,7 +194,7 @@ Usage windows expose their raw provider labels and optional durations. The examp
 | `usage` | `provider`, `cache-age`, `window` | `provider`; windows also have `label`, optional `duration_seconds` |
 | `pi-context` | `heading`, `category`, `plan`, `skill`, `pr` | Categories: `category` (`plans`, `skills`, `prs`); plans: `file`, `title`; skills: `name`, optional `file`; PRs: `url` |
 | `sessions` | `session`, `window` | `target_session`, `name`; windows also have `target_window`, `index` |
-| `pi-workbench` | `project`, `session` | `project`; sessions also have `name`, optional `target_pane`, `target_window` |
+| `pi-workbench` | `heading`, `project`, `session` | `project`; sessions also have `name`, optional `target_pane`, `target_window` |
 | `git` | `line`, `summary` | Full-layout lines have `slot`: entry in the configured `git.lines` list; the slim summary has no slot |
 | `command.NAME` | `output` | Select the command through its full module name |
 | `debug` | `total`, `stage` | `stage`: `tmux`, `pi`, `pr`, `usage`, `gob`, `commands`, `git`, `format`, `top` |
@@ -419,6 +419,7 @@ modules = ["sessions", "divider", "pi-workbench"]
 
 [pi-workbench]
 format = "  $state $name"
+heading_style = "bold"
 project_style = "bold"
 idle_style = "fg=brightblack"
 working_style = "fg=yellow"
@@ -427,7 +428,7 @@ selected_style = "reverse,bold"
 selected_fill = "default"
 ```
 
-Pi sessions are grouped by project. Starmux finds the nearest Git root above each published cwd; when there is no Git root, the cwd is the project. Each project gets one heading styled by `project_style`. Groups sort by their highest priority session: attention, working, selected idle, then idle. Sessions within a group use the same priority order, then name. A project heading adds one sidebar row.
+When Pi sessions are available, full layout shows a `π Sessions` heading styled by `heading_style` above the project groups. Slim layout omits this heading. Pi sessions are grouped by project. Starmux finds the nearest Git root above each published cwd; when there is no Git root, the cwd is the project. Each project gets one heading styled by `project_style`. Groups sort by their highest priority session: attention, working, selected idle, then idle. Sessions within a group use the same priority order, then name. A project heading adds one sidebar row.
 
 The row format supports `$state` (a `●` icon) and `$name`, optional groups, and validated styled groups. The three state styles color the icon; the name uses normal text styling unless its pane is selected. A Pi pane marked `@pi_state=notify` shows the magenta icon. The selected Pi pane uses `selected_style` and `selected_fill`. When a session has no name, `$name` shows the first eight characters of its session ID. Styles can use colors from the selected palette. Names and project headings are escaped as text and clipped to the sidebar width.
 

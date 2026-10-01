@@ -1848,7 +1848,8 @@ mod tests {
             .render_query("/tmp/starmux-current.sock", "client", 40, None)
             .unwrap();
         assert!(
-            !other_rendered.contains(" π") && !other_rendered.contains("Build search"),
+            !other_rendered.contains(" π ##[fg=red]##{oops}")
+                && !other_rendered.contains("Build search"),
             "{other_rendered}"
         );
         let context_only = format!(
@@ -1942,7 +1943,7 @@ mod tests {
         assert!(rendered.contains("✦"), "{rendered}");
         assert!(rendered.find("##[fg=red]").unwrap() < rendered.find("unnamed").unwrap());
         assert!(!rendered.contains("stale"), "{rendered}");
-        assert_eq!(rendered.matches("#[range=").count(), 9);
+        assert_eq!(rendered.matches("#[range=").count(), 10);
         app.activate("/tmp/starmux-current.sock", "client", "sp9")
             .unwrap();
         assert_eq!(

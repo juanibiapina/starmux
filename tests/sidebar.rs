@@ -253,9 +253,9 @@ fn folded_scroll_bounds_follow_content_without_changing_expansion() {
     // Four navigation rows and one divider in a four-row viewport.
     let (_, offset, max) = render(5, &[], usize::MAX);
     assert_eq!((offset, max), (1, 1));
-    // A Pi project heading and session add two rows without expanding tmux sessions.
+    // Pi section and project headings plus a session add three rows.
     let (_, offset, max) = render(5, std::slice::from_ref(&pi), usize::MAX);
-    assert_eq!((offset, max), (3, 3));
+    assert_eq!((offset, max), (4, 4));
     let (_, offset, max) = render(5, &[], 3);
     assert_eq!((offset, max), (1, 1));
 }
@@ -533,13 +533,32 @@ idle_style = "fg=muted"
         rendered.contains("#[fg=#828bb8]●#[default] waiting"),
         "{rendered}"
     );
+    assert_eq!(rendered.matches("π Sessions").count(), 1);
+    assert!(rendered.find("π Sessions").unwrap() < rendered.find("starmux").unwrap());
     assert!(rendered.find("waiting").unwrap() < rendered.find("----------").unwrap());
+    assert!(!sidebar.render(&input).unwrap().contains("π Sessions"));
+    let pi = PiSession {
+        state: "idle".into(),
+        project: "/projects/starmux".into(),
+        name: "only session".into(),
+        location: None,
+        target: None,
+        selected: false,
+    };
+    let single = sidebar
+        .render_with_pi_workbench(&input, std::slice::from_ref(&pi))
+        .unwrap();
+    assert_eq!(single.matches("π Sessions").count(), 1);
+    input.width = 2;
+    let slim = sidebar.render_with_pi_workbench(&input, &[pi]).unwrap();
+    assert!(!slim.contains("π Sessions"));
     assert!(!rendered.contains("#[range=user|bad]#{oops}"));
     assert!(!rendered.contains("#[range=window|"));
 
     for config in [
         "modules = [\"pi-workbench\"]\n[pi-workbench]\nformat = \"$cwd\"",
         "modules = [\"pi-workbench\"]\n[pi-workbench]\nworking_style = \"fg=#[bad]\"",
+        "modules = [\"pi-workbench\"]\n[pi-workbench]\nheading_style = \"fg=#[bad]\"",
         "modules = [\"pi-workbench\"]\n[pi-workbench]\ndata_dir = \"relative\"",
     ] {
         assert!(Sidebar::from_toml(config).is_err(), "accepted {config}");

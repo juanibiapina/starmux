@@ -328,6 +328,7 @@ struct PiWorkbenchConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     data_dir: Option<String>,
     format: String,
+    heading_style: String,
     project_style: String,
     idle_style: String,
     working_style: String,
@@ -456,6 +457,7 @@ impl Default for PiWorkbenchConfig {
             disabled: false,
             data_dir: None,
             format: "  $state $name".into(),
+            heading_style: "bold".into(),
             project_style: "bold".into(),
             idle_style: "fg=brightblack".into(),
             working_style: "fg=yellow".into(),
@@ -815,6 +817,7 @@ impl Sidebar {
             &config.sessions.selected_window_style,
             &config.sessions.other_window_style,
             &config.divider.style,
+            &config.pi_workbench.heading_style,
             &config.pi_workbench.project_style,
             &config.pi_workbench.idle_style,
             &config.pi_workbench.working_style,
@@ -1602,6 +1605,9 @@ impl Sidebar {
     }
 
     fn render_pi_workbench(&self, sessions: &[crate::PiSession]) -> Result<Vec<Row>, String> {
+        if sessions.is_empty() {
+            return Ok(Vec::new());
+        }
         let mut ordered = sessions.to_vec();
         crate::pi_workbench::sort_sessions(&mut ordered);
         let mut labels: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
@@ -1611,7 +1617,22 @@ impl Sidebar {
                 .or_default()
                 .insert(&session.project);
         }
-        let mut rows = Vec::new();
+        let mut rows = vec![Row {
+            divider: false,
+            identity: crate::actions::Identity::new("heading"),
+            spans: vec![Span {
+                text: " π Sessions".into(),
+                style: resolve_style(
+                    &self.config.pi_workbench.heading_style,
+                    "default",
+                    &self.palette,
+                )?,
+            }],
+            fill: None,
+            range: None,
+            focus: false,
+            selected: false,
+        }];
         let mut previous = None;
         for session in &ordered {
             if previous != Some(session.project.as_str()) {
