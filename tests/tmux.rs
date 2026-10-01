@@ -1537,22 +1537,30 @@ fn pi_attention_row_click_selects_its_pane() {
     for width in ["30", "2"] {
         let total_width = (width.parse::<usize>().unwrap() + 1).to_string();
         tmux(&["set", "-g", "side-status-width", &total_width]);
-        let rendered = Command::new(binary)
-            .args([
-                "render-query",
-                &format!("--width={width}"),
-                &format!("--socket={socket_path}"),
-                &format!("--client={client_name}"),
-            ])
-            .env("STARMUX_CONFIG", &config)
-            .output()
-            .unwrap();
-        assert!(
-            rendered.status.success(),
-            "{}",
-            String::from_utf8_lossy(&rendered.stderr)
-        );
-        selected_context = String::from_utf8(rendered.stdout).unwrap();
+        for _ in 0..30 {
+            let rendered = Command::new(binary)
+                .args([
+                    "render-query",
+                    &format!("--width={width}"),
+                    &format!("--socket={socket_path}"),
+                    &format!("--client={client_name}"),
+                ])
+                .env("STARMUX_CONFIG", &config)
+                .output()
+                .unwrap();
+            assert!(
+                rendered.status.success(),
+                "{}",
+                String::from_utf8_lossy(&rendered.stderr)
+            );
+            selected_context = String::from_utf8(rendered.stdout).unwrap();
+            if selected_context.contains("#[range=user|sl")
+                && (width != "30" || selected_context.contains("#[range=user|ss"))
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
         for (kind, expected) in [
             (
                 "sl",
@@ -1568,7 +1576,9 @@ fn pi_attention_row_click_selects_its_pane() {
             let token = selected_context
                 .split(&format!("#[range=user|{kind}"))
                 .nth(1)
-                .unwrap()
+                .unwrap_or_else(|| {
+                    panic!("missing {kind} target at width={width}: {selected_context}")
+                })
                 .split(' ')
                 .next()
                 .unwrap();
