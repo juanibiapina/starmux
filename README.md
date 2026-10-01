@@ -18,11 +18,32 @@ See [slim sidebar configuration](docs/configuration.md#slim-sidebar) for the two
 
 ## Installation
 
-Install Starmux:
+### Homebrew
 
 ```sh
 brew install juanibiapina/taps/starmux
 ```
+
+### Nix
+
+Add Starmux to your flake inputs:
+
+```nix
+inputs.starmux = {
+  url = "github:juanibiapina/starmux";
+  inputs.nixpkgs.follows = "nixpkgs";
+};
+```
+
+Then add it to your packages:
+
+```nix
+environment.systemPackages = [
+  inputs.starmux.packages.${pkgs.stdenv.hostPlatform.system}.default
+];
+```
+
+### Tmux setup
 
 Generate the tmux adapter (may also be required after upgrades).
 

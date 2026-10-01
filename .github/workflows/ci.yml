@@ -6,6 +6,19 @@ on:
   workflow_dispatch:
 
 jobs:
+  nix:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - run: nix flake check --all-systems --no-build --no-write-lock-file
+      - run: nix flake check --no-write-lock-file --print-build-logs --option sandbox true
+      - run: nix build .#default --no-write-lock-file --no-link --print-build-logs
+
   check:
     runs-on: ${{ matrix.os }}
     strategy:

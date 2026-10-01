@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Install Starmux through a Nix flake on Linux and macOS.
+
 ## [0.6.0] - 2026-10-01
 
 ### Added
