@@ -37,6 +37,69 @@ Run `starmux render-query --config=right --width=30 --socket=PATH --client=NAME`
 
 `starmux init tmux` selects `default`. For another tmux render area, copy its generated render invocation and add `--config=right` after `render-query`. Pass the same `--config=right` to custom `starmux activate`, `starmux scroll`, and `starmux scroll-event` bindings for that area. Scroll positions are separate for each list on a client. Tmux controls the placement and width of each area; Starmux renders its selected rows within the supplied width and available height.
 
+## Slim sidebar
+
+Content width two automatically uses the slim layout. Content widths of three or more columns use the full layout. The minimum content width is two. Tmux reserves one sidebar column for its border: set `side-status-width` to 3 for two content columns or 31 for thirty. The generated adapter subtracts the border from the width passed to Starmux. Slim rows have no leading indent and show one or two glyphs per source item.
+
+```toml
+[slim]
+mode = "auto" # auto, full, or slim
+show_windows = false
+# Optional: omit to inherit the default modules list. [] hides all content.
+modules = ["sessions", "divider", "pi-workbench", "spacer", "top"]
+
+[sessions]
+show_windows = true # Full-layout window visibility
+
+[configs.right]
+modules = ["usage", "spacer", "git"]
+# Optional: omit to inherit this named list's modules.
+slim_modules = ["usage", "spacer", "git"]
+```
+
+`mode = "full"` keeps full formats at every width. `mode = "slim"` uses at most two content columns at every width. Slim mode hides tmux windows by default; `[slim].show_windows = true` shows them. Full and slim window visibility are independent. The current session remains the focus row when its windows are hidden.
+
+The default slim list inherits the top-level `modules`. Each named list inherits its own `modules` unless it defines `slim_modules`; it does not inherit `[slim].modules`. All lists share the same mode, window visibility, module settings, styles, colorscheme, and disabled flags. Only modules in the effective list run their source queries. Commands referenced exclusively by a slim list are supported.
+
+### Glyph legend
+
+| Content | First cell | Second cell |
+| --- | --- | --- |
+| Tmux session | `󰆍` terminal icon | `●` current, `○` other session |
+| Optional tmux window | `` window icon | `●` selected, `○` other window |
+| Pi session | `󰂚` attention, `▶` working, `○` idle | `●` selected, `○` other pane |
+| Pi plan | `◇` | One glyph only |
+| Pi pull request | Existing open, draft, merged, or closed icon | `󰋗` when its state is unknown |
+| Usage without valid windows | Provider icon | `󰌾` sign-in failure, `` refresh failure, `󰋗` unavailable, `◷` stale |
+| Usage window | Provider icon; cached failures use `󰌾` or `` | Pie of used quota, such as `◑` for roughly 50% used |
+| Host metric | `󰻠` CPU, `󰍛` memory, battery-state icon | Pie of CPU/memory used or battery charge remaining; `󰋗` unavailable |
+| Running job | `` | `▶` running |
+| Job progress | `↳` | Estimated elapsed-time gauge |
+| Git | `` conflicts, `↻` operation, `` dirty, `✓` clean, in priority order | `↕` diverged, `↑` ahead, `↓` behind, `·` neither |
+| Named command | Configured `slim_icon`, default `` | One glyph only |
+| Debug timing | `◷` previous timing available, `󰋗` unavailable | One glyph only |
+| Divider | Configured glyph; `─` when it needs two columns | Repeat across the second column |
+
+Provider icons are Anthropic `󰚩`, Codex ``, Copilot ``, Gemini `✦`, Antigravity `◎`, Kiro `󰊠`, z.ai `󰘦`, and xAI `󰖟`. The rail uses Nerd Font icons, as do the full-layout host and PR rows. Usage and host pies use `○ ◔ ◑ ◕ ●`, rounded to the nearest 25%. Usage pies show quota consumed; host pies show CPU/memory used and battery charge remaining. Job gauges use `░` for zero and `▁` through `█` for eight increasing bands. Missing data is not zero.
+
+Host metrics retain their existing critical thresholds. Unavailable readings use dim metric icons. Critical readings use bold critical styling and retain their pie. Battery icons show normal `󰁹`, low `󰁺`, charging `󰂄`, or full `󱟢` state. Full takes priority over charging. Cached host readings use the stale style. Cached usage after a failed refresh remains dimmed.
+
+Slim mode omits usage provider headers when valid windows are available, names, initials, numeric indices, system/job headings, Pi project headings, Pi context headings, plan/PR category labels, usage cache-age rows and reset counts, and detailed debug rows. Plans and PRs keep individual click targets and original selector metadata. Skills and their category are omitted from slim mode. Click rules for skills and their category apply to full-layout rows. Job progress retains its separate `part = "progress"` row. Git uses one `kind = "summary"` row; full-layout `kind = "line"` and `slot` rules apply only to full rows. Hidden headings have no row for a heading click rule to match.
+
+Full layout supplies names, individual skills, exact readings, counts, reset times, and timings. Use `starmux explain` for source details and `starmux timings` for measurements. Debug markers convey availability only, so omit `debug` from slim lists when it adds no useful information.
+
+Named commands show an icon only for successful, nonempty output. Starmux does not infer status from arbitrary output text:
+
+```toml
+[commands.build]
+argv = ["my-status", "--short"]
+slim_icon = ""
+```
+
+`slim_icon` must be one visible, one-column grapheme without whitespace or control characters. Full formats remain full-layout settings; slim rows use the representations above.
+
+Full and slim layouts keep separate scroll positions for each client and named list. Regenerate and source `starmux init tmux` to install bindings that pass the render area's width. Custom named-area bindings should pass the same `--config=NAME` and `--width=COLUMNS` to rendering, activation, and scrolling. If activation or scrolling omits `--width`, it queries the client's side-status width and subtracts the border column. Custom clicks from a previous layout, width, or list are rejected.
+
 ## Click actions
 
 Every row supports a configurable click action. This includes headings, dividers, blanks, and spacer padding. Existing navigation remains the default.
@@ -132,7 +195,7 @@ Usage windows expose their raw provider labels and optional durations. The examp
 | `pi-context` | `heading`, `category`, `plan`, `skill`, `pr` | Categories: `category` (`plans`, `skills`, `prs`); plans: `file`, `title`; skills: `name`, optional `file`; PRs: `url` |
 | `sessions` | `session`, `window` | `target_session`, `name`; windows also have `target_window`, `index` |
 | `pi-workbench` | `project`, `session` | `project`; sessions also have `name`, optional `target_pane`, `target_window` |
-| `git` | `line` | `slot`: entry in the configured `git.lines` list |
+| `git` | `line`, `summary` | Full-layout lines have `slot`: entry in the configured `git.lines` list; the slim summary has no slot |
 | `command.NAME` | `output` | Select the command through its full module name |
 | `debug` | `total`, `stage` | `stage`: `tmux`, `pi`, `pr`, `usage`, `gob`, `commands`, `git`, `format`, `top` |
 | `divider` | `divider` | Select repeated dividers through `instance` |
@@ -465,6 +528,6 @@ The first redraw shows `last --`. Each completed redraw records its measurement 
 
 `starmux init tmux` generates the side-status render command, click binding, and wheel bindings. Position, width, and outer style remain ordinary tmux options.
 
-The adapter passes `#{side-status-width}` as the explicit `--width` argument. Valid widths are 1–300 columns. If the client switches sessions or windows during a redraw, Starmux discards that stale render; the next redraw shows the new focus. Other status clicks retain tmux's default action.
+The adapter passes `#{e|-:#{side-status-width},1}` as the explicit `--width` argument, excluding tmux's border column. Valid content widths are 2–300 columns; set `side-status-width` to at least 3. If the client switches sessions or windows during a redraw, Starmux discards that stale render; the next redraw shows the new focus. Other status clicks retain tmux's default action.
 
 With `mouse on`, wheel up and down over the sidebar scroll the complete list one row at a time, including rows from every configured module. The selected tmux window stays unchanged; click a visible row to activate it. Each attached client keeps its own position. Scrolling stops at the first and last page and adjusts to changes in content or client height. Wheel events over the ordinary horizontal status keep tmux's window selection behavior. Regenerate and source `starmux init tmux` after upgrading to install the wheel bindings.

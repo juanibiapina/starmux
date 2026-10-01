@@ -53,6 +53,8 @@ pub struct Pane {
 }
 
 pub trait Tmux {
+    fn sidebar_width(&self, socket: &str, client: &str) -> Result<usize, String>;
+
     fn panes(&self, socket: &str) -> Result<Vec<Pane>, String>;
 
     fn snapshot(
@@ -76,10 +78,83 @@ pub trait Tmux {
     ) -> Result<(), String>;
 }
 
+impl<T: Tmux + ?Sized> Tmux for &T {
+    fn sidebar_width(&self, socket: &str, client: &str) -> Result<usize, String> {
+        (**self).sidebar_width(socket, client)
+    }
+    fn panes(&self, socket: &str) -> Result<Vec<Pane>, String> {
+        (**self).panes(socket)
+    }
+    fn snapshot(
+        &self,
+        socket: &str,
+        client: &str,
+        width: usize,
+        options: &[(String, String)],
+    ) -> Result<Snapshot, String> {
+        (**self).snapshot(socket, client, width, options)
+    }
+    fn activate(&self, socket: &str, client: &str, token: &str) -> Result<(), String> {
+        (**self).activate(socket, client, token)
+    }
+    fn open_url(&self, url: &str) -> Result<(), String> {
+        (**self).open_url(url)
+    }
+    fn run_action(&self, args: &[String], directory: &std::path::Path) -> Result<(), String> {
+        (**self).run_action(args, directory)
+    }
+    fn open_file(
+        &self,
+        path: &std::path::Path,
+        command: Option<&[std::ffi::OsString]>,
+    ) -> Result<(), String> {
+        (**self).open_file(path, command)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ProcessTmux;
 
 impl Tmux for ProcessTmux {
+    fn sidebar_width(&self, socket: &str, client: &str) -> Result<usize, String> {
+        if socket.is_empty() || client.is_empty() {
+            return Err("missing tmux socket or client name".into());
+        }
+        let target = client_target(socket, client)?;
+        let pane = format!(
+            "{}:{}.{}",
+            target.focus.session, target.focus.window, target.pane
+        );
+        let output = Command::new("tmux")
+            .args([
+                "-S",
+                socket,
+                "display-message",
+                "-p",
+                "-c",
+                client,
+                "-t",
+                &pane,
+                "--",
+                "#{side-status-width}",
+            ])
+            .output()
+            .map_err(|error| format!("tmux width query failed: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "tmux width query failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        let width = String::from_utf8(output.stdout)
+            .map_err(|_| "invalid tmux sidebar width")?
+            .trim()
+            .parse()
+            .map_err(|_| "invalid tmux sidebar width")?;
+        let width = usize::saturating_sub(width, 1);
+        validate_width(width)?;
+        Ok(width)
+    }
     fn run_action(&self, args: &[String], directory: &std::path::Path) -> Result<(), String> {
         crate::actions::run(args, directory)
     }
@@ -479,6 +554,9 @@ impl MemoryTmux {
 
 #[cfg(test)]
 impl Tmux for MemoryTmux {
+    fn sidebar_width(&self, _: &str, _: &str) -> Result<usize, String> {
+        Ok(self.snapshot.width)
+    }
     fn run_action(&self, args: &[String], directory: &std::path::Path) -> Result<(), String> {
         crate::actions::run(args, directory)
     }
@@ -558,7 +636,23 @@ impl<T: Tmux> Application<T> {
         Self { sidebar, tmux }
     }
 
+    fn for_width(&self, width: usize) -> Application<&T> {
+        Application::new(self.sidebar.for_width(width), &self.tmux)
+    }
+
     pub fn render_query(
+        &self,
+        socket: &str,
+        client: &str,
+        width: usize,
+        focus: Option<&Focus>,
+    ) -> Result<String, String> {
+        validate_width(width)?;
+        self.for_width(width)
+            .render_view(socket, client, width, focus)
+    }
+
+    fn render_view(
         &self,
         socket: &str,
         client: &str,
@@ -570,11 +664,12 @@ impl<T: Tmux> Application<T> {
                 .map(std::path::PathBuf::from)
                 .or_else(|| self.sidebar.cache_dir("debug"))
         });
-        let identity = scroll_identity(client, self.sidebar.selected_config());
+        let debug_identity = scroll_identity(client, self.sidebar.selected_config());
+        let identity = scroll_identity(client, &self.sidebar.scroll_config());
         let scroll_dir = self.sidebar.cache_dir("scroll");
         let previous = dir
             .as_deref()
-            .and_then(|dir| crate::debug::read(dir, socket, &identity));
+            .and_then(|dir| crate::debug::read(dir, socket, &debug_identity));
         let (rendered, diagnostics, max_offset) = match self.measured_render(
             socket,
             client,
@@ -596,7 +691,7 @@ impl<T: Tmux> Application<T> {
             let _ = crate::scroll::set_bound(dir, socket, &identity, max_offset);
         }
         if let Some(dir) = dir {
-            let _ = crate::debug::write(&dir, socket, &identity, &diagnostics);
+            let _ = crate::debug::write(&dir, socket, &debug_identity, &diagnostics);
         }
         Ok(rendered)
     }
@@ -813,6 +908,18 @@ impl<T: Tmux> Application<T> {
         width: usize,
         focus: Option<&Focus>,
     ) -> Result<String, String> {
+        validate_width(width)?;
+        self.for_width(width)
+            .explain_view(socket, client, width, focus)
+    }
+
+    fn explain_view(
+        &self,
+        socket: &str,
+        client: &str,
+        width: usize,
+        focus: Option<&Focus>,
+    ) -> Result<String, String> {
         let snapshot = self.snapshot(socket, client, width, focus)?;
         let (mut pi_sessions, context) = self.pi_sessions(socket, &snapshot)?;
         crate::pi_workbench::sort_sessions(&mut pi_sessions);
@@ -823,6 +930,14 @@ impl<T: Tmux> Application<T> {
             &pi_sessions,
             context.as_ref(),
             &usage_rows,
+        );
+        result.insert_str(
+            0,
+            &format!(
+                "config={} layout={}\n",
+                self.sidebar.selected_config(),
+                self.sidebar.layout_name()
+            ),
         );
         let mut top = None;
         if self.sidebar.top_enabled() {
@@ -914,7 +1029,9 @@ impl<T: Tmux> Application<T> {
         width: usize,
         focus: Option<&Focus>,
     ) -> Result<String, String> {
-        let (_, diagnostics, _) = self.measured_render(
+        validate_width(width)?;
+        let view = self.for_width(width);
+        let (_, diagnostics, _) = view.measured_render(
             socket,
             client,
             width,
@@ -933,15 +1050,47 @@ impl<T: Tmux> Application<T> {
     }
 
     pub fn activate(&self, socket: &str, client: &str, token: &str) -> Result<(), String> {
+        self.activate_at_width(socket, client, token, None)
+    }
+
+    pub fn activate_at_width(
+        &self,
+        socket: &str,
+        client: &str,
+        token: &str,
+        width: Option<usize>,
+    ) -> Result<(), String> {
+        if let Some(width) = width {
+            validate_width(width)?;
+        }
+        if !["sc", "sl", "ss", "sr"]
+            .iter()
+            .any(|prefix| token.starts_with(prefix))
+        {
+            return self.tmux.activate(socket, client, token);
+        }
+        let width = width.map_or_else(|| self.tmux.sidebar_width(socket, client), Ok)?;
+        validate_width(width)?;
+        self.for_width(width)
+            .activate_view(socket, client, token, width)
+    }
+
+    fn activate_view(
+        &self,
+        socket: &str,
+        client: &str,
+        token: &str,
+        width: usize,
+    ) -> Result<(), String> {
         if token.starts_with("sc") {
-            return self.activate_action(socket, client, token);
+            return self.activate_action(socket, client, token, width);
         }
         if token.starts_with("sl") || token.starts_with("ss") {
             if !self.sidebar.pi_context_enabled() {
                 return Err("file click target is not enabled".into());
             }
             let index = crate::navigation::file_index(token)?;
-            let snapshot = self.snapshot(socket, client, 1, None)?;
+            let snapshot = self.snapshot(socket, client, width, None)?;
             let mut context = None;
             for _ in 0..3 {
                 context = self.pi_sessions(socket, &snapshot)?.1;
@@ -978,7 +1127,7 @@ impl<T: Tmux> Application<T> {
             if !self.sidebar.pi_context_enabled() {
                 return Err("PR click target is not enabled".into());
             }
-            let snapshot = self.snapshot(socket, client, 1, None)?;
+            let snapshot = self.snapshot(socket, client, width, None)?;
             let (_, context) = self.pi_sessions(socket, &snapshot)?;
             let context = context.ok_or("PR click target is no longer present")?;
             let url = crate::navigation::pr_target(
@@ -991,9 +1140,16 @@ impl<T: Tmux> Application<T> {
         self.tmux.activate(socket, client, token)
     }
 
-    fn activate_action(&self, socket: &str, client: &str, token: &str) -> Result<(), String> {
+    fn activate_action(
+        &self,
+        socket: &str,
+        client: &str,
+        token: &str,
+        width: usize,
+    ) -> Result<(), String> {
         let module = crate::actions::token_module(token)?;
-        let snapshot = self.snapshot(socket, client, 30, None)?;
+        let geometry = self.tmux.sidebar_width(socket, client)?;
+        let snapshot = self.snapshot(socket, client, width, None)?;
         let structural = matches!(module, "spacer" | "divider" | "blank");
         let (pi_sessions, context) =
             if structural || matches!(module, "pi-context" | "pi-workbench") {
@@ -1068,13 +1224,40 @@ impl<T: Tmux> Application<T> {
             .and_then(|session| session.windows.iter().find(|window| window.selected))
             .ok_or("missing focused window")?;
         let focus = Focus::new(&snapshot.current_session, &window.id)?;
-        let current = self.snapshot(socket, client, 30, Some(&focus))?;
+        let current = self.snapshot(socket, client, width, Some(&focus))?;
         if current.current_pane != snapshot.current_pane || current.pane_path != snapshot.pane_path
         {
             return Err("tmux pane changed during activation".into());
         }
+        if self.tmux.sidebar_width(socket, client)? != geometry {
+            return Err("tmux sidebar width changed during activation".into());
+        }
         self.tmux
             .run_action(&args, std::path::Path::new(&snapshot.pane_path))
+    }
+
+    pub fn scroll(
+        &self,
+        socket: &str,
+        client: &str,
+        direction: crate::ScrollDirection,
+        width: Option<usize>,
+        refresh: bool,
+    ) -> Result<bool, String> {
+        let width = width.map_or_else(|| self.tmux.sidebar_width(socket, client), Ok)?;
+        validate_width(width)?;
+        let sidebar = self.sidebar.for_width(width);
+        let dir = sidebar
+            .cache_dir("scroll")
+            .ok_or("missing cache directory")?;
+        scroll_client_in(
+            socket,
+            client,
+            direction,
+            refresh,
+            &sidebar.scroll_config(),
+            &dir,
+        )
     }
 
     fn snapshot(
@@ -1148,8 +1331,8 @@ fn source_explanation(
 }
 
 fn validate_width(width: usize) -> Result<(), String> {
-    if width == 0 || width > MAX_WIDTH {
-        Err(format!("width must be 1..{MAX_WIDTH}"))
+    if !(2..=MAX_WIDTH).contains(&width) {
+        Err(format!("width must be 2..{MAX_WIDTH}"))
     } else {
         Ok(())
     }

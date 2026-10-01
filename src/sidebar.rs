@@ -1,4 +1,5 @@
 mod colorscheme;
+mod slim;
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -41,6 +42,7 @@ pub struct Snapshot {
 #[serde(default, deny_unknown_fields)]
 struct Config {
     modules: Vec<String>,
+    slim: SlimConfig,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     actions: BTreeMap<String, crate::actions::Action>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -76,6 +78,26 @@ struct Config {
 #[serde(deny_unknown_fields)]
 struct ModuleList {
     modules: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    slim_modules: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum LayoutMode {
+    #[default]
+    Auto,
+    Full,
+    Slim,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+struct SlimConfig {
+    mode: LayoutMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    modules: Option<Vec<String>>,
+    show_windows: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -224,6 +246,7 @@ struct CommandConfig {
     output: String,
     style: String,
     prefix: String,
+    slim_icon: String,
 }
 
 impl Default for CommandConfig {
@@ -233,6 +256,7 @@ impl Default for CommandConfig {
             output: "text".into(),
             style: "default".into(),
             prefix: String::new(),
+            slim_icon: "".into(),
         }
     }
 }
@@ -258,6 +282,7 @@ struct UsageConfig {
 #[serde(default, deny_unknown_fields)]
 struct SessionsConfig {
     disabled: bool,
+    show_windows: bool,
     session_format: String,
     window_format: String,
     current_session_style: String,
@@ -321,6 +346,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             modules: vec!["sessions".into(), "divider".into()],
+            slim: SlimConfig::default(),
             actions: BTreeMap::new(),
             clicks: Vec::new(),
             cache_dir: None,
@@ -380,6 +406,7 @@ impl Default for SessionsConfig {
     fn default() -> Self {
         Self {
             disabled: false,
+            show_windows: true,
             session_format: " $name ".into(),
             window_format: " $index: $name".into(),
             current_session_style: "reverse,bold".into(),
@@ -460,6 +487,7 @@ struct CompiledSessions {
     window_format: Vec<Node>,
 }
 
+#[derive(Clone, Copy)]
 pub struct RenderInputs<'a> {
     pub top: Option<&'a crate::top::HostStatus>,
     pub pi_sessions: &'a [crate::PiSession],
@@ -476,6 +504,7 @@ pub struct RenderInputs<'a> {
 pub struct Sidebar {
     config: Config,
     selected: String,
+    width: usize,
     palette: BTreeMap<String, String>,
     sessions: CompiledSessions,
     pi_workbench_format: Vec<Node>,
@@ -567,12 +596,22 @@ impl Sidebar {
                 return Err(format!("invalid config name {name}"));
             }
         }
-        for (label, modules) in std::iter::once(("default", &config.modules)).chain(
-            config
-                .configs
-                .iter()
-                .map(|(name, list)| (name.as_str(), &list.modules)),
-        ) {
+        for (label, modules) in std::iter::once(("default", &config.modules))
+            .chain(config.configs.iter().flat_map(|(name, list)| {
+                std::iter::once((name.as_str(), &list.modules)).chain(
+                    list.slim_modules
+                        .as_ref()
+                        .map(|modules| (name.as_str(), modules)),
+                )
+            }))
+            .chain(
+                config
+                    .slim
+                    .modules
+                    .as_ref()
+                    .map(|modules| ("default slim", modules)),
+            )
+        {
             let mut seen = BTreeSet::new();
             for name in modules {
                 if let Some(id) = name.strip_prefix("command.") {
@@ -617,6 +656,17 @@ impl Sidebar {
             }
             if !matches!(command.output.as_str(), "text" | "tmux-styles") {
                 return Err(format!("invalid command.{name} output mode"));
+            }
+            if command.slim_icon.graphemes(true).count() != 1
+                || UnicodeWidthStr::width(command.slim_icon.as_str()) != 1
+                || command
+                    .slim_icon
+                    .chars()
+                    .any(|c| c.is_control() || c.is_whitespace())
+            {
+                return Err(format!(
+                    "invalid command.{name} slim_icon: expected one visible column"
+                ));
             }
             if command.prefix.len() > 64 || command.prefix.chars().any(char::is_control) {
                 return Err(format!("invalid command.{name} prefix"));
@@ -842,6 +892,7 @@ impl Sidebar {
         Ok(Self {
             config,
             selected: "default".into(),
+            width: 30,
             palette,
             sessions,
             pi_workbench_format,
@@ -864,17 +915,68 @@ impl Sidebar {
         &self.selected
     }
 
+    pub(crate) fn for_width(&self, width: usize) -> Self {
+        let mut view = self.clone();
+        view.width = width;
+        view
+    }
+
+    fn is_slim(&self) -> bool {
+        match self.config.slim.mode {
+            LayoutMode::Auto => self.width == 2,
+            LayoutMode::Full => false,
+            LayoutMode::Slim => true,
+        }
+    }
+
+    pub(crate) fn layout_name(&self) -> &'static str {
+        if self.is_slim() {
+            "slim"
+        } else {
+            "full"
+        }
+    }
+
+    pub(crate) fn scroll_config(&self) -> String {
+        if self.is_slim() {
+            format!("{}/slim", self.selected)
+        } else {
+            self.selected.clone()
+        }
+    }
+
+    fn show_windows(&self) -> bool {
+        if self.is_slim() {
+            self.config.slim.show_windows
+        } else {
+            self.sessions.config.show_windows
+        }
+    }
+
     fn modules(&self) -> &[String] {
         if self.selected == "default" {
+            if self.is_slim() {
+                if let Some(modules) = &self.config.slim.modules {
+                    return modules;
+                }
+            }
             &self.config.modules
         } else {
-            &self.config.configs[&self.selected].modules
+            let list = &self.config.configs[&self.selected];
+            if self.is_slim() {
+                if let Some(modules) = &list.slim_modules {
+                    return modules;
+                }
+            }
+            &list.modules
         }
     }
 
     pub fn requested_window_options(&self) -> Vec<(String, String)> {
         if self.sessions.config.disabled
             || !self.modules().iter().any(|name| name == "sessions")
+            || !self.show_windows()
+            || self.is_slim()
             || !contains_variable(&self.sessions.window_format, "indicator")
             || self.sessions.config.indicator.is_none()
         {
@@ -1028,6 +1130,11 @@ impl Sidebar {
         input: RenderInputs<'_>,
         offset: usize,
     ) -> Result<(String, usize, usize), String> {
+        if self.width != snapshot.width {
+            return self
+                .for_width(snapshot.width)
+                .render_scrolled(snapshot, input, offset);
+        }
         let height = snapshot.client_height.saturating_sub(snapshot.status_lines);
         let rows = self.rows(snapshot, input)?;
         let text_color = self
@@ -1049,6 +1156,9 @@ impl Sidebar {
     }
 
     fn rows(&self, snapshot: &Snapshot, input: RenderInputs<'_>) -> Result<Vec<Row>, String> {
+        if self.width != snapshot.width {
+            return self.for_width(snapshot.width).rows(snapshot, input);
+        }
         let RenderInputs {
             top,
             pi_sessions,
@@ -1122,6 +1232,10 @@ impl Sidebar {
                 | "pi-context" | "debug" | "top" => {}
                 _ => return Err(format!("unknown module {name}")),
             }
+            if self.is_slim() {
+                let module_rows = rows.split_off(before);
+                rows.extend(self.slim_rows(name, module_rows, snapshot, input)?);
+            }
             for row in &mut rows[before..] {
                 row.identity.module = name.clone();
                 row.identity.instance = *instance;
@@ -1144,6 +1258,13 @@ impl Sidebar {
                 row.identity.module = "spacer".into();
                 row.identity.instance = 1;
             }
+            row.identity.presentation = format!(
+                "{}:{}:{}:{:?}",
+                self.layout_name(),
+                self.width,
+                self.show_windows(),
+                self.modules()
+            );
             let key = format!("{:?}", row.identity);
             let occurrence = occurrences.entry(key).or_default();
             *occurrence += 1;
@@ -1382,10 +1503,13 @@ impl Sidebar {
                 range: Some(Range::Session(crate::navigation::session_token(
                     &session.id,
                 )?)),
-                focus: false,
+                focus: current && !self.show_windows(),
                 selected: false,
             });
 
+            if !self.show_windows() {
+                continue;
+            }
             for window in &session.windows {
                 let active = current && window.selected;
                 let (style, fill) = if active {
@@ -2188,8 +2312,8 @@ fn validate_indicator(
 }
 
 fn validate_snapshot(snapshot: &Snapshot) -> Result<(), String> {
-    if snapshot.width == 0 || snapshot.width > MAX_WIDTH {
-        return Err(format!("width must be 1..{MAX_WIDTH}"));
+    if !(2..=MAX_WIDTH).contains(&snapshot.width) {
+        return Err(format!("width must be 2..{MAX_WIDTH}"));
     }
     if !snapshot
         .sessions
@@ -3045,7 +3169,12 @@ fn render_rows(rows: &[Row], width: usize, text_color: Option<&str>) -> String {
         if let Some(fill) = &row.fill {
             result.push_str(&format!("#[bg={fill}]"));
         }
-        result.push_str(&" ".repeat(remaining.saturating_sub(1)));
+        let padding = if width <= 2 && row.spans.is_empty() {
+            remaining
+        } else {
+            remaining.saturating_sub(1)
+        };
+        result.push_str(&" ".repeat(padding));
         if row.selected {
             result.push_str("#[norange]#[list=on default]");
         } else {

@@ -10,7 +10,7 @@ A fast and configurable sidebar for tmux.
 
 The screenshot uses my [custom Starmux configuration](https://github.com/juanibiapina/dotfiles/blob/main/dotfiles/tmux/.config/starmux.toml).
 
-See [configuration](docs/configuration.md#palettes) for bundled and custom colorschemes.
+See [slim sidebar configuration](docs/configuration.md#slim-sidebar) for the two-column layout and [palettes](docs/configuration.md#palettes) for colorschemes.
 
 ## Requirements
 
@@ -35,7 +35,7 @@ Choose the sidebar geometry and outer style in `.tmux.conf`, then load the adapt
 
 ```tmux
 set -g side-status left
-set -g side-status-width 30
+set -g side-status-width 31
 set -g side-status-style default
 source-file ~/.config/tmux/starmux.conf
 ```

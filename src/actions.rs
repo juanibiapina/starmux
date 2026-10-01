@@ -53,6 +53,7 @@ pub(crate) struct Rule {
 pub(crate) struct Identity {
     pub module: String,
     pub instance: usize,
+    pub presentation: String,
     fields: BTreeMap<String, String>,
 }
 impl Identity {
@@ -61,6 +62,9 @@ impl Identity {
             fields: BTreeMap::from([("kind".into(), kind.into()), ("part".into(), "main".into())]),
             ..Self::default()
         }
+    }
+    pub(crate) fn get(&self, name: &str) -> &str {
+        self.fields.get(name).map_or("", String::as_str)
     }
     pub(crate) fn field(mut self, name: &str, value: impl ToString) -> Self {
         self.fields.insert(name.into(), value.to_string());
@@ -128,7 +132,7 @@ fn catalog(module: &str) -> Vec<(&'static str, &'static [&'static str])> {
                 &["project", "name", "target_pane", "target_window"],
             ),
         ],
-        "git" => vec![("line", &["slot"])],
+        "git" => vec![("line", &["slot"]), ("summary", &[])],
         "debug" => vec![("total", &[]), ("stage", &["stage"])],
         "divider" => vec![("divider", &[])],
         "blank" => vec![("blank", &[])],

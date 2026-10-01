@@ -281,6 +281,9 @@ struct LocalTmux {
     state: Mutex<Snapshot>,
 }
 impl Tmux for LocalTmux {
+    fn sidebar_width(&self, _: &str, _: &str) -> Result<usize, String> {
+        Ok(self.state.lock().unwrap().width)
+    }
     fn panes(&self, _: &str) -> Result<Vec<Pane>, String> {
         Ok(vec![])
     }
@@ -372,31 +375,365 @@ action = "record"
     assert!(app.activate("socket", "client", "scaINVALID").is_err());
     fs::remove_dir_all(root).unwrap();
 }
-impl Tmux for &LocalTmux {
-    fn panes(&self, socket: &str) -> Result<Vec<Pane>, String> {
-        (*self).panes(socket)
-    }
-    fn snapshot(
-        &self,
-        socket: &str,
-        client: &str,
-        width: usize,
-        options: &[(String, String)],
-    ) -> Result<Snapshot, String> {
-        (*self).snapshot(socket, client, width, options)
-    }
-    fn activate(&self, socket: &str, client: &str, token: &str) -> Result<(), String> {
-        (*self).activate(socket, client, token)
-    }
-    fn open_url(&self, url: &str) -> Result<(), String> {
-        (*self).open_url(url)
-    }
-    fn open_file(&self, file: &Path, command: Option<&[std::ffi::OsString]>) -> Result<(), String> {
-        (*self).open_file(file, command)
-    }
-    fn run_action(&self, args: &[String], directory: &Path) -> Result<(), String> {
-        (*self).run_action(args, directory)
-    }
+
+fn visible_rows(output: &str) -> Vec<String> {
+    output
+        .split("#[nl]")
+        .skip(2)
+        .filter(|row| !row.is_empty())
+        .map(|row| {
+            let mut chars = row.chars().peekable();
+            let mut text = String::new();
+            while let Some(c) = chars.next() {
+                if c == '#' && chars.peek() == Some(&'#') {
+                    chars.next();
+                    text.push('#');
+                } else if c == '#' && chars.peek() == Some(&'[') {
+                    chars.next();
+                    for next in chars.by_ref() {
+                        if next == ']' {
+                            break;
+                        }
+                    }
+                } else {
+                    text.push(c);
+                }
+            }
+            text
+        })
+        .collect()
+}
+
+#[test]
+fn slim_modules_show_source_items_and_keep_individual_actions() {
+    let mut fixture = Fixture::new();
+    fixture.jobs[0].started_at = Some(time::OffsetDateTime::now_utc() + time::Duration::hours(1));
+    let sidebar = Sidebar::from_toml(MODULE_CONFIG).unwrap();
+    let width = 2;
+    let mut state = snapshot();
+    state.width = width;
+    let output = sidebar.render_with_inputs(&state, fixture.input()).unwrap();
+    let rows = visible_rows(&output);
+    let expected = vec![
+        "󰻠󰋗", "󰍛󰋗", "󰁹󰋗", "󰆍●", "○●", "◔", "▶", "↳░", "◇", "󰋗", "✓·", "", "◷", "--", "  ",
+        "--", "  ",
+    ];
+    assert_eq!(rows[..expected.len()], expected, "{output}");
+    assert!(rows
+        .iter()
+        .all(|row| unicode_width::UnicodeWidthStr::width(row.as_str()) <= width));
+    assert!(
+        rows.iter()
+            .all(|row| !row.chars().any(char::is_alphanumeric)),
+        "{rows:?}"
+    );
+    let targets = tokens(&output);
+    assert!(targets.iter().all(|target| target.starts_with("sc")));
+    assert_eq!(
+        targets
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        targets.len()
+    );
+    let roundtrip = Sidebar::from_toml(&sidebar.print_config().unwrap()).unwrap();
+    assert_eq!(
+        output,
+        roundtrip
+            .render_with_inputs(&state, fixture.input())
+            .unwrap()
+    );
+}
+
+#[test]
+fn slim_usage_pies_track_consumed_quota_and_keep_each_window() {
+    let mut fixture = Fixture::new();
+    fixture.usage[0].provider = "codex".into();
+    fixture.usage[0].refresh_failure = None;
+    fixture.usage[0].windows = [0.0, 12.0, 13.0, 25.0, 50.0, 75.0, 87.0, 88.0, 100.0]
+        .into_iter()
+        .enumerate()
+        .map(|(index, used_percent)| UsageWindow {
+            label: format!("window {index}"),
+            duration_seconds: Some(18000),
+            used_percent,
+            reset_at: None,
+        })
+        .collect();
+    let sidebar = Sidebar::from_toml(
+        r#"
+modules = ["usage"]
+[usage]
+providers = ["codex"]
+[actions.window]
+argv = ["echo", "{provider}", "{label}"]
+[[clicks]]
+module = "usage"
+match = { kind = "window" }
+action = "window"
+"#,
+    )
+    .unwrap();
+    let width = 2;
+    let mut state = snapshot();
+    state.width = width;
+    let output = sidebar.render_with_inputs(&state, fixture.input()).unwrap();
+    let rows = visible_rows(&output);
+    let expected: Vec<_> = ["○", "○", "◔", "◔", "◑", "◕", "◕", "●", "●"]
+        .into_iter()
+        .map(|pie| format!("{pie}"))
+        .collect();
+    assert_eq!(rows, expected);
+    assert!(rows
+        .iter()
+        .all(|row| unicode_width::UnicodeWidthStr::width(row.as_str()) <= width));
+    let targets: Vec<_> = tokens(&output)
+        .into_iter()
+        .filter(|token| token.starts_with("sc"))
+        .collect();
+    assert_eq!(targets.len(), 9);
+    assert_eq!(
+        targets
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        9
+    );
+}
+
+#[test]
+fn slim_context_keeps_an_icon_and_action_for_each_plan_and_pr() {
+    let mut fixture = Fixture::new();
+    fixture.context.plans.push(PiPlan {
+        title: "Second plan".into(),
+        path: "/tmp/second.md".into(),
+    });
+    fixture
+        .context
+        .pull_requests
+        .push("https://github.com/owner/repo/pull/2".into());
+    let sidebar = Sidebar::from_toml(
+        r#"
+modules = ["pi-context"]
+[actions.item]
+argv = ["echo", "{kind}"]
+[[clicks]]
+module = "pi-context"
+match = { kind = "plan" }
+action = "item"
+[[clicks]]
+module = "pi-context"
+match = { kind = "pr" }
+action = "item"
+"#,
+    )
+    .unwrap();
+    let width = 2;
+    let mut state = snapshot();
+    state.width = width;
+    let mut input = fixture.input();
+    input.states = &[
+        starmux::pr_state::PrState::Open,
+        starmux::pr_state::PrState::Merged,
+    ];
+    let output = sidebar.render_with_inputs(&state, input).unwrap();
+    assert_eq!(visible_rows(&output), ["◇", "◇", "", ""]);
+    let targets = tokens(&output);
+    assert_eq!(targets.len(), 4);
+    assert!(targets.iter().all(|target| target.starts_with("sc")));
+    assert_eq!(
+        targets
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        4
+    );
+}
+
+#[test]
+fn slim_context_omits_skills_and_their_category_actions() {
+    let mut fixture = Fixture::new();
+    fixture.context.plans.clear();
+    fixture.context.pull_requests.clear();
+    fixture.context.skills = ["documentation", "testing", "name #[range=user|bad]"]
+        .into_iter()
+        .map(|name| PiSkill {
+            name: name.into(),
+            path: None,
+        })
+        .collect();
+    let sidebar = Sidebar::from_toml(
+        r#"
+modules = ["pi-context"]
+[actions.category]
+argv = ["echo", "{category}"]
+[actions.individual]
+argv = ["echo", "{name}"]
+[[clicks]]
+module = "pi-context"
+match = { kind = "category", category = "skills" }
+action = "category"
+[[clicks]]
+module = "pi-context"
+match = { kind = "skill" }
+action = "individual"
+"#,
+    )
+    .unwrap();
+    let width = 2;
+    let mut state = snapshot();
+    state.width = width;
+    let output = sidebar.render_with_inputs(&state, fixture.input()).unwrap();
+    assert!(visible_rows(&output).is_empty());
+    assert!(tokens(&output).is_empty());
+    assert!(!output.contains("documentation") && !output.contains("testing"));
+    let full = sidebar
+        .render_with_inputs(&snapshot(), fixture.input())
+        .unwrap();
+    assert_eq!(
+        tokens(&full)
+            .iter()
+            .filter(|target| target.starts_with("sc"))
+            .count(),
+        4
+    );
+}
+
+#[test]
+fn slim_warnings_distinguish_unknown_data_and_cached_failures() {
+    let mut fixture = Fixture::new();
+    let disabled = Sidebar::from_toml("modules = ['git']\n[git]\ndisabled = true").unwrap();
+    let mut narrow = snapshot();
+    narrow.width = 2;
+    assert!(visible_rows(
+        &disabled
+            .render_with_inputs(&narrow, fixture.input())
+            .unwrap()
+    )
+    .is_empty());
+    fixture.usage[0].windows[0].used_percent = 100.0;
+    fixture.usage[0].refresh_failure = Some(RefreshFailure::SignInAgain);
+    fixture.pi[0].state = "notify".into();
+    fixture.git.conflicts = 1;
+    let top = starmux::top::HostStatus {
+        cpu: Some(90),
+        memory: Some(0),
+        battery: Some(starmux::top::Battery {
+            percent: 10,
+            charging: false,
+            full: false,
+        }),
+        age_seconds: None,
+    };
+    let sidebar = Sidebar::from_toml(
+        "modules = ['top', 'pi-workbench', 'usage', 'git']\n[usage]\nproviders = ['anthropic']",
+    )
+    .unwrap();
+    let mut state = snapshot();
+    state.width = 2;
+    let mut input = fixture.input();
+    input.top = Some(&top);
+    let output = sidebar.render_with_inputs(&state, input).unwrap();
+    assert_eq!(visible_rows(&output), ["󰻠●", "󰍛○", "󰁺○", "󰂚●", "󰌾●", "·"]);
+    assert!(
+        output.contains("dim"),
+        "cached reading lost its stale style: {output}"
+    );
+    fixture.usage[0].refresh_failure = None;
+    fixture.usage[0].unavailable = true;
+    fixture.usage[0].windows.clear();
+    let output = sidebar.render_with_inputs(&state, fixture.input()).unwrap();
+    assert!(visible_rows(&output).iter().any(|row| row.contains("󰋗")));
+}
+
+#[test]
+fn slim_clicks_use_real_geometry_and_reject_previous_layouts() {
+    let root = std::env::temp_dir().join(format!("starmux-slim-click-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let output = root.join("clicked");
+    let config = format!(
+        r#"
+modules = ["sessions"]
+[actions.record]
+argv = ["/bin/sh", "-c", "printf '%s' \"$1\" > \"$2\"", "record", "{{name}}", {:?}]
+[[clicks]]
+module = "sessions"
+match = {{ kind = "session" }}
+action = "record"
+"#,
+        output.display().to_string()
+    );
+    let sidebar = Sidebar::from_toml(&config).unwrap();
+    let mut state = snapshot();
+    state.width = 2;
+    state.sessions[0].name = "raw #{pane_id} $(touch never)".into();
+    let target = tokens(&sidebar.render(&state).unwrap()).remove(0);
+    let tmux = LocalTmux {
+        state: Mutex::new(state.clone()),
+    };
+    let app = Application::new(sidebar.clone(), &tmux);
+    app.activate("socket", "client", &target).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&output).unwrap(),
+        state.sessions[0].name
+    );
+    std::fs::remove_file(&output).unwrap();
+    tmux.state.lock().unwrap().width = 30;
+    assert!(app.activate("socket", "client", &target).is_err());
+    tmux.state.lock().unwrap().width = 2;
+    let full = Sidebar::from_toml(&format!("{config}\n[slim]\nmode = 'full'")).unwrap();
+    assert!(Application::new(full, &tmux)
+        .activate("socket", "client", &target)
+        .is_err());
+    assert!(!output.exists());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn slim_lists_control_external_queries_and_named_list_inheritance() {
+    let root = std::env::temp_dir().join(format!("starmux-slim-query-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let output = root.join("queried");
+    let config = format!(
+        r#"
+modules = ["command.record"]
+[slim]
+modules = []
+[configs.right]
+modules = []
+slim_modules = ["command.record"]
+[configs.inherited]
+modules = ["sessions"]
+[commands.record]
+argv = ["/usr/bin/touch", {:?}]
+slim_icon = "R"
+"#,
+        output.display().to_string()
+    );
+    let sidebar = Sidebar::from_toml(&config).unwrap();
+    let tmux = LocalTmux {
+        state: Mutex::new(snapshot()),
+    };
+    let app = Application::new(sidebar.clone(), &tmux);
+    let explanation = app.explain("socket", "client", 2, None).unwrap();
+    assert!(explanation.contains("config=default layout=slim"));
+    assert!(!output.exists());
+    let right = Application::new(sidebar.clone().select("right").unwrap(), &tmux);
+    let explanation = right.explain("socket", "client", 2, None).unwrap();
+    assert!(
+        explanation.contains("modules: command.record"),
+        "{explanation}"
+    );
+    assert!(output.exists(), "{explanation}");
+    let rendered = right.render_query("socket", "client", 2, None).unwrap();
+    assert!(
+        visible_rows(&rendered).is_empty(),
+        "empty output must not create a command marker"
+    );
+    let inherited = Application::new(sidebar.select("inherited").unwrap(), &tmux);
+    let explanation = inherited.explain("socket", "client", 2, None).unwrap();
+    assert!(explanation.contains("modules: sessions"));
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

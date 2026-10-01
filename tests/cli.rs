@@ -20,7 +20,7 @@ fn help_and_adapter_expose_only_the_query_interface() {
     let adapter = binary(&["init", "tmux"]);
     assert!(adapter.status.success());
     let adapter = String::from_utf8(adapter.stdout).unwrap();
-    assert!(adapter.contains("--width=#{side-status-width}"));
+    assert!(adapter.contains("--width=#{e|-:#{side-status-width},1}"));
     assert!(adapter.contains("MouseDown1Status"));
     assert!(adapter.contains("(st|sw|sp|su|sr|sl|ss|sc),#{mouse_status_range}"));
     assert!(adapter.contains("WheelUpStatus"));
@@ -42,6 +42,7 @@ fn wheel_at_top_is_a_noop_without_a_tmux_refresh() {
         Command::new(env!("CARGO_BIN_EXE_starmux"))
             .args([
                 "scroll",
+                "--width=30",
                 "--socket=/dev/nonexistent-starmux-socket",
                 "--client=missing",
                 &format!("--direction={direction}"),
@@ -63,6 +64,7 @@ fn wheel_at_top_is_a_noop_without_a_tmux_refresh() {
         Command::new(env!("CARGO_BIN_EXE_starmux"))
             .args([
                 "scroll-event",
+                "--width=30",
                 "--socket=/dev/nonexistent-starmux-socket",
                 "--client=missing",
                 &format!("--direction={direction}"),
@@ -130,7 +132,7 @@ fn configuration_commands_use_portable_defaults_and_reject_old_fields() {
 
 #[test]
 fn render_query_requires_a_valid_explicit_width_before_calling_tmux() {
-    for width in ["0", "301", "nope"] {
+    for width in ["0", "1", "301", "nope"] {
         let output = binary(&[
             "render-query",
             &format!("--width={width}"),

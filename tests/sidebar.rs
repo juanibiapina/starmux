@@ -1854,6 +1854,117 @@ argv = ["echo", "ready"]
 }
 
 #[test]
+fn slim_selection_hides_windows_and_has_independent_module_order() {
+    let text = "modules = ['sessions', 'divider']\n[slim]\nmodules = ['divider', 'sessions']";
+    let sidebar = Sidebar::from_toml(text).unwrap();
+    let mut unsupported = snapshot();
+    unsupported.width = 1;
+    assert!(sidebar
+        .render(&unsupported)
+        .unwrap_err()
+        .contains("width must be 2..300"));
+    for width in [2, 3, 30] {
+        let mut input = snapshot();
+        input.width = width;
+        let output = sidebar.render(&input).unwrap();
+        let rows: Vec<_> = output.split("#[nl]").skip(2).collect();
+        if width <= 2 {
+            assert!(rows[0].contains(&"-".repeat(width)));
+            assert!(rows[1].contains("range=user|st0 list=focus"));
+            assert!(!output.contains("range=user|sw"));
+            assert_eq!(rows.len(), 4);
+        } else {
+            assert!(rows[0].contains("range=user|st0"));
+            assert!(output.contains("range=user|sw0 list=focus"));
+        }
+    }
+    let mut input = snapshot();
+    input.width = 2;
+    let full = Sidebar::from_toml("[slim]\nmode = 'full'")
+        .unwrap()
+        .render(&input)
+        .unwrap();
+    assert!(full.contains("range=user|sw0"));
+    let shown = Sidebar::from_toml("[sessions]\nshow_windows = false\n[slim]\nshow_windows = true")
+        .unwrap();
+    assert!(shown
+        .render(&input)
+        .unwrap()
+        .contains("range=user|sw0 list=focus"));
+    input.width = 30;
+    assert!(!shown.render(&input).unwrap().contains("range=user|sw"));
+    let forced = Sidebar::from_toml("modules = ['sessions']\n[slim]\nmode = 'slim'").unwrap();
+    let output = forced.render(&input).unwrap();
+    assert!(!output.contains("main"));
+    assert!(output.contains("󰆍●"));
+    assert!(!output.contains("range=user|sw"));
+}
+
+#[test]
+fn slim_icons_are_independent_of_untrusted_names() {
+    let mut input = snapshot();
+    input.width = 2;
+    input.sessions[0].name = "界🦀".into();
+    input.sessions[1].name = "\u{301}\n #[range=user|evil]".into();
+    let sidebar = Sidebar::defaults().unwrap();
+    let output = sidebar.render(&input).unwrap();
+    assert_eq!(output.matches("󰆍").count(), 2, "{output}");
+    assert!(!output.contains("##"), "{output}");
+    assert!(!output.contains("range=user|evil"));
+    assert!(!output.contains("界"), "{output}");
+    let empty = Sidebar::from_toml("[slim]\nmodules = []").unwrap();
+    assert!(!empty.render(&input).unwrap().contains("range=user|"));
+}
+
+#[test]
+fn slim_configuration_validates_every_list_and_command_glyph() {
+    for text in [
+        "[slim]\nmode = 'compact'",
+        "[slim]\nmodules = ['unknown']",
+        "[slim]\nmodules = ['sessions', 'sessions']",
+        "[slim]\nmodules = ['spacer', 'spacer']",
+        "[slim]\nmodules = ['command.missing']",
+        "[configs.right]\nmodules = []\nslim_modules = ['missing']",
+        "[configs.right]\nmodules = []\nslim_modules = ['sessions', 'sessions']",
+        "[slim]\nunknown = true",
+    ] {
+        assert!(Sidebar::from_toml(text).is_err(), "accepted {text}");
+    }
+    for glyph in ["", " ", "ab", "界", "\n", "\u{301}"] {
+        let text = format!(
+            "modules = ['command.test']\n[commands.test]\nargv = ['echo']\nslim_icon = {glyph:?}"
+        );
+        assert!(Sidebar::from_toml(&text).is_err(), "accepted {glyph:?}");
+    }
+    let text = "modules = []\n[configs.right]\nmodules = []\nslim_modules = ['command.test']\n[commands.test]\nargv = ['echo']\nslim_icon = '#'";
+    let sidebar = Sidebar::from_toml(text).unwrap();
+    let roundtrip = Sidebar::from_toml(&sidebar.print_config().unwrap())
+        .unwrap()
+        .select("right")
+        .unwrap();
+    let mut input = snapshot();
+    input.width = 2;
+    let commands = BTreeMap::from([("command.test".into(), "data".into())]);
+    let output = roundtrip
+        .render_with_inputs(
+            &input,
+            starmux::RenderInputs {
+                top: None,
+                pi_sessions: &[],
+                usage_rows: &[],
+                gob_jobs: &[],
+                context: None,
+                states: &[],
+                commands: &commands,
+                git: None,
+                debug: None,
+            },
+        )
+        .unwrap();
+    assert!(output.contains("###[norange"), "{output}");
+}
+
+#[test]
 fn check_config_validates_all_named_lists() {
     for text in [
         "modules = []\n[configs.right]\nmodules = [\"missing\"]",

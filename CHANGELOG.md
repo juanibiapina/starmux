@@ -4,6 +4,7 @@
 
 ### Added
 
+- Add slim mode with a two-column sidebar of icons and progress gauges.
 - Configure click actions for any sidebar row, with shared defaults and overrides for individual jobs, metrics, usage windows, plans, and skills.
 
 ### Fixed

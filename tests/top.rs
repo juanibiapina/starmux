@@ -69,6 +69,71 @@ fn render(sidebar: &Sidebar, status: Option<&HostStatus>, width: usize) -> Strin
 }
 
 #[test]
+fn slim_host_pies_show_utilization_and_remaining_charge() {
+    let sidebar = Sidebar::from_toml("modules = ['top']\ncolorscheme = 'tokyo-night'").unwrap();
+    for (cpu, memory, battery, expected) in [
+        (25, 50, 75, ["󰻠◔", "󰍛◑", "󰁹◕"]),
+        (90, 80, 10, ["󰻠●", "󰍛◕", "󰁺○"]),
+    ] {
+        let status = HostStatus {
+            cpu: Some(cpu),
+            memory: Some(memory),
+            battery: Some(Battery {
+                percent: battery,
+                charging: false,
+                full: false,
+            }),
+            age_seconds: None,
+        };
+        let output = render(&sidebar, Some(&status), 2);
+        let rows: Vec<_> = output
+            .split("#[nl]")
+            .skip(2)
+            .map(|row| visible_row(row).trim().to_owned())
+            .filter(|row| !row.is_empty())
+            .collect();
+        assert_eq!(rows, expected);
+        assert!(rows
+            .iter()
+            .all(|row| UnicodeWidthStr::width(row.as_str()) == 2));
+        if cpu >= 80 {
+            assert!(
+                output.contains("fg=#f7768e") && output.contains("bold"),
+                "{output}"
+            );
+        }
+    }
+    let mut status = HostStatus {
+        cpu: None,
+        memory: Some(0),
+        battery: Some(Battery {
+            percent: 50,
+            charging: true,
+            full: false,
+        }),
+        age_seconds: None,
+    };
+    let rows = |output: String| -> Vec<String> {
+        output
+            .split("#[nl]")
+            .skip(2)
+            .map(|row| visible_row(row).trim().to_owned())
+            .filter(|row| !row.is_empty())
+            .collect()
+    };
+    assert_eq!(rows(render(&sidebar, Some(&status), 2)), ["󰻠󰋗", "󰍛○", "󰂄◑"]);
+    status.battery = Some(Battery {
+        percent: 100,
+        charging: true,
+        full: true,
+    });
+    status.age_seconds = Some(5);
+    assert_eq!(rows(render(&sidebar, Some(&status), 2)), ["󰻠󰋗", "󰍛○", "󱟢●"]);
+    status.battery = None;
+    assert_eq!(rows(render(&sidebar, Some(&status), 2)), ["󰻠󰋗", "󰍛○"]);
+}
+
+#[test]
 fn top_shows_host_metrics_in_configured_order_and_hides_absent_battery() {
     let sidebar = Sidebar::from_toml("modules = [\"top\"]\ncolorscheme = \"tokyo-night\"\n[top]\nmetrics = [\"memory\", \"cpu\", \"battery\"]").unwrap();
     let status = HostStatus {
@@ -167,7 +232,7 @@ fn top_shows_battery_and_keeps_values_when_the_sidebar_is_narrow() {
     let compact = metric_row(&render(&sidebar, Some(&status), 16), "BAT");
     assert!(compact.contains("19%  ▰") && !compact.contains("charging"));
     assert!(UnicodeWidthStr::width(compact.as_str()) <= 16);
-    assert!(render(&sidebar, Some(&status), 1).contains("#[nl]"));
+    assert!(render(&sidebar, Some(&status), 2).contains("#[nl]"));
 
     let fresh = HostStatus {
         age_seconds: None,
