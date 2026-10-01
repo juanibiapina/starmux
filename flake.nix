@@ -13,34 +13,14 @@
         let
           pkgs = nixpkgs.legacyPackages.${system};
           manifest = builtins.fromTOML (builtins.readFile ./Cargo.toml);
-          # Expose only script so Darwin's BSD tools do not replace build tools.
-          testScript = pkgs.writeShellScriptBin "script" ''
-            exec ${pkgs.lib.getBin (if pkgs.stdenv.hostPlatform.isDarwin
-              then pkgs.darwin.shell_cmds else pkgs.util-linux)}/bin/script "$@"
-          '';
           starmux = pkgs.rustPlatform.buildRustPackage {
             pname = manifest.package.name;
             version = manifest.package.version;
             src = pkgs.lib.cleanSource self;
             cargoLock.lockFile = ./Cargo.lock;
 
-            nativeCheckInputs = [ pkgs.gitMinimal pkgs.tmux testScript ];
-            # Concurrent sandbox tests intermittently fail lease and socket checks.
-            dontUseCargoParallelTests = true;
-            # Provider tests serve HTTP responses over localhost.
-            __darwinAllowLocalNetworking = pkgs.stdenv.hostPlatform.isDarwin;
-
-            # Tests use host paths that are absent in a Linux Nix sandbox.
-            postPatch = ''
-              substituteInPlace src/tmux.rs \
-                --replace-fail /bin/pwd ${pkgs.coreutils}/bin/pwd
-              substituteInPlace tests/actions.rs \
-                --replace-fail /usr/bin/touch ${pkgs.coreutils}/bin/touch
-              substituteInPlace tests/tmux.rs \
-                --replace-fail /bin/echo ${pkgs.coreutils}/bin/echo \
-                --replace-fail /usr/bin/false ${pkgs.coreutils}/bin/false \
-                --replace-fail /bin/sleep ${pkgs.coreutils}/bin/sleep
-            '';
+            # Project tests run in CI.
+            doCheck = false;
 
             meta = {
               inherit (manifest.package) description homepage;
