@@ -654,7 +654,7 @@ selected_fill = "border"
         },
         PiSession {
             name: "read only".into(),
-            project: "/projects/starmux".into(),
+            project: "/projects/deltoids".into(),
             state: "idle".into(),
             location: None,
             target: None,
@@ -2167,7 +2167,7 @@ fn slim_configuration_validates_every_list_and_command_glyph() {
             },
         )
         .unwrap();
-    assert!(output.contains("###[norange"), "{output}");
+    assert!(output.contains("## #[norange"), "{output}");
 }
 
 #[test]

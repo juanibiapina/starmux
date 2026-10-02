@@ -3197,12 +3197,7 @@ fn render_rows(rows: &[Row], width: usize, text_color: Option<&str>) -> String {
         if let Some(fill) = &row.fill {
             result.push_str(&format!("#[bg={fill}]"));
         }
-        let padding = if width <= 2 && row.spans.is_empty() {
-            remaining
-        } else {
-            remaining.saturating_sub(1)
-        };
-        result.push_str(&" ".repeat(padding));
+        result.push_str(&" ".repeat(remaining));
         if row.selected {
             result.push_str("#[norange]#[list=on default]");
         } else {

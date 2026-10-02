@@ -1,4 +1,7 @@
 #[cfg(any(target_os = "macos", target_os = "linux"))]
+mod background;
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn attached_client(socket: &str, target: &str) -> std::process::Command {
     let mut command = std::process::Command::new("script");
     command.env_remove("TMUX").env_remove("TMUX_PANE");

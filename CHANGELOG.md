@@ -8,6 +8,10 @@
 - Install Starmux through a Nix flake on Linux and macOS.
 - Hide inactive tmux sessions with `[sessions].active_only`, or hide only their windows with `[sessions].fold_inactive`.
 
+### Fixed
+
+- Keep selected sidebar backgrounds from spilling into the next row's final column.
+
 ## [0.6.0] - 2026-10-01
 
 ### Added

@@ -415,7 +415,7 @@ fn slim_modules_show_source_items_and_keep_individual_actions() {
     let output = sidebar.render_with_inputs(&state, fixture.input()).unwrap();
     let rows = visible_rows(&output);
     let expected = vec![
-        "󰻠󰋗", "󰍛󰋗", "󰁹󰋗", "󰆍●", "○●", "◔", "▶", "↳░", "◇", "󰋗", "✓·", "", "◷", "--", "  ",
+        "󰻠󰋗", "󰍛󰋗", "󰁹󰋗", "󰆍●", "○●", "◔", "▶", "↳░", "◇ ", "󰋗", "✓·", " ", "◷ ", "--", "  ",
         "--", "  ",
     ];
     assert_eq!(rows[..expected.len()], expected, "{output}");
@@ -537,7 +537,7 @@ action = "item"
         starmux::pr_state::PrState::Merged,
     ];
     let output = sidebar.render_with_inputs(&state, input).unwrap();
-    assert_eq!(visible_rows(&output), ["◇", "◇", "", ""]);
+    assert_eq!(visible_rows(&output), ["◇ ", "◇ ", " ", " "]);
     let targets = tokens(&output);
     assert_eq!(targets.len(), 4);
     assert!(targets.iter().all(|target| target.starts_with("sc")));
