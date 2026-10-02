@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- Keep Pi sessions and project groups in alphabetical order when their state or selection changes.
 - Keep selected sidebar backgrounds from spilling into the next row's final column.
 
 ## [0.6.0] - 2026-10-01

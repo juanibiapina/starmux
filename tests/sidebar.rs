@@ -566,7 +566,7 @@ idle_style = "fg=muted"
 }
 
 #[test]
-fn pi_projects_stay_together_in_priority_order() {
+fn pi_projects_stay_together_in_alphabetical_order() {
     let sidebar = Sidebar::from_toml("modules = [\"pi-workbench\"]").unwrap();
     let session = |project: &str, name: &str, state: &str, selected: bool| PiSession {
         name: name.into(),
@@ -593,14 +593,14 @@ fn pi_projects_stay_together_in_priority_order() {
         .unwrap();
     let positions: Vec<_> = [
         "#[bold] alert",
-        "needs attention",
         "later idle",
-        "#[bold] working",
-        "doing work",
-        "#[bold] selected",
-        "current idle",
+        "needs attention",
         "#[bold] idle",
         "only idle",
+        "#[bold] selected",
+        "current idle",
+        "#[bold] working",
+        "doing work",
     ]
     .iter()
     .map(|text| rendered.find(text).expect(text))
@@ -623,6 +623,104 @@ fn pi_projects_stay_together_in_priority_order() {
         .unwrap();
     assert!(duplicates.contains("owner-a/app"), "{duplicates}");
     assert!(duplicates.contains("owner-b/app"), "{duplicates}");
+}
+
+#[test]
+fn pi_order_survives_state_selection_and_input_order_changes_in_both_layouts() {
+    let sidebar = Sidebar::from_toml(
+        r#"
+modules = ["pi-workbench"]
+[pi-workbench]
+selected_fill = "blue"
+selected_style = "fg=white,bold"
+idle_style = "fg=green"
+working_style = "fg=yellow"
+notify_style = "fg=magenta"
+"#,
+    )
+    .unwrap();
+    let session = |project: &str, name: &str, pane: &str| PiSession {
+        name: name.into(),
+        project: format!("/projects/{project}"),
+        state: "idle".into(),
+        location: Some(starmux::PiLocation {
+            pane: pane.into(),
+            session_name: "main".into(),
+        }),
+        target: Some(PiTarget {
+            pane: pane.into(),
+            window: "@0".into(),
+        }),
+        selected: false,
+    };
+    let sessions = [
+        session("zebra", "beta", "%4"),
+        session("app", "alpha", "%3"),
+        session("app", "Alpha", "%2"),
+        session("app", "alpha", "%1"),
+    ];
+    let token = |row: &str| {
+        row.split("#[range=user|")
+            .nth(1)
+            .unwrap()
+            .split(' ')
+            .next()
+            .unwrap()
+            .to_owned()
+    };
+    let expected_sessions = [2, 3, 1, 0];
+    let expected_tokens: Vec<_> = expected_sessions
+        .iter()
+        .map(|&index| {
+            let rendered = sidebar
+                .render_with_pi_workbench(&snapshot(), &sessions[index..=index])
+                .unwrap();
+            token(
+                rendered
+                    .split("#[nl]")
+                    .find(|row| row.contains("#[range=user|sp"))
+                    .unwrap(),
+            )
+        })
+        .collect();
+    for width in [30, 2] {
+        let mut input = snapshot();
+        input.width = width;
+        for selected in 0..sessions.len() {
+            let mut changed = sessions.clone();
+            for (index, session) in changed.iter_mut().enumerate() {
+                session.state = ["idle", "working", "notify"][(index + selected) % 3].into();
+                session.selected = index == selected;
+            }
+            if selected % 2 == 0 {
+                changed.reverse();
+            }
+            let rendered = sidebar.render_with_pi_workbench(&input, &changed).unwrap();
+            let rows: Vec<_> = rendered
+                .split("#[nl]")
+                .filter(|row| row.contains("#[range=user|sp"))
+                .collect();
+            assert_eq!(
+                rows.iter().map(|row| token(row)).collect::<Vec<_>>(),
+                expected_tokens
+            );
+            for (row, &index) in rows.iter().zip(&expected_sessions) {
+                let (color, glyph) = match (index + selected) % 3 {
+                    0 => ("fg=green", "○"),
+                    1 => ("fg=yellow", "▶"),
+                    _ => ("fg=magenta", "󰂚"),
+                };
+                assert!(row.contains(color), "{row}");
+                assert_eq!(row.contains("bg=blue"), index == selected, "{row}");
+                if width == 2 {
+                    assert!(row.contains(glyph), "{row}");
+                } else {
+                    assert!(row.contains(&sessions[index].name), "{row}");
+                    assert!(row.contains('●'), "{row}");
+                }
+            }
+        }
+    }
 }
 
 #[test]

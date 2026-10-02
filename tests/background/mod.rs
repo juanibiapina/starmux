@@ -235,7 +235,7 @@ selected_fill = "colour1"
     let screen = client.paint(
         &sidebar,
         &[
-            session("selected", "/projects/starmux", true),
+            session("selected", "/projects/alpha", true),
             session("following", "/projects/deltoids", false),
         ],
         "following",
@@ -250,8 +250,8 @@ selected_fill = "colour1"
     let screen = client.paint(
         &sidebar,
         &[
-            session("previous", "/projects/starmux", false),
-            session("new selection", "/projects/starmux", true),
+            session("previous", "/projects/alpha", false),
+            session("new selection", "/projects/alpha", true),
             session("after movement", "/projects/deltoids", false),
         ],
         "after movement",
@@ -279,7 +279,7 @@ selected_fill = "colour1"
     let screen = client.paint(
         &sidebar,
         &[
-            session("slim selected", "/projects/starmux", true),
+            session("slim selected", "/projects/alpha", true),
             session("slim following", "/projects/deltoids", false),
         ],
         "○○",

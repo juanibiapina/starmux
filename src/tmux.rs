@@ -1737,7 +1737,7 @@ mod tests {
         let socket_path = data_dir.join("sockets/live.sock");
         let listener = UnixListener::bind(&socket_path).unwrap();
         let responder = thread::spawn(move || {
-            for _ in 0..20 {
+            for _ in 0..24 {
                 let (mut socket, _) = listener.accept().unwrap();
                 let mut request = [0; 128];
                 let len = socket.read(&mut request).unwrap();
@@ -1842,8 +1842,10 @@ mod tests {
             .unwrap();
         let mut other_snapshot = tmux.snapshot.clone();
         other_snapshot.current_pane = "%1".into();
-        let other_tmux = MemoryTmux::new(other_snapshot).with_panes(tmux.panes.clone());
-        let other_app = Application::new(Sidebar::from_toml(&config).unwrap(), other_tmux);
+        let mut other_panes = tmux.panes.clone();
+        other_panes[0].state = "idle".into();
+        let other_tmux = MemoryTmux::new(other_snapshot).with_panes(other_panes);
+        let other_app = Application::new(Sidebar::from_toml(&config).unwrap(), other_tmux.clone());
         let other_rendered = other_app
             .render_query("/tmp/starmux-current.sock", "client", 40, None)
             .unwrap();
@@ -1851,6 +1853,32 @@ mod tests {
             !other_rendered.contains(" π ##[fg=red]##{oops}")
                 && !other_rendered.contains("Build search"),
             "{other_rendered}"
+        );
+        assert!(
+            other_rendered.find("##[fg=red]##{oops}").unwrap()
+                < other_rendered.find("unnamed").unwrap(),
+            "{other_rendered}"
+        );
+        for application in [&app, &other_app] {
+            let explanation = application
+                .explain("/tmp/starmux-current.sock", "client", 40, None)
+                .unwrap();
+            assert!(
+                explanation.find("\"#[fg=red]#{oops}\"").unwrap()
+                    < explanation.find("\"unnamed\"").unwrap(),
+                "{explanation}"
+            );
+        }
+        other_app
+            .activate("/tmp/starmux-current.sock", "client", "sp9")
+            .unwrap();
+        assert_eq!(
+            other_tmux.activations(),
+            vec![(
+                "/tmp/starmux-current.sock".into(),
+                "client".into(),
+                "sp9".into()
+            )]
         );
         let context_only = format!(
             "modules = [\"pi-context\"]\n[pi-workbench]\ndata_dir = {:?}\n",

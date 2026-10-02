@@ -1,7 +1,6 @@
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
-    collections::BTreeMap,
     fs,
     io::{Read, Write},
     os::unix::{fs::FileTypeExt, net::UnixStream},
@@ -206,28 +205,19 @@ pub(crate) fn list(data_dir: &Path, tmux_socket: &Path) -> Result<Vec<LiveEntry>
 }
 
 pub(crate) fn sort_sessions(sessions: &mut [PiSession]) {
-    let priority = |session: &PiSession| match session.state.as_str() {
-        "notify" => 0,
-        "working" => 1,
-        _ if session.selected => 2,
-        _ => 3,
-    };
-    let mut project_priority = BTreeMap::new();
-    for session in sessions.iter() {
-        let rank = project_priority.entry(session.project.clone()).or_insert(3);
-        *rank = (*rank).min(priority(session));
-    }
     sessions.sort_by(|a, b| {
-        project_priority[&a.project]
-            .cmp(&project_priority[&b.project])
-            .then_with(|| {
-                project_label(&a.project)
-                    .to_lowercase()
-                    .cmp(&project_label(&b.project).to_lowercase())
-            })
+        project_label(&a.project)
+            .to_lowercase()
+            .cmp(&project_label(&b.project).to_lowercase())
             .then_with(|| a.project.cmp(&b.project))
-            .then_with(|| priority(a).cmp(&priority(b)))
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| {
+                a.location
+                    .as_ref()
+                    .map(|location| &location.pane)
+                    .cmp(&b.location.as_ref().map(|location| &location.pane))
+            })
     });
 }
 
