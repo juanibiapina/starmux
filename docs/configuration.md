@@ -1,8 +1,10 @@
 # Configuration
 
+This file documents user-facing configuration.
+
 Starmux reads `$XDG_CONFIG_HOME/starmux.toml`, falling back to `~/.config/starmux.toml`. Set `STARMUX_CONFIG` to select another file. An absent or empty file uses portable defaults.
 
-Run `starmux print-config` to print the complete configuration. Run `starmux check-config` to validate module names, formats, styles, palettes, and tmux option aliases. If a sidebar render fails, Starmux shows the error in red, including configuration parse details. It wraps long lines to the sidebar width; rows beyond the available height may be hidden. Run `starmux check-config` for the full configuration error, or run the failing `starmux render-query` command in a terminal for other errors.
+Run `starmux print-config` to print the complete configuration. Run `starmux check-config` to validate module names, formats, styles, palettes, and tmux option aliases.
 
 ## Modules
 
@@ -35,11 +37,11 @@ argv = ["my-status", "--short"]
 
 Run `starmux render-query --config=right --width=30 --socket=PATH --client=NAME` to select the right list. `explain` and `timings` accept the same selector. All lists use the same module settings, colorscheme, palette, and named commands. A command may be referenced only by a named list. Empty lists produce no content rows. Names use 1–32 ASCII letters, digits, `_`, or `-`; `default` is reserved. Unknown names and invalid lists are errors. `check-config` validates every list; `print-config` prints all of them.
 
-`starmux init tmux` selects `default`. For another tmux render area, copy its generated render invocation and add `--config=right` after `render-query`. Pass the same `--config=right` to custom `starmux activate`, `starmux scroll`, and `starmux scroll-event` bindings for that area. Scroll positions are separate for each list on a client. Tmux controls the placement and width of each area; Starmux renders its selected rows within the supplied width and available height.
+`starmux init tmux` selects `default`. For another tmux render area, copy its generated render invocation and add `--config=right` after `render-query`. Pass the same `--config=right` to custom `starmux activate`, `starmux scroll`, and `starmux scroll-event` bindings for that area. Tmux controls the placement and width of each area.
 
 ## Slim sidebar
 
-Content width two automatically uses the slim layout. Content widths of three or more columns use the full layout. The minimum content width is two. Tmux reserves one sidebar column for its border: set `side-status-width` to 3 for two content columns or 31 for thirty. The generated adapter subtracts the border from the width passed to Starmux. Slim rows have no leading indent and show one or two glyphs per source item.
+Content width two automatically uses the slim layout. Content widths of three or more columns use the full layout. The minimum content width is two. Tmux reserves one sidebar column for its border: set `side-status-width` to 3 for two content columns or 31 for thirty.
 
 ```toml
 [slim]
@@ -59,7 +61,7 @@ slim_modules = ["usage", "spacer", "git"]
 
 `mode = "full"` keeps full formats at every width. `mode = "slim"` uses at most two content columns at every width. Slim mode hides tmux windows by default; `[slim].show_windows = true` shows them. Full and slim window visibility are independent. The current session remains the focus row when its windows are hidden.
 
-The default slim list inherits the top-level `modules`. Each named list inherits its own `modules` unless it defines `slim_modules`; it does not inherit `[slim].modules`. All lists share the same mode, window visibility, module settings, styles, colorscheme, and disabled flags. Only modules in the effective list run their source queries. Commands referenced exclusively by a slim list are supported.
+The default slim list inherits the top-level `modules`. Each named list inherits its own `modules` unless it defines `slim_modules`; it does not inherit `[slim].modules`. All lists share the same mode, window visibility, module settings, styles, colorscheme, and disabled flags. Only modules in the effective list are enabled. Commands referenced exclusively by a slim list are supported.
 
 ### Glyph legend
 
@@ -82,11 +84,9 @@ The default slim list inherits the top-level `modules`. Each named list inherits
 
 Provider icons are Anthropic `󰚩`, Codex ``, Copilot ``, Gemini `✦`, Antigravity `◎`, Kiro `󰊠`, z.ai `󰘦`, and xAI `󰖟`. The rail uses Nerd Font icons, as do the full-layout host and PR rows. Usage and host pies use `○ ◔ ◑ ◕ ●`, rounded to the nearest 25%. Usage pies show quota consumed; host pies show CPU/memory used and battery charge remaining. Job gauges use `░` for zero and `▁` through `█` for eight increasing bands. Missing data is not zero.
 
-Host metrics retain their existing critical thresholds. Unavailable readings use dim metric icons. Critical readings use bold critical styling and retain their pie. Battery icons show normal `󰁹`, low `󰁺`, charging `󰂄`, or full `󱟢` state. Full takes priority over charging. Cached host readings use the stale style. Cached usage after a failed refresh remains dimmed.
+Slim mode omits usage provider headers when valid windows are available, names, initials, numeric indices, system/job headings, Pi project headings, Pi context headings, plan/PR category labels, usage cache-age rows and reset counts, and detailed debug rows. Plans and PRs keep individual click targets and the selectors listed in the [selector catalog](#selector-catalog). Skills and their category are omitted from slim mode. Click rules for skills and their category apply to full-layout rows. Job progress retains its separate `part = "progress"` row. Git uses one `kind = "summary"` row; full-layout `kind = "line"` and `slot` rules apply only to full rows. Hidden headings have no row for a heading click rule to match.
 
-Slim mode omits usage provider headers when valid windows are available, names, initials, numeric indices, system/job headings, Pi project headings, Pi context headings, plan/PR category labels, usage cache-age rows and reset counts, and detailed debug rows. Plans and PRs keep individual click targets and original selector metadata. Skills and their category are omitted from slim mode. Click rules for skills and their category apply to full-layout rows. Job progress retains its separate `part = "progress"` row. Git uses one `kind = "summary"` row; full-layout `kind = "line"` and `slot` rules apply only to full rows. Hidden headings have no row for a heading click rule to match.
-
-Full layout supplies names, individual skills, exact readings, counts, reset times, and timings. Use `starmux explain` for source details and `starmux timings` for measurements. Debug markers convey availability only, so omit `debug` from slim lists when it adds no useful information.
+Full layout supplies names, individual skills, exact readings, counts, reset times, and timings. Debug markers convey availability only.
 
 Named commands show an icon only for successful, nonempty output. Starmux does not infer status from arbitrary output text:
 
@@ -98,7 +98,7 @@ slim_icon = ""
 
 `slim_icon` must be one visible, one-column grapheme without whitespace or control characters. Full formats remain full-layout settings; slim rows use the representations above.
 
-Full and slim layouts keep separate scroll positions for each client and named list. Regenerate and source `starmux init tmux` to install bindings that pass the render area's width. Custom named-area bindings should pass the same `--config=NAME` and `--width=COLUMNS` to rendering, activation, and scrolling. If activation or scrolling omits `--width`, it queries the client's side-status width and subtracts the border column. Custom clicks from a previous layout, width, or list are rejected.
+Regenerate and source `starmux init tmux` to install bindings that pass the render area's width. Custom named-area bindings should pass the same `--config=NAME` and `--width=COLUMNS` to rendering, activation, and scrolling. If activation or scrolling omits `--width`, it uses the client's side-status content width.
 
 ## Click actions
 
@@ -202,7 +202,7 @@ Usage windows expose their raw provider labels and optional durations. The examp
 | `blank` | `blank` | Select repeated blanks through `instance` |
 | `spacer` | `padding` | `slot`: position within the spacer allocation |
 
-`part` is `main` for ordinary rows. Gob uses `name` and `progress`. `occurrence` distinguishes otherwise identical descriptors in source order. `instance`, `slot`, and `occurrence` start at 1. Window `index` starts at 0. These values and `duration_seconds` are integers. Other selectors are strings.
+`part` is `main` for ordinary rows. Gob uses `name` and `progress`. `occurrence` distinguishes otherwise identical rows in their original order before scrolling. `instance`, `slot`, and `occurrence` start at 1. Window `index` starts at 0. These values and `duration_seconds` are integers. Other selectors are strings.
 
 Git `slot` includes configured lines that currently produce no output. Spacer slots follow the current allocation. They do not identify a screen row after scrolling.
 
@@ -220,13 +220,11 @@ Starmux runs argument arrays directly in the originating pane's directory. It do
 
 Action definitions accept 1–16 arguments, each at most 1024 bytes, without NUL bytes. The executable must be a nonempty literal. Expanded arguments use the same limits. The configuration accepts at most 64 actions and 128 rules.
 
-Commands have a two-second deadline and a 16 KiB stderr limit. Starmux kills and reaps the direct child after a timeout. Scripts own the lifetime of their descendants. Missing executables, nonzero exits, and invalid directories return an activation error. Errors do not run a fallback action.
-
-Custom clicks validate the current source identity, module list, action definition, and pane context. Removed items and changed context invalidate old clicks. Usage clicks read cached data without a provider refresh. Command rows use the configured command identity without rerunning the status command. Other dynamic rows must still exist during validation.
+Commands have a two-second deadline and a 16 KiB stderr limit. A timed-out command is stopped; scripts must stop any processes they start. Missing executables, nonzero exits, and invalid directories return an activation error. Errors do not run a fallback action.
 
 Regenerate and source `starmux init tmux` after installing this feature. Custom mouse and wheel bindings must route `sc` ranges with the existing Starmux ranges.
 
-## Host status and persistent state
+## Host status
 
 Add `top` to a module list to show host CPU, memory, and battery status. Put it after `spacer` to keep it near the bottom:
 
@@ -237,7 +235,9 @@ modules = ["sessions", "spacer", "divider", "top", "divider", "git"]
 metrics = ["cpu", "memory", "battery"]
 ```
 
-The module shows a `SYSTEM` heading and compact rows with Nerd Font icons, percentages, and aligned CPU, memory, and battery bars. CPU is whole-host usage measured over an interval; memory is used physical memory. A battery row appears when a battery is detected, with its icon showing normal, low (at or below 20%), charging (lightning bolt), or full (check mark) state. Full state takes priority over charging. Hosts without a battery show only CPU and memory. An unavailable metric shows `--`; cached data older than one minute is dimmed and marked with its age, and expires after five minutes. Short widths keep the numeric value and reduce or omit the bar. Rows have no click action by default. See [click actions](#click-actions) for overrides. Set `disabled = true` to hide the section. Use `heading_style`, `value_style`, `warning_style`, `critical_style`, and `track_style` in `[top]` to override colorscheme defaults. CPU and memory turn red at 80%; battery turns red at or below 20%. Sampling happens in a background process roughly every ten seconds; a completed sample appears on the next tmux redraw.
+The `metrics` list selects which host readings to show: `cpu` is whole-host CPU usage, `memory` is used physical memory, and `battery` is charge remaining when a battery is present. Set `disabled = true` to hide the section.
+
+Use `heading_style`, `value_style`, `warning_style`, `critical_style`, and `track_style` in `[top]` to override colorscheme defaults. `heading_style` styles the `SYSTEM` heading; `value_style` styles normal readings; `track_style` styles the bar track. CPU and memory use `critical_style` at 80% or more; battery uses it at 20% or less. Rows have no click action by default. See [click actions](#click-actions) for overrides.
 
 ## Session visibility
 
@@ -301,11 +301,11 @@ Select a built-in colorscheme to color the sidebar modules without setting indiv
 colorscheme = "tokyo-night"
 ```
 
-Bundled schemes (colors are mapped from the linked upstream palettes into Starmux's eleven roles):
+Bundled schemes and their source palettes:
 
 | Name | Palette source |
 | --- | --- |
-| `tokyo-night` | [Tokyo Night](https://github.com/folke/tokyonight.nvim) (uses the existing Starmux dotfiles colors) |
+| `tokyo-night` | [Tokyo Night](https://github.com/folke/tokyonight.nvim) |
 | `catppuccin-mocha` | [Catppuccin](https://github.com/catppuccin/palette) |
 | `github-dark` | [GitHub Primer](https://github.com/primer/primitives) |
 | `gruvbox-dark` | [Gruvbox](https://github.com/morhetz/gruvbox/blob/master/colors/gruvbox.vim) |
@@ -343,7 +343,7 @@ Explicit module styles and fills take priority over scheme defaults. A selected 
 
 ## Window indicators
 
-The default sessions module does not request or display custom tmux options. A configuration can give user options safe aliases and derive one indicator from them:
+The default sessions module does not display custom tmux options. A configuration can give user options safe aliases and derive one indicator from them:
 
 ```toml
 [sessions]
@@ -402,11 +402,15 @@ stale_style = "dim"
 unavailable_style = "dim"
 ```
 
-Available providers are `anthropic`, `copilot`, `gemini`, `antigravity`, `codex`, `kiro`, `zai`, and `xai`. By default, none are selected. Set `providers` explicitly to start fetching usage. Providers appear in the listed order. Each provider gets a heading and one row per available usage window. When no cached usage exists, its heading shows `(unavailable)`. The default window row shows its duration, time until reset, progress bar, and used percentage. When multiple windows are visible, these fields align across providers. In a narrow sidebar, the bars lose their spaces first so the percentage remains visible. Custom `format` values render as written. For windows lasting more than 24 hours and at most seven days, `$name` shows the duration in days and `$bar` has one block per day. The blocks divide the total window usage into visual steps; they do not represent usage on individual calendar days. Partial blocks fill from the bottom over the same background track as empty blocks. Only the bar turns red at 80% used. For multiday plans, it turns orange when usage exceeds the allocation through the current day (one day's share per day). Red takes priority. The day comparison requires both a known window duration and a future reset time. Set `critical_bar_style`, `warning_bar_style`, and `bar_track_color` to change the colors. Shorter windows use five progress blocks. Windows without a known duration use their provider label and a ten-cell bar. `$remaining` shows the time until reset when the provider supplies a reset timestamp; otherwise the optional group omits it. Window formats support `$name`, `$remaining`, `$percent`, and `$bar`, plus optional and styled groups. Cached usage older than 30 minutes shows its age, such as `(31m old)`, and uses `stale_style`. After a failed refresh, the heading shows `sign in again` for HTTP 401 or `refresh failed` for other errors, with a separate `cached 1m old` row when an earlier reading exists, even if it is less than 30 minutes old. A failed refresh keeps the last good usage, dims the heading, and hides any cached Codex reset count until a successful refresh. Without cached usage, the heading shows the failure status; before the first result, it shows `(unavailable)`. A successful refresh clears the failure status. Usage text is escaped and clipped. Click a heading or plan row to open the provider's usage page for Claude, Codex, GitHub Copilot premium requests, or the z.ai personal Coding Plan. Gemini CLI, Antigravity, Kiro, and Grok rows have no browser click target because a direct page showing the fetched usage has not been established. The z.ai link opens the personal plan page; team plans have a separate page.
+Available providers are `anthropic`, `copilot`, `gemini`, `antigravity`, `codex`, `kiro`, `zai`, and `xai`. By default, none are selected. Set `providers` explicitly to enable usage and choose the provider order.
 
-For GPT subscription usage alone, set `providers = ["codex"]`. When Codex reports its available reset count, the heading shows a muted label, such as `Codex Plan · 1 reset` or `Codex Plan · 0 resets`. A missing count leaves the heading unchanged. Starmux reads Pi's `~/.pi/agent/auth.json` or Codex's auth file for Codex credentials; it does not require Pi or pi-usage to run. A foreground sidebar render returns cached usage immediately and starts a refresh worker when data is absent or at least 60 seconds old. One Starmux worker per provider holds the lease, so concurrent clients do not multiply requests. Failed requests preserve last-good usage and delay retries using the provider's `Retry-After` header or a 60-second fallback. The next tmux redraw shows a completed refresh. Starmux's cache and locks are separate from pi-usage; if both run, each may make a request within the same minute.
+`format` supports `$name` (window duration or provider label), `$remaining` (time until reset, when available), `$percent` (quota used), and `$bar`, plus optional and styled groups. For windows lasting more than 24 hours and at most seven days, `$bar` has one block per day; these blocks divide total usage, rather than showing usage on individual calendar days. Shorter windows use five blocks. Windows without a known duration use a ten-cell bar. Custom formats render as written.
 
-Set `cache_dir` to an absolute path under `[usage]` to change the usage cache location. The default is the `usage/` directory under the shared Starmux cache root. Styles accept palette colors and the same validated attributes as other modules.
+Use `provider_style` for headings and `window_style` for usage rows. `critical_bar_style` applies at 80% used. For multiday windows with a known reset time, `warning_bar_style` applies when usage exceeds the allocation through the current day. Critical styling takes priority. `bar_track_color` sets the empty bar's background. `stale_style` applies to old cached readings, and `unavailable_style` applies when usage is unavailable.
+
+For GPT subscription usage alone, set `providers = ["codex"]`. Codex credentials come from Pi's `~/.pi/agent/auth.json` or Codex's auth file; Pi and pi-usage do not need to be running.
+
+Set `cache_dir` to an absolute path under `[usage]` to change the usage cache location. The default is `starmux/usage/` under the platform's cache directory. Styles accept palette colors and the same validated attributes as other modules.
 
 ## Live Pi sessions
 
@@ -426,13 +430,13 @@ selected_style = "reverse,bold"
 selected_fill = "default"
 ```
 
-When Pi sessions are available, full layout shows a `π Sessions` heading styled by `heading_style` above the project groups. Slim layout omits this heading. Pi sessions are grouped by project. Starmux finds the nearest Git root above each published cwd; when there is no Git root, the cwd is the project. Each project gets one heading styled by `project_style`. Groups sort alphabetically by project name, with the full path distinguishing projects with the same name. Sessions within a group sort alphabetically by session name. State and selection changes update styling without changing the order. Renaming a session or changing its project can move its row. A project heading adds one sidebar row.
+In full layout, `heading_style` styles the `π Sessions` heading and `project_style` styles each project heading. Slim layout omits these headings.
 
-The row format supports `$state` (a `●` icon) and `$name`, optional groups, and validated styled groups. The three state styles color the icon; the name uses normal text styling unless its pane is selected. A Pi pane marked `@pi_state=notify` shows the magenta icon. The selected Pi pane uses `selected_style` and `selected_fill`. When a session has no name, `$name` shows the first eight characters of its session ID. Styles can use colors from the selected palette. Names and project headings are escaped as text and clipped to the sidebar width.
+The row format supports `$state` (a `●` icon) and `$name`, optional groups, and validated styled groups. `idle_style`, `working_style`, and `notify_style` color the state icon. The selected Pi pane uses `selected_style` and `selected_fill`. When a session has no name, `$name` shows the first eight characters of its session ID. Styles can use colors from the selected palette.
 
-The `pi-tmux` namespace identifies the tmux server and pane. Sessions with a different tmux server socket do not appear in this sidebar. A row with a matching pane on that server is clickable. Starmux resolves the pane's current window on click and selects the pane. A record without a matching pane remains visible without a click target or selected styling. With a custom tmux mouse binding, route `sp` user ranges to `starmux activate` as well as `sw` ranges; `starmux init tmux` emits the required binding.
+With a custom tmux mouse binding, route `sp` user ranges to `starmux activate` as well as `sw` ranges; `starmux init tmux` emits the required binding.
 
-Starmux reads version 2 JSON records from `~/.local/share/pi/status`. It gets the endpoint from `pi-socket` and checks each session's Unix socket with the socket protocol's version 1 ping request. An absent directory, invalid records, unsupported versions, and unreachable sessions produce no rows for those records. A bad record does not hide healthy sessions. Starmux scans at most 256 directory entries and checks at most 32 records matching the current tmux socket per render, with a 200 ms total query budget and a 40 ms ping timeout per session. Set `data_dir` to an absolute path under `[pi-workbench]` when the extension publishes elsewhere; Starmux looks for `status/` and `sockets/` in that directory. Reading the files does not remove stale records. If your config uses `pi-live`, rename both the module list entry and `[pi-live]` table to `pi-workbench` and `[pi-workbench]`.
+Pi sessions require pi-workbench to publish session status. The default data directory is `~/.local/share/pi`. Set `data_dir` to an absolute path under `[pi-workbench]` when pi-workbench uses another data directory. If your config uses `pi-live`, rename both the module list entry and `[pi-live]` table to `pi-workbench` and `[pi-workbench]`.
 
 ## Selected Pi context
 
@@ -454,7 +458,9 @@ closed_style = "fg=red"
 unknown_style = "fg=brightblack"
 ```
 
-When context has entries, a `π` heading shows the selected Pi session's name above the nonempty Plans, PRs, and Skills sections. This heading appears even when `pi-context` is used without `pi-workbench`. Category labels align with the heading; item rows have one indent. `heading_style` controls the heading color and weight. `◇` marks a plan and `✦` marks a loaded skill. A PR row shows `owner/repo#number` with Nerd Font Codicon icons: green `` for open, muted `` for draft, purple `` for merged, and red `` for closed. Unknown state uses a muted ``. Draft and closed rows include a word when space permits. Click a PR row to open its GitHub page. Click a plan to open its Markdown file or a skill to open its `SKILL.md` with the system's file handler. Set `open_command` under `[pi-context]` to override that handler:
+Use `heading_style` for the selected session's `π` heading, `category_style` for the Plans, PRs, and Skills labels, and `text_style` for item text. `plan_style` and `skill_style` style the plan and skill icons. PR icons use `open_style`, `draft_style`, `merged_style`, `closed_style`, or `unknown_style` according to their state.
+
+Plans and skills open with the system's file handler by default. Set `open_command` under `[pi-context]` to override that handler:
 
 ```toml
 open_command = ["dev", "tmux", "edit", "{file}", "{pane}", "{socket}"]
@@ -467,11 +473,9 @@ open_command = ["dev", "tmux", "edit", "{file}", "{pane}", "{socket}"]
 plan_server_url = "http://127.0.0.1:19433"
 ```
 
-Starmux passes each array item as a separate process argument without a shell. `{file}` is required exactly once; `{pane}` is the selected tmux pane ID and `{socket}` is the current tmux server socket. This example opens the file in that pane's tmux session's Neovim editor window. The command runs only for plan and skill rows. Clicks resolve the selected Pi session again and reject stale or missing targets. The `pi-skills` namespace records paths for loaded skills, including cached GitHub skills. A skill without a recorded path uses `~/.agents/skills/<name>/SKILL.md` or `~/.pi/agent/skills/<name>/SKILL.md` when present. Text is escaped and clipped to the sidebar width. Styles accept palette colors. Use `disabled = true` to hide the module.
+Starmux passes each array item as a separate process argument without a shell. `{file}` is required exactly once; `{pane}` is the selected tmux pane ID and `{socket}` is the current tmux server socket. This example opens the file in that pane's tmux session's Neovim editor window. The command runs only for plan and skill rows. Styles accept palette colors. Use `disabled = true` to hide the module.
 
-The module reads the selected reachable session's version 2 namespaced context file through its Pi status record. Switching panes updates the rows. No selected Pi session, an empty context, a missing file, or an invalid file produces no context rows. The Pi status scan is shared with `pi-workbench` when both modules are enabled. It shows at most 16 entries in each category.
-
-PR states come from authenticated `gh api` requests in a background worker. A sidebar render uses the cached result immediately and refreshes eligible PRs after five minutes. At most 16 PRs can start a refresh per render, matching the displayed PR limit. Concurrent clients share a lease per PR. Failed lookups retry after one minute, preserve the last known state for up to 30 minutes, then show a muted ``. A missing `gh` command or GitHub authentication leaves the association visible with unknown state. The cache lives under `pr-state/` in the shared Starmux cache root.
+Install `gh` and authenticate with GitHub to enable PR state lookups.
 
 ## Gob jobs
 
@@ -488,9 +492,7 @@ progress_style = "fg=green"
 bar_track_color = "colour238"
 ```
 
-The section shows `Jobs`, then a green dot and description for each running job. If a job has no description, `$name` shows its command or job ID. The format also accepts `$id`. A job with a previous successful-run average gets a second row with a horizontal progress track below its name. The track fills the space after its indentation and before a four-column percentage field that fits `100%`, with two more spaces to its right; filled cells show elapsed time divided by the previous average, capped at 100%. A job can still be running when the track is full. When history or a valid start time is absent, there is no progress row. Narrow widths reduce the indentation to keep a track cell when both the track and percentage fit; the percentage takes priority at smaller widths. Rows have no click action by default. See [click actions](#click-actions) for overrides. All job text is escaped and clipped.
-
-Starmux runs `gob list --json` from the selected pane's `pane_current_path`. Gob matches the workdir exactly: a job started in a nested directory appears only when the pane is in that directory. Switching panes can change the list. If gob is missing or the directory has no running jobs, the section has no rows. Gob starts its daemon when `list` runs and the daemon is absent. Starmux bounds the command to 1.5 seconds and 2 MiB of output. If the query fails or returns invalid data, the Gob rows are omitted for that redraw; `starmux explain` reports the error while the other sidebar modules remain visible.
+Gob must be installed to show jobs. `format` accepts `$state`, `$name`, and `$id`. `$name` shows the job description, falling back to its command or ID. Use `heading_style` for the `Jobs` heading, `running_style` for the state icon, `progress_style` for the estimated progress bar, and `bar_track_color` for its empty track. Progress is based on previous successful runs, so a full bar does not mean the job has finished. Rows have no click action by default. See [click actions](#click-actions) for overrides.
 
 ## External commands
 
@@ -509,7 +511,7 @@ argv = ["my-status", "--short"]
 style = "fg=green"
 ```
 
-Starmux runs each argument array directly, without a shell, from the selected pane's current directory. A leading `~/` in an argument expands to the user's `HOME` directory; other shell expansions are not performed. Gitmux uses the pane directory by default. Commands run in module order on each sidebar redraw. Each command has a 500 ms deadline; four commands can take up to two seconds if all stall. Stdout is limited to 16 KiB and only its first line is displayed as one row when nonempty. A missing executable, invalid directory, empty output, failure, or timeout adds no row. `starmux explain` reports command failures; `starmux timings` includes `command_us`. `starmux check-config` validates names, references, arguments, modes, and styles. A command may have at most 16 arguments, each at most 1024 bytes.
+Starmux runs each argument array directly, without a shell, from the selected pane's current directory. A leading `~/` in an argument expands to the user's `HOME` directory; other shell expansions are not performed. Gitmux uses the pane directory by default. Commands run in module order on each sidebar redraw. Each command must finish within 500 ms. Stdout is limited to 16 KiB and only its first line is displayed as one row when nonempty. A missing executable, invalid directory, empty output, failure, or timeout adds no row. `starmux check-config` validates names, references, arguments, modes, and styles. A command may have at most 16 arguments, each at most 1024 bytes.
 
 `prefix` adds literal text before the output; it defaults to empty and accepts up to 64 bytes without control characters. The default `output = "text"` escapes command output and applies `style` (default `default`). Set `output = "tmux-styles"` for gitmux's colored output. This mode accepts only `#[none]` and validated tmux text styles such as `#[fg=green,bold]`. All other directives and tmux formats remain literal text. Command rows have no click action by default. See [click actions](#click-actions) for overrides. Output is clipped to the sidebar width.
 
@@ -530,7 +532,7 @@ lines = [
 
 Each string in `lines` is one sidebar row. An entry with no nonempty variables produces no row. Remove `$upstream` to hide the upstream name, or move it to its own string to give it a separate row. The safe formatter supports optional groups and validated styled groups. Variables are `$branch`, `$upstream`, `$ahead`, `$behind`, `$divergence`, `$staged`, `$modified`, `$untracked`, `$conflicts`, `$stash`, `$added`, `$deleted`, `$clean`, and `$state`. Zero counts are empty. Branch names are escaped and clipped. The rows have no click action by default. See [click actions](#click-actions) for overrides. Set `disabled = true` in `[git]` to omit the section.
 
-`$staged`, `$modified`, `$untracked`, and `$conflicts` count files; one file can be both staged and modified. `$added` and `$deleted` count tracked line changes against HEAD across staged and unstaged edits. Untracked files and binary changes have no line totals. `$clean` shows `✔` when no files have changed and no Git operation is active; stashes do not make the worktree dirty. `$stash` counts repository stashes, shared across linked worktrees. `$upstream` and `$divergence` use local refs without fetching. `$state` shows an active merge, rebase, cherry-pick, or revert. Detached HEAD shows a short commit ID. Outside a repository or when Git is missing, the section has no rows. Queries have a 1.5 second deadline and a 2 MiB output limit; failures omit the section and appear in `starmux explain`.
+`$staged`, `$modified`, `$untracked`, and `$conflicts` count files; one file can be both staged and modified. `$added` and `$deleted` count tracked line changes against HEAD across staged and unstaged edits. Untracked files and binary changes have no line totals. `$clean` shows `✔` when no files have changed and no Git operation is active; stashes do not make the worktree dirty. `$stash` counts repository stashes, shared across linked worktrees. `$upstream` and `$divergence` use local refs without fetching. `$state` shows an active merge, rebase, cherry-pick, or revert. Detached HEAD shows a short commit ID.
 
 The `[git]` styles are `branch_style`, `upstream_style`, `divergence_style`, `staged_style`, `modified_style`, `untracked_style`, `conflicts_style`, `stash_style`, `added_style`, `deleted_style`, `clean_style`, and `state_style`. Each accepts validated tmux styles and palette colors. The default colors make additions green and deletions red.
 
@@ -546,14 +548,14 @@ details = true
 style = "dim"
 ```
 
-The default shows only `last 12.34 ms`; `details = true` adds rows for nonzero `tmux`, `pi`, `pr`, `usage`, `gob`, `commands`, `git`, `format`, and `top` stages. These are source query and formatting times: several sidebar modules share a source, and `commands` combines configured external commands. The total is the sum of the stages, subject to rounding when displayed. The interval begins before the tmux snapshot and ends after formatting the sidebar. It excludes process startup, reading and writing the debug cache, and tmux's evaluation of the resulting status text. Background refresh workers are not included; starting them during a redraw is included. `starmux timings` includes `top_us` for host cache lookup and runs its own query without starting refresh workers.
+The default shows only `last 12.34 ms`; `details = true` adds rows for nonzero `tmux`, `pi`, `pr`, `usage`, `gob`, `commands`, `git`, `format`, and `top` stages. `style` applies to all timing rows.
 
-The first redraw shows `last --`. Each completed redraw records its measurement for the next one; the value expires after five minutes. Cache errors also show `last --` and do not interrupt the sidebar. The default cache is `debug/` under the shared Starmux cache root; set an absolute `cache_dir` under `[debug]` to change it. Rows have no click action by default and use the configured validated style. `disabled = true` omits the rows and cache access. The default module list does not include `debug`.
+Set an absolute `cache_dir` under `[debug]` to change where timings are stored. The default is `starmux/debug/` under the platform's cache directory. Rows have no click action by default and use the configured validated style. `disabled = true` hides the module. The default module list does not include `debug`.
 
 ## Tmux integration
 
 `starmux init tmux` generates the side-status render command, click binding, and wheel bindings. Position, width, and outer style remain ordinary tmux options.
 
-The adapter passes `#{e|-:#{side-status-width},1}` as the explicit `--width` argument, excluding tmux's border column. Valid content widths are 2–300 columns; set `side-status-width` to at least 3. If the client switches sessions or windows during a redraw, Starmux discards that stale render; the next redraw shows the new focus. Other status clicks retain tmux's default action.
+Valid content widths are 2–300 columns. The tmux `side-status-width` includes one border column, so valid sidebar widths are 3–301 columns.
 
-With `mouse on`, wheel up and down over the sidebar scroll the complete list one row at a time, including rows from every configured module. The selected tmux window stays unchanged; click a visible row to activate it. Each attached client keeps its own position. Scrolling stops at the first and last page and adjusts to changes in content or client height. Wheel events over the ordinary horizontal status keep tmux's window selection behavior. Regenerate and source `starmux init tmux` after upgrading to install the wheel bindings.
+Set `mouse on` in tmux to enable sidebar clicks and wheel scrolling. Regenerate and source `starmux init tmux` after upgrading to install the bindings.
