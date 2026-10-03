@@ -1118,6 +1118,11 @@ impl<T: Tmux> Application<T> {
             {
                 return Err("file click target is no longer present".into());
             }
+            if token.starts_with("sl") {
+                if let Some(url) = self.sidebar.plan_browser_url(&context.session_id, path)? {
+                    return self.tmux.open_url(&url);
+                }
+            }
             let command = self
                 .sidebar
                 .file_open_args(path, &snapshot.current_pane, socket);
@@ -1736,18 +1741,19 @@ mod tests {
         fs::create_dir_all(repo.join("src")).unwrap();
         let socket_path = data_dir.join("sockets/live.sock");
         let listener = UnixListener::bind(&socket_path).unwrap();
-        let responder = thread::spawn(move || {
-            for _ in 0..24 {
-                let (mut socket, _) = listener.accept().unwrap();
-                let mut request = [0; 128];
-                let len = socket.read(&mut request).unwrap();
-                assert!(std::str::from_utf8(&request[..len])
-                    .unwrap()
-                    .contains("\"ping\""));
-                socket
-                    .write_all(b"{\"ok\":true,\"result\":{\"type\":\"pong\"}}\n")
-                    .unwrap();
+        let responder = thread::spawn(move || loop {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut request = [0; 128];
+            let len = socket.read(&mut request).unwrap();
+            if len == 0 {
+                break;
             }
+            assert!(std::str::from_utf8(&request[..len])
+                .unwrap()
+                .contains("\"ping\""));
+            socket
+                .write_all(b"{\"ok\":true,\"result\":{\"type\":\"pong\"}}\n")
+                .unwrap();
         });
         let record = |id: &str, socket: &std::path::Path, name: &str, cwd: &std::path::Path| {
             serde_json::json!({
@@ -1923,6 +1929,21 @@ mod tests {
                 ]),
             ]
         );
+        fs::write(&session_file, "session").unwrap();
+        let browser_config = format!("{config}plan_server_url = \"http://127.0.0.1:19433\"\n");
+        let browser_app =
+            Application::new(Sidebar::from_toml(&browser_config).unwrap(), tmux.clone());
+        browser_app
+            .activate("/tmp/starmux-current.sock", "client", &plan_token)
+            .unwrap();
+        let browser_url = "http://127.0.0.1:19433/plans/live/0123456789abcdef01234567".to_owned();
+        assert_eq!(
+            tmux.opened_urls().as_slice(),
+            std::slice::from_ref(&browser_url)
+        );
+        assert!(other_app
+            .activate("/tmp/starmux-current.sock", "client", &plan_token)
+            .is_err());
         fs::remove_file(&plan_path).unwrap();
         assert!(app
             .activate("/tmp/starmux-current.sock", "client", &plan_token)
@@ -1941,7 +1962,10 @@ mod tests {
             .unwrap();
         app.activate("/tmp/starmux-current.sock", "client", &second_token)
             .unwrap();
-        assert_eq!(tmux.opened_urls(), [pr_url, second_url]);
+        assert_eq!(
+            tmux.opened_urls(),
+            [browser_url.as_str(), pr_url, second_url]
+        );
         assert!(other_app
             .activate("/tmp/starmux-current.sock", "client", &token)
             .is_err());
@@ -1950,7 +1974,11 @@ mod tests {
         assert!(app
             .activate("/tmp/starmux-current.sock", "client", &token)
             .is_err());
-        assert_eq!(tmux.opened_urls(), [pr_url, second_url]);
+        assert_eq!(
+            tmux.opened_urls(),
+            [browser_url.as_str(), pr_url, second_url]
+        );
+        drop(std::os::unix::net::UnixStream::connect(&socket_path).unwrap());
         responder.join().unwrap();
         assert!(rendered.contains("#[bold] repo#[bg=default]"), "{rendered}");
         assert!(

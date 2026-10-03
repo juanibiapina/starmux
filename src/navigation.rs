@@ -1,3 +1,38 @@
+pub(crate) fn validate_plan_origin(origin: &str) -> Result<String, String> {
+    let port = origin
+        .trim_end_matches('/')
+        .strip_prefix("http://127.0.0.1:")
+        .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|s| s.parse::<u16>().ok());
+    if port.is_none_or(|port| port == 0) || origin.ends_with("//") {
+        return Err("pi-context plan_server_url must be http://127.0.0.1:PORT".into());
+    }
+    Ok(match port {
+        Some(80) => "http://127.0.0.1".into(),
+        Some(port) => format!("http://127.0.0.1:{port}"),
+        None => return Err("invalid plan browser port".into()),
+    })
+}
+
+pub(crate) fn plan_browser_url(origin: &str, session_id: &str, id: &str) -> Result<String, String> {
+    let origin = validate_plan_origin(origin)?;
+    if id.len() != 24
+        || !id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err("invalid plan ID".into());
+    }
+    if session_id.is_empty()
+        || !session_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    {
+        return Err("invalid session ID".into());
+    }
+    Ok(format!("{origin}/plans/{session_id}/{id}"))
+}
+
 // tmux user ranges hold at most 15 bytes. Recheck the current pane and URL on click.
 pub(crate) fn pr_token(pane: &str, url: &str, index: usize) -> Result<String, String> {
     if index >= 16

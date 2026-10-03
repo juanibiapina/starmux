@@ -80,6 +80,7 @@ impl Fixture {
                 selected: true,
             }],
             context: PiContext {
+                session_id: "session-a".into(),
                 plans: vec![PiPlan {
                     title: "Plan".into(),
                     path: "/tmp/plan.md".into(),

@@ -4,6 +4,7 @@
 
 ### Added
 
+- Open Pi plans in a local browser.
 - Show a `π Sessions` heading above the Pi session list in full layout.
 - Install Starmux through a Nix flake on Linux and macOS.
 - Hide inactive tmux sessions with `[sessions].active_only`, or hide only their windows with `[sessions].fold_inactive`.

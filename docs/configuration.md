@@ -462,6 +462,13 @@ When context has entries, a `π` heading shows the selected Pi session's name ab
 open_command = ["dev", "tmux", "edit", "{file}", "{pane}", "{socket}"]
 ```
 
+[Start the Pi plan browser](https://github.com/juanibiapina/pi-workbench/tree/main/packages/pi-plans#open-and-review-a-plan), then set its URL to open plans from the sidebar:
+
+```toml
+[pi-context]
+plan_server_url = "http://127.0.0.1:19433"
+```
+
 Starmux passes each array item as a separate process argument without a shell. `{file}` is required exactly once; `{pane}` is the selected tmux pane ID and `{socket}` is the current tmux server socket. This example opens the file in that pane's tmux session's Neovim editor window. The command runs only for plan and skill rows. Clicks resolve the selected Pi session again and reject stale or missing targets. The `pi-skills` namespace records paths for loaded skills, including cached GitHub skills. A skill without a recorded path uses `~/.agents/skills/<name>/SKILL.md` or `~/.pi/agent/skills/<name>/SKILL.md` when present. Text is escaped and clipped to the sidebar width. Styles accept palette colors. Use `disabled = true` to hide the module.
 
 The module reads the selected reachable session's version 2 namespaced context file through its Pi status record. Switching panes updates the rows. No selected Pi session, an empty context, a missing file, or an invalid file produces no context rows. The Pi status scan is shared with `pi-workbench` when both modules are enabled. It shows at most 16 entries in each category.

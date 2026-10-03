@@ -1658,6 +1658,7 @@ fn pi_context_icons_and_clipping_work_at_narrow_widths() {
     std::fs::write(&plan, "# Plan").unwrap();
     std::fs::write(&skill, "# Skill").unwrap();
     let context = starmux::PiContext {
+        session_id: "session-a".into(),
         plans: vec![starmux::PiPlan {
             title: "#[fg=red] Build an extensive search".into(),
             path: plan,

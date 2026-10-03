@@ -153,6 +153,8 @@ struct PiContextConfig {
     disabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     open_command: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan_server_url: Option<String>,
     heading_style: String,
     category_style: String,
     text_style: String,
@@ -170,6 +172,7 @@ impl Default for PiContextConfig {
         Self {
             disabled: false,
             open_command: None,
+            plan_server_url: None,
             heading_style: "fg=magenta,bold".into(),
             category_style: "dim".into(),
             text_style: "default".into(),
@@ -783,6 +786,9 @@ impl Sidebar {
         {
             return Err("debug cache_dir must be an absolute path".into());
         }
+        if let Some(origin) = &config.pi_context.plan_server_url {
+            crate::navigation::validate_plan_origin(origin)?;
+        }
         if let Some(command) = &config.pi_context.open_command {
             if command.is_empty()
                 || command.len() > 16
@@ -1009,6 +1015,21 @@ impl Sidebar {
 
     pub(crate) fn pi_context_enabled(&self) -> bool {
         !self.config.pi_context.disabled && self.modules().iter().any(|name| name == "pi-context")
+    }
+
+    pub(crate) fn plan_browser_url(
+        &self,
+        session_id: &str,
+        file: &std::path::Path,
+    ) -> Result<Option<String>, String> {
+        let Some(origin) = self.config.pi_context.plan_server_url.as_deref() else {
+            return Ok(None);
+        };
+        let id = file
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or("invalid plan path")?;
+        crate::navigation::plan_browser_url(origin, session_id, id).map(Some)
     }
 
     pub(crate) fn file_open_args(

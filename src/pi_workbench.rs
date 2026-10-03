@@ -309,6 +309,7 @@ pub struct PiSkill {
 
 #[derive(Clone, Debug, Default)]
 pub struct PiContext {
+    pub session_id: String,
     pub plans: Vec<PiPlan>,
     pub pull_requests: Vec<String>,
     pub skills: Vec<PiSkill>,
@@ -393,6 +394,7 @@ pub(crate) fn read_context(path: &Path, session_id: &str) -> Option<PiContext> {
         return None;
     }
     Some(PiContext {
+        session_id: session_id.to_owned(),
         plans: plans
             .iter()
             .take(MAX_ITEMS)
