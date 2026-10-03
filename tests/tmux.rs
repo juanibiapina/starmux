@@ -1757,7 +1757,7 @@ fn wheel_scrolls_all_sidebar_rows_without_switching_windows() {
     let config = root.join("config.toml");
     fs::write(
         &config,
-        "modules = [\"sessions\", \"divider\", \"blank\", \"command.slow\"]\n[commands.slow]\nargv = [\"sleep\", \"0.07\"]\n",
+        format!("cache_dir = {:?}\nmodules = [\"sessions\", \"divider\", \"blank\", \"command.slow\"]\n[commands.slow]\nargv = [\"sleep\", \"0.07\"]\n", root.to_str().unwrap()),
     )
     .unwrap();
     let generated = Command::new(binary)
@@ -1829,12 +1829,6 @@ fn wheel_scrolls_all_sidebar_rows_without_switching_windows() {
         "STARMUX_CONFIG",
         config.to_str().unwrap(),
     ]);
-    tmux(&[
-        "set-environment",
-        "-g",
-        "XDG_CACHE_HOME",
-        root.to_str().unwrap(),
-    ]);
     tmux(&["set", "-g", "mouse", "on"]);
     tmux(&["set", "-g", "status-interval", "1"]);
     tmux(&["set", "-g", "side-status", "left"]);
@@ -1870,7 +1864,6 @@ fn wheel_scrolls_all_sidebar_rows_without_switching_windows() {
                 &format!("--client={name}"),
             ])
             .env("STARMUX_CONFIG", &config)
-            .env("XDG_CACHE_HOME", &root)
             .output()
             .unwrap();
         assert!(
@@ -1942,7 +1935,6 @@ fn wheel_scrolls_all_sidebar_rows_without_switching_windows() {
             &format!("--client={other_name}"),
         ])
         .env("STARMUX_CONFIG", &config)
-        .env("XDG_CACHE_HOME", &root)
         .output()
         .unwrap();
     assert!(other_render.status.success());

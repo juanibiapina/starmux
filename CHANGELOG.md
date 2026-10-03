@@ -4,10 +4,15 @@
 
 ### Added
 
+- Log missing sidebar data, query failures, and slow redraw timings to `events.log` in the cache directory.
 - Open Pi plans in a local browser.
 - Show a `π Sessions` heading above the Pi session list in full layout.
 - Install Starmux through a Nix flake on Linux and macOS.
 - Hide inactive tmux sessions with `[sessions].active_only`, or hide only their windows with `[sessions].fold_inactive`.
+
+### Changed
+
+- Use xdg cache directory; set `cache_dir` to choose another location.
 
 ### Fixed
 

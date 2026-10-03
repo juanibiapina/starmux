@@ -38,6 +38,15 @@ fn help_and_adapter_expose_only_the_query_interface() {
 fn wheel_at_top_is_a_noop_without_a_tmux_refresh() {
     let cache = std::env::temp_dir().join(format!("starmux-scroll-edge-{}", std::process::id()));
     std::fs::create_dir_all(&cache).unwrap();
+    let config = cache.join("config.toml");
+    std::fs::write(
+        &config,
+        format!(
+            "cache_dir = {:?}\n",
+            cache.join("starmux").to_str().unwrap()
+        ),
+    )
+    .unwrap();
     let scroll = |direction| {
         Command::new(env!("CARGO_BIN_EXE_starmux"))
             .args([
@@ -47,7 +56,7 @@ fn wheel_at_top_is_a_noop_without_a_tmux_refresh() {
                 "--client=missing",
                 &format!("--direction={direction}"),
             ])
-            .env("XDG_CACHE_HOME", &cache)
+            .env("STARMUX_CONFIG", &config)
             .output()
             .unwrap()
     };
@@ -69,7 +78,7 @@ fn wheel_at_top_is_a_noop_without_a_tmux_refresh() {
                 "--client=missing",
                 &format!("--direction={direction}"),
             ])
-            .env("XDG_CACHE_HOME", &cache)
+            .env("STARMUX_CONFIG", &config)
             .output()
             .unwrap()
     };

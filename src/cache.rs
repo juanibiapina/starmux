@@ -4,15 +4,7 @@ pub(crate) fn root(configured: Option<&str>) -> Option<PathBuf> {
     if let Some(path) = configured {
         return Some(PathBuf::from(path));
     }
-    if let Some(path) = std::env::var_os("XDG_CACHE_HOME") {
-        return Some(PathBuf::from(path).join("starmux"));
-    }
-    let home = PathBuf::from(std::env::var_os("HOME")?);
-    if cfg!(target_os = "macos") {
-        Some(home.join("Library/Caches/starmux"))
-    } else {
-        Some(home.join(".cache/starmux"))
-    }
+    dirs::cache_dir().map(|root| root.join("starmux"))
 }
 
 pub(crate) fn child(root: &Path, name: &str) -> PathBuf {

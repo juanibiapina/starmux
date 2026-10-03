@@ -629,6 +629,7 @@ struct RenderOptions<'a> {
     previous: Option<&'a crate::Diagnostics>,
     spawn: bool,
     offset: usize,
+    events: &'a mut crate::event_log::Events,
 }
 
 impl<T: Tmux> Application<T> {
@@ -659,6 +660,8 @@ impl<T: Tmux> Application<T> {
         width: usize,
         focus: Option<&Focus>,
     ) -> Result<String, String> {
+        let started = Instant::now();
+        let mut events = crate::event_log::Events::default();
         let dir = self.sidebar.debug_cache_dir().and_then(|configured| {
             configured
                 .map(std::path::PathBuf::from)
@@ -678,14 +681,22 @@ impl<T: Tmux> Application<T> {
             RenderOptions {
                 previous: previous.as_ref(),
                 spawn: true,
+                events: &mut events,
                 offset: scroll_dir
                     .as_deref()
                     .map_or(0, |dir| crate::scroll::read(dir, socket, &identity)),
             },
         ) {
             Ok(result) => result,
-            Err(error) if error == FOCUS_CHANGED => return Ok(String::new()),
-            Err(error) => return Err(error),
+            Err(error) => {
+                events.missing("render", &error);
+                self.write_events(&events, socket, client);
+                return if error == FOCUS_CHANGED {
+                    Ok(String::new())
+                } else {
+                    Err(error)
+                };
+            }
         };
         if let Some(dir) = scroll_dir.as_deref() {
             let _ = crate::scroll::set_bound(dir, socket, &identity, max_offset);
@@ -693,7 +704,20 @@ impl<T: Tmux> Application<T> {
         if let Some(dir) = dir {
             let _ = crate::debug::write(&dir, socket, &debug_identity, &diagnostics);
         }
+        events.timings(&diagnostics, started.elapsed().as_micros());
+        self.write_events(&events, socket, client);
         Ok(rendered)
+    }
+
+    fn write_events(&self, events: &crate::event_log::Events, socket: &str, client: &str) {
+        events.write(
+            self.sidebar.event_log_path().as_deref(),
+            &[
+                ("socket", socket),
+                ("client", client),
+                ("config", self.sidebar.selected_config()),
+            ],
+        );
     }
 
     fn measured_render(
@@ -708,12 +732,14 @@ impl<T: Tmux> Application<T> {
             previous,
             spawn,
             offset,
+            events,
         } = options;
         let started = Instant::now();
         let mut diagnostics = crate::Diagnostics::default();
         let snapshot = self.snapshot(socket, client, width, focus)?;
         diagnostics.stages[0] = started.elapsed().as_micros() as u64;
-        let (pi_sessions, context) = self.pi_sessions(socket, &snapshot)?;
+        events.pane.clone_from(&snapshot.current_pane);
+        let (pi_sessions, context) = self.pi_sessions(socket, &snapshot, Some(events))?;
         if self.sidebar.pi_workbench_data_dir().is_some() {
             diagnostics.stages[1] =
                 (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
@@ -735,17 +761,25 @@ impl<T: Tmux> Application<T> {
             diagnostics.stages[3] =
                 (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
         }
-        let jobs = self.gob_jobs(&snapshot).unwrap_or_default();
+        let jobs = events
+            .result("gob", self.gob_jobs(&snapshot))
+            .unwrap_or_default();
         if self.sidebar.gob_enabled() {
             diagnostics.stages[4] =
                 (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
         }
-        let (commands, _) = self.commands(&snapshot);
+        let (commands, errors) = self.commands(&snapshot);
+        for error in errors {
+            events.missing("command", &error);
+        }
         if !self.sidebar.command_options().is_empty() {
             diagnostics.stages[5] =
                 (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
         }
-        let git = self.git_status(&snapshot).ok().flatten();
+        let git = events
+            .result("git", self.git_status(&snapshot))
+            .ok()
+            .flatten();
         if self.sidebar.git_enabled() {
             diagnostics.stages[6] =
                 (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
@@ -760,6 +794,7 @@ impl<T: Tmux> Application<T> {
             diagnostics.stages[8] =
                 (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
         }
+        events.availability(&usage, top.as_ref());
         let (rendered, _, max_offset) = self.sidebar.render_scrolled(
             &snapshot,
             crate::RenderInputs {
@@ -784,6 +819,7 @@ impl<T: Tmux> Application<T> {
         &self,
         socket: &str,
         snapshot: &Snapshot,
+        events: Option<&mut crate::event_log::Events>,
     ) -> Result<(Vec<crate::PiSession>, Option<crate::PiContext>), String> {
         let Some(data_dir) = self.sidebar.pi_workbench_data_dir() else {
             return Ok((Vec::new(), None));
@@ -823,10 +859,20 @@ impl<T: Tmux> Application<T> {
                 .iter()
                 .find(|entry| entry.session.selected)
                 .and_then(|entry| {
-                    entry
+                    let context = entry
                         .context_path
                         .as_ref()
-                        .and_then(|path| crate::pi_workbench::read_context(path, &entry.session_id))
+                        .ok_or_else(|| "missing context path".to_owned())
+                        .and_then(|path| {
+                            crate::pi_workbench::read_context(path, &entry.session_id)
+                        });
+                    if let (Err(reason), Some(events)) = (&context, events) {
+                        events.missing(
+                            "pi-context",
+                            &format!("session={} {reason}", entry.session_id),
+                        );
+                    }
+                    context.ok()
                 })
         } else {
             None
@@ -921,7 +967,7 @@ impl<T: Tmux> Application<T> {
         focus: Option<&Focus>,
     ) -> Result<String, String> {
         let snapshot = self.snapshot(socket, client, width, focus)?;
-        let (mut pi_sessions, context) = self.pi_sessions(socket, &snapshot)?;
+        let (mut pi_sessions, context) = self.pi_sessions(socket, &snapshot, None)?;
         crate::pi_workbench::sort_sessions(&mut pi_sessions);
         let usage_rows = self.usage_rows(false)?;
         let mut result = source_explanation(
@@ -1031,6 +1077,7 @@ impl<T: Tmux> Application<T> {
     ) -> Result<String, String> {
         validate_width(width)?;
         let view = self.for_width(width);
+        let mut events = crate::event_log::Events::default();
         let (_, diagnostics, _) = view.measured_render(
             socket,
             client,
@@ -1040,6 +1087,7 @@ impl<T: Tmux> Application<T> {
                 previous: None,
                 spawn: false,
                 offset: 0,
+                events: &mut events,
             },
         )?;
         let stages = diagnostics.stages;
@@ -1093,7 +1141,7 @@ impl<T: Tmux> Application<T> {
             let snapshot = self.snapshot(socket, client, width, None)?;
             let mut context = None;
             for _ in 0..3 {
-                context = self.pi_sessions(socket, &snapshot)?.1;
+                context = self.pi_sessions(socket, &snapshot, None)?.1;
                 if context.is_some() {
                     break;
                 }
@@ -1133,7 +1181,7 @@ impl<T: Tmux> Application<T> {
                 return Err("PR click target is not enabled".into());
             }
             let snapshot = self.snapshot(socket, client, width, None)?;
-            let (_, context) = self.pi_sessions(socket, &snapshot)?;
+            let (_, context) = self.pi_sessions(socket, &snapshot, None)?;
             let context = context.ok_or("PR click target is no longer present")?;
             let url = crate::navigation::pr_target(
                 token,
@@ -1158,7 +1206,7 @@ impl<T: Tmux> Application<T> {
         let structural = matches!(module, "spacer" | "divider" | "blank");
         let (pi_sessions, context) =
             if structural || matches!(module, "pi-context" | "pi-workbench") {
-                self.pi_sessions(socket, &snapshot)?
+                self.pi_sessions(socket, &snapshot, None)?
             } else {
                 (Vec::new(), None)
             };
@@ -1610,6 +1658,86 @@ mod tests {
     }
 
     #[test]
+    fn render_logs_failures_and_slow_timings_without_changing_output() {
+        use std::fs;
+        let root = std::env::temp_dir().join(format!("starmux-events-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let snapshot = Snapshot {
+            width: 30,
+            client_width: 100,
+            client_height: 25,
+            status_lines: 1,
+            current_session: "$0".into(),
+            current_pane: "%0".into(),
+            pane_path: "/tmp".into(),
+            sessions: vec![Session {
+                id: "$0".into(),
+                name: "main".into(),
+                windows: vec![],
+            }],
+        };
+        let config = format!("cache_dir = {:?}\nmodules = ['command.slow', 'command.bad']\n[commands.slow]\nargv = ['sh', '-c', 'sleep 0.06; echo visible']\n[commands.bad]\nargv = ['starmux-missing-executable']\n", root.to_str().unwrap());
+        let app = Application::new(
+            Sidebar::from_toml(&config).unwrap(),
+            MemoryTmux::new(snapshot),
+        );
+        let rendered = app
+            .render_query("socket", "client\nsecond-line", 30, None)
+            .unwrap();
+        assert!(rendered.contains("visible"), "{rendered}");
+        let log_path = root.join("events.log");
+        let log = fs::read_to_string(&log_path).unwrap();
+        assert!(
+            log.contains("source=\"command\"") && log.contains("executable not found"),
+            "{log}"
+        );
+        assert!(
+            log.contains("slow total_us=") && log.contains("commands_us="),
+            "{log}"
+        );
+        assert!(log
+            .lines()
+            .all(|line| line.starts_with("unix_ms=") && line.len() < 4096));
+        assert!(log.contains("client=\"client\\nsecond-line\""), "{log}");
+        fs::remove_file(&log_path).unwrap();
+        fs::create_dir(&log_path).unwrap();
+        let without_log = app
+            .render_query("socket", "client\nsecond-line", 30, None)
+            .unwrap();
+        assert_eq!(rendered, without_log);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn healthy_render_does_not_create_an_event_log() {
+        let root =
+            std::env::temp_dir().join(format!("starmux-events-healthy-{}", std::process::id()));
+        let sidebar = Sidebar::from_toml(&format!(
+            "cache_dir = {:?}\nmodules = ['blank']\n",
+            root.to_str().unwrap()
+        ))
+        .unwrap();
+        let snapshot = Snapshot {
+            width: 30,
+            client_width: 100,
+            client_height: 25,
+            status_lines: 1,
+            current_session: "$0".into(),
+            current_pane: "%0".into(),
+            pane_path: "/tmp".into(),
+            sessions: vec![Session {
+                id: "$0".into(),
+                name: "main".into(),
+                windows: vec![],
+            }],
+        };
+        let app = Application::new(sidebar, MemoryTmux::new(snapshot));
+        app.render_query("socket", "client", 30, None).unwrap();
+        assert!(!root.join("events.log").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn debug_shows_the_previous_completed_redraw_for_each_client() {
         let root = std::env::temp_dir().join(format!(
             "starmux-debug-{}-{:?}",
@@ -1818,7 +1946,7 @@ mod tests {
         .unwrap();
         fs::write(data_dir.join("status/broken.json"), "{bad json").unwrap();
         let config = format!(
-            "modules = [\"sessions\", \"pi-workbench\", \"pi-context\"]\n[pi-workbench]\ndata_dir = {:?}\nformat = \"$name $state\"\n[pi-context]\nopen_command = [\"dev\", \"tmux\", \"edit\", \"{{file}}\", \"{{pane}}\", \"{{socket}}\"]\n",
+            "cache_dir = {0:?}\nmodules = [\"sessions\", \"pi-workbench\", \"pi-context\"]\n[pi-workbench]\ndata_dir = {0:?}\nformat = \"$name $state\"\n[pi-context]\nopen_command = [\"dev\", \"tmux\", \"edit\", \"{{file}}\", \"{{pane}}\", \"{{socket}}\"]\n",
             data_dir.to_str().unwrap()
         );
         let tmux = MemoryTmux::new(Snapshot {
@@ -1978,6 +2106,41 @@ mod tests {
             tmux.opened_urls(),
             [browser_url.as_str(), pr_url, second_url]
         );
+        let log_path = data_dir.join("events.log");
+        fs::write(
+            &context_path,
+            serde_json::json!({
+                "version": 2, "sessionId": "live", "extensions": {}
+            })
+            .to_string(),
+        )
+        .unwrap();
+        if log_path.exists() {
+            fs::remove_file(&log_path).unwrap();
+        }
+        app.render_query("/tmp/starmux-current.sock", "client", 40, None)
+            .unwrap();
+        assert!(!fs::read_to_string(&log_path)
+            .unwrap_or_default()
+            .contains("pi-context"));
+        fs::remove_file(&context_path).unwrap();
+        app.render_query("/tmp/starmux-current.sock", "client", 40, None)
+            .unwrap();
+        let log = fs::read_to_string(&log_path).unwrap();
+        assert!(
+            log.contains("pane=\"%0\"") && log.contains("source=\"pi-context\""),
+            "{log}"
+        );
+        assert!(
+            log.contains("session=live") && log.contains("context file:"),
+            "{log}"
+        );
+        fs::write(&context_path, "{").unwrap();
+        app.render_query("/tmp/starmux-current.sock", "client", 40, None)
+            .unwrap();
+        assert!(fs::read_to_string(&log_path)
+            .unwrap()
+            .contains("invalid context JSON"));
         drop(std::os::unix::net::UnixStream::connect(&socket_path).unwrap());
         responder.join().unwrap();
         assert!(rendered.contains("#[bold] repo#[bg=default]"), "{rendered}");

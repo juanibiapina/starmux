@@ -1062,6 +1062,10 @@ impl Sidebar {
         self.cache_dir_for(name)
     }
 
+    pub(crate) fn event_log_path(&self) -> Option<std::path::PathBuf> {
+        crate::cache::root(self.config.cache_dir.as_deref()).map(|root| root.join("events.log"))
+    }
+
     pub(crate) fn top_enabled(&self) -> bool {
         !self.config.top.disabled && self.modules().iter().any(|name| name == "top")
     }

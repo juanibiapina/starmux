@@ -322,49 +322,63 @@ const MAX_ITEMS: usize = 16;
     clippy::too_many_lines,
     reason = "Context schema and path validation precede constructing the published context"
 )]
-pub(crate) fn read_context(path: &Path, session_id: &str) -> Option<PiContext> {
-    let metadata = fs::symlink_metadata(path).ok()?;
+pub(crate) fn read_context(path: &Path, session_id: &str) -> Result<PiContext, String> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| format!("context file: {error}"))?;
     if !metadata.file_type().is_file() || metadata.len() > MAX_CONTEXT_BYTES {
-        return None;
+        return Err("context is not a regular file or exceeds 1 MiB".into());
     }
     let mut bytes = Vec::new();
     fs::File::open(path)
-        .ok()?
+        .map_err(|error| format!("open context: {error}"))?
         .take(MAX_CONTEXT_BYTES + 1)
         .read_to_end(&mut bytes)
-        .ok()?;
+        .map_err(|error| format!("read context: {error}"))?;
     if bytes.len() as u64 > MAX_CONTEXT_BYTES {
-        return None;
+        return Err("context exceeds 1 MiB".into());
     }
-    let value: Value = serde_json::from_slice(&bytes).ok()?;
-    if value.get("version")?.as_u64()? != 2 || value.get("sessionId")?.as_str()? != session_id {
-        return None;
+    let value: Value =
+        serde_json::from_slice(&bytes).map_err(|error| format!("invalid context JSON: {error}"))?;
+    if value.get("version").and_then(Value::as_u64) != Some(2)
+        || value.get("sessionId").and_then(Value::as_str) != Some(session_id)
+    {
+        return Err("context version or session ID mismatch".into());
     }
-    let session_file = path.file_name()?.to_str()?.strip_suffix(".context.json")?;
-    let directory = path.parent()?;
-    let namespaces = value.get("extensions")?.as_object()?;
+    let session_file = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_suffix(".context.json"))
+        .ok_or("invalid context filename")?;
+    let directory = path.parent().ok_or("invalid context directory")?;
+    let namespaces = value
+        .get("extensions")
+        .and_then(Value::as_object)
+        .ok_or("invalid context extensions")?;
     let plans_data = namespaces.get("pi-plans").and_then(entry_data);
     let github_data = namespaces.get("pi-github").and_then(entry_data);
     let skills_data = namespaces.get("pi-skills").and_then(entry_data);
     let empty = Vec::new();
     let plans = plans_data
         .map(|data| data.get("plans").and_then(Value::as_array))
-        .unwrap_or(Some(&empty))?;
+        .unwrap_or(Some(&empty))
+        .ok_or("invalid context plans")?;
     let prs = github_data
         .and_then(|data| data.get("pullRequests"))
         .map(Value::as_array)
         .unwrap_or(Some(&Vec::new()))
-        .cloned()?;
+        .cloned()
+        .ok_or("invalid context pull requests")?;
     let skills = skills_data
         .and_then(|data| data.get("skills"))
         .map(Value::as_array)
         .unwrap_or(Some(&Vec::new()))
-        .cloned()?;
+        .cloned()
+        .ok_or("invalid context skills")?;
     let skill_paths = skills_data
         .and_then(|data| data.get("skillPaths"))
         .map(Value::as_object)
         .unwrap_or(Some(&serde_json::Map::new()))
-        .cloned()?;
+        .cloned()
+        .ok_or("invalid context skill paths")?;
     if plans.iter().any(|p| {
         let id = p.get("id").and_then(Value::as_str);
         let title = p.get("title").and_then(Value::as_str);
@@ -391,9 +405,9 @@ pub(crate) fn read_context(path: &Path, session_id: &str) -> Option<PiContext> {
                     .is_none_or(|file| !valid_skill_path(Path::new(file)))
         })
     {
-        return None;
+        return Err("invalid context item or path".into());
     }
-    Some(PiContext {
+    Ok(PiContext {
         session_id: session_id.to_owned(),
         plans: plans
             .iter()
@@ -491,14 +505,14 @@ mod context_tests {
         fs::write(&path, value.to_string()).unwrap();
         assert_eq!(read_context(&path, "session").unwrap().plans.len(), 16);
         fs::write(&path, r#"{"version":1,"sessionId":"session","plans":[]}"#).unwrap();
-        assert!(read_context(&path, "session").is_none());
+        assert!(read_context(&path, "session").is_err());
         fs::write(&path, value.to_string()).unwrap();
-        assert!(read_context(&path, "another").is_none());
+        assert!(read_context(&path, "another").is_err());
         let link = dir.join("link.context.json");
         std::os::unix::fs::symlink(&path, &link).unwrap();
-        assert!(read_context(&link, "session").is_none());
+        assert!(read_context(&link, "session").is_err());
         fs::write(&path, "{").unwrap();
-        assert!(read_context(&path, "session").is_none());
+        assert!(read_context(&path, "session").is_err());
         fs::remove_dir_all(dir).unwrap();
     }
 }

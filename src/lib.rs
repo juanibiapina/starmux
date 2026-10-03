@@ -4,6 +4,7 @@ mod actions;
 mod cache;
 mod command;
 mod debug;
+mod event_log;
 mod git;
 mod gob;
 pub use debug::Diagnostics;

@@ -23,6 +23,7 @@ unicode-segmentation = "1"
 unicode-width = "0.2"
 ureq = { version = "3.4.2", features = ["json"] }
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
+dirs = "7"
 
 [dev-dependencies]
 vt100 = "0.16"
