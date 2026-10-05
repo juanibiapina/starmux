@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-05
+
 ### Added
 
 - Log missing sidebar data, query failures, and slow redraw timings to `events.log` in the cache directory.
