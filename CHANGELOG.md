@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Accept both `--flag=value` and `--flag value`, and show help for each command with `starmux <command> --help`.
+
 ### Fixed
 
 - Improve performance to avoid flicker when sending messages in a pi session

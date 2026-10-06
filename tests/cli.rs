@@ -13,9 +13,26 @@ fn help_and_adapter_expose_only_the_query_interface() {
     let help = binary(&["--help"]);
     assert!(help.status.success());
     let help = String::from_utf8(help.stdout).unwrap();
-    assert!(help.contains("render-query --width=COLUMNS"));
-    assert!(!help.contains("provider"));
-    assert!(!help.contains("tmux-argv"));
+    for command in [
+        "init",
+        "render-query",
+        "activate",
+        "scroll",
+        "check-config",
+        "print-config",
+    ] {
+        assert!(help.contains(command), "{help}");
+    }
+    for hidden in [
+        "provider",
+        "pr-refresh",
+        "usage-refresh",
+        "top-refresh",
+        "scroll-worker",
+        "tmux-argv",
+    ] {
+        assert!(!help.contains(hidden), "{help}");
+    }
 
     let adapter = binary(&["init", "tmux"]);
     assert!(adapter.status.success());
@@ -150,6 +167,31 @@ fn render_query_requires_a_valid_explicit_width_before_calling_tmux() {
         ]);
         assert!(!output.status.success());
         assert!(String::from_utf8_lossy(&output.stderr).contains("width"));
+    }
+}
+
+#[test]
+fn render_query_shows_argument_errors_as_one_sidebar_row() {
+    for (argument, expected) in [
+        ("--width=nope", "width"),
+        ("--bogus=1", "bogus"),
+        ("--current-session=$1", "current-window"),
+    ] {
+        let output = binary(&[
+            "render-query",
+            "--width=30",
+            "--socket=/dev/nonexistent",
+            "--client=none",
+            argument,
+        ]);
+        assert_eq!(output.status.code(), Some(2));
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stderr.contains(expected), "{stderr}");
+        assert!(stdout.starts_with("#[fg=red]starmux: "), "{stdout}");
+        assert!(stdout.contains(expected), "{stdout}");
+        assert!(stdout.ends_with("#[default]\n"), "{stdout}");
+        assert_eq!(stdout.lines().count(), 1, "{stdout}");
     }
 }
 
