@@ -1651,7 +1651,8 @@ fn pi_context_pr_state_icons_use_distinct_styles() {
 #[test]
 fn pi_context_icons_and_clipping_work_at_narrow_widths() {
     let sidebar = Sidebar::from_toml("modules = [\"pi-context\"]").unwrap();
-    let dir = std::env::temp_dir().join(format!("starmux-context-rows-{}", std::process::id()));
+    let tempdir = tempfile::tempdir().unwrap();
+    let dir = tempdir.path().to_path_buf();
     std::fs::create_dir_all(&dir).unwrap();
     let plan = dir.join("plan.md");
     let skill = dir.join("SKILL.md");
@@ -1744,7 +1745,6 @@ fn pi_context_icons_and_clipping_work_at_narrow_widths() {
         )
         .unwrap();
     assert!(rendered.contains("…##4242"), "{rendered}");
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]

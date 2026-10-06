@@ -7,6 +7,7 @@ use std::{
     process::{Command, Stdio},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use tempfile::NamedTempFile;
 
 const FRESH: u64 = 300;
 const RETRY: u64 = 60;
@@ -185,21 +186,13 @@ pub fn refresh(url: &str, dir: &Path) -> Result<(), String> {
             retry: current + RETRY,
         },
     };
-    let temp = dir.join(format!("{}.{}.tmp", key(url), std::process::id()));
-    let write = (|| -> Result<(), String> {
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut output = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&temp)
-            .map_err(|e| e.to_string())?;
-        output
-            .write_all(&serde_json::to_vec(&cache).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
-        fs::rename(&temp, file).map_err(|e| e.to_string())
-    })();
-    let _ = fs::remove_file(&temp);
+    let write = (|| -> std::io::Result<()> {
+        let mut output = NamedTempFile::new_in(dir)?;
+        output.write_all(&serde_json::to_vec(&cache).map_err(std::io::Error::other)?)?;
+        output.persist(file)?;
+        Ok(())
+    })()
+    .map_err(|e| e.to_string());
     let _ = fs::remove_file(lock);
     write
 }
@@ -253,7 +246,8 @@ mod tests {
     #[test]
     fn fetches_pr_state_from_a_local_command() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!("starmux-pr-fetch-{}", std::process::id()));
+        let tempdir = tempfile::tempdir().unwrap();
+        let dir = tempdir.path().to_path_buf();
         fs::create_dir_all(&dir).unwrap();
         let script = dir.join("gh");
         fs::write(&script, "#!/bin/sh\nprintf '%s\\n' '{\"state\":\"closed\",\"draft\":false,\"merged_at\":\"2026-01-01\"}'\n").unwrap();
@@ -267,12 +261,12 @@ mod tests {
             fetch_with(script.to_str().unwrap(), "repos/o/r/pulls/1"),
             None
         );
-        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn cached_state_expires_and_is_bound_to_its_url() {
-        let dir = std::env::temp_dir().join(format!("starmux-pr-cache-{}", std::process::id()));
+        let tempdir = tempfile::tempdir().unwrap();
+        let dir = tempdir.path().to_path_buf();
         fs::create_dir_all(&dir).unwrap();
         let url = "https://github.com/owner/repo/pull/42";
         let (path, _) = paths(&dir, url);
@@ -293,7 +287,6 @@ mod tests {
         cache.fetched = now();
         fs::write(&path, serde_json::to_vec(&cache).unwrap()).unwrap();
         assert_eq!(resolve(url, &dir, false), PrState::Unknown);
-        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

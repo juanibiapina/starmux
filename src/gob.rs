@@ -137,7 +137,8 @@ mod tests {
 
     #[test]
     fn gob_cli_filters_to_running_jobs_in_selected_directory() {
-        let dir = std::env::temp_dir().join(format!("starmux-gob-{}", std::process::id()));
+        let tempdir = tempfile::tempdir().unwrap();
+        let dir = tempdir.path().to_path_buf();
         fs::create_dir_all(&dir).unwrap();
         let script = dir.join("fake-gob");
         let json = serde_json::json!([
@@ -152,6 +153,5 @@ mod tests {
         let jobs = list_with(script.to_str().unwrap(), &dir).unwrap();
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].name, "make test");
-        fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -207,8 +207,8 @@ mod tests {
 
     #[test]
     fn repository_summary_tracks_changes_and_stash() {
-        let dir = std::env::temp_dir().join(format!("starmux-git-test-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let tempdir = tempfile::tempdir().unwrap();
+        let dir = tempdir.path().to_path_buf();
         fs::create_dir_all(dir.join("nested")).unwrap();
         git(&dir, &["init", "-q", "-b", "main"]);
         fs::write(dir.join("file"), "first\n").unwrap();
@@ -267,6 +267,5 @@ mod tests {
         assert_eq!((ahead.ahead, ahead.behind), (1, 0));
         git(&dir, &["checkout", "-q", "--detach"]);
         assert!(query(&dir).unwrap().unwrap().branch.starts_with(':'));
-        fs::remove_dir_all(dir).unwrap();
     }
 }

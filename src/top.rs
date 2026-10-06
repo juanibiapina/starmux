@@ -7,6 +7,7 @@ use std::{
     process::{Command, Stdio},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use tempfile::NamedTempFile;
 
 const FRESH_MS: u64 = 10_000;
 const STALE_MS: u64 = 60_000;
@@ -168,17 +169,13 @@ pub fn refresh(dir: &Path, token: &str) -> Result<(), String> {
         status,
     };
     let bytes = serde_json::to_vec(&record).map_err(|error| error.to_string())?;
-    let temp = dir.join(format!("status.{token}.tmp"));
-    let result = (|| {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)
-            .map_err(|error| error.to_string())?;
-        file.write_all(&bytes).map_err(|error| error.to_string())?;
-        fs::rename(&temp, dir.join("status.json")).map_err(|error| error.to_string())
-    })();
-    let _ = fs::remove_file(&temp);
+    let result = (|| -> std::io::Result<()> {
+        let mut file = NamedTempFile::new_in(dir)?;
+        file.write_all(&bytes)?;
+        file.persist(dir.join("status.json"))?;
+        Ok(())
+    })()
+    .map_err(|error| error.to_string());
     let _ = fs::remove_file(&lease);
     result
 }

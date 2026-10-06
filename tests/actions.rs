@@ -316,7 +316,8 @@ impl Tmux for LocalTmux {
 #[test]
 fn activation_preserves_literal_arguments_and_rejects_changed_focus_and_definitions() {
     use std::fs;
-    let root = std::env::temp_dir().join(format!("starmux-action-args-{}", std::process::id()));
+    let tempdir = tempfile::tempdir().unwrap();
+    let root = tempdir.path().to_path_buf();
     fs::create_dir_all(&root).unwrap();
     let root = fs::canonicalize(root).unwrap();
     let script = root.join("record.sh");
@@ -374,7 +375,6 @@ action = "record"
     assert!(changed.activate("socket", "client", &target).is_err());
     assert!(!output.exists());
     assert!(app.activate("socket", "client", "scaINVALID").is_err());
-    fs::remove_dir_all(root).unwrap();
 }
 
 fn visible_rows(output: &str) -> Vec<String> {
@@ -649,7 +649,8 @@ fn slim_warnings_distinguish_unknown_data_and_cached_failures() {
 
 #[test]
 fn slim_clicks_use_real_geometry_and_reject_previous_layouts() {
-    let root = std::env::temp_dir().join(format!("starmux-slim-click-{}", std::process::id()));
+    let tempdir = tempfile::tempdir().unwrap();
+    let root = tempdir.path().to_path_buf();
     std::fs::create_dir_all(&root).unwrap();
     let output = root.join("clicked");
     let config = format!(
@@ -687,12 +688,12 @@ action = "record"
         .activate("socket", "client", &target)
         .is_err());
     assert!(!output.exists());
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 fn slim_lists_control_external_queries_and_named_list_inheritance() {
-    let root = std::env::temp_dir().join(format!("starmux-slim-query-{}", std::process::id()));
+    let tempdir = tempfile::tempdir().unwrap();
+    let root = tempdir.path().to_path_buf();
     std::fs::create_dir_all(&root).unwrap();
     let output = root.join("queried");
     let config = format!(
@@ -734,7 +735,6 @@ slim_icon = "R"
     let inherited = Application::new(sidebar.select("inherited").unwrap(), &tmux);
     let explanation = inherited.explain("socket", "client", 2, None).unwrap();
     assert!(explanation.contains("modules: sessions"));
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

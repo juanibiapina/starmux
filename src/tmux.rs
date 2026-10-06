@@ -1617,7 +1617,8 @@ mod tests {
     #[test]
     fn named_commands_follow_the_selected_pane_and_fail_independently() {
         use std::{fs, time::Instant};
-        let root = std::env::temp_dir().join(format!("starmux-commands-{}", std::process::id()));
+        let tempdir = tempfile::tempdir().unwrap();
+        let root = tempdir.path().to_path_buf();
         fs::create_dir_all(root.join("first")).unwrap();
         fs::create_dir_all(root.join("second")).unwrap();
         let config = "modules = [\"command.cwd\", \"command.slow\"]\n[commands.cwd]\nargv = [\"/bin/pwd\"]\n[commands.slow]\nargv = [\"sleep\", \"2\"]\n";
@@ -1654,13 +1655,13 @@ mod tests {
                 .unwrap()
                 .contains("command.slow: command timed out"));
         }
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn render_logs_failures_and_slow_timings_without_changing_output() {
         use std::fs;
-        let root = std::env::temp_dir().join(format!("starmux-events-{}", std::process::id()));
+        let tempdir = tempfile::tempdir().unwrap();
+        let root = tempdir.path().to_path_buf();
         fs::create_dir_all(&root).unwrap();
         let snapshot = Snapshot {
             width: 30,
@@ -1705,13 +1706,12 @@ mod tests {
             .render_query("socket", "client\nsecond-line", 30, None)
             .unwrap();
         assert_eq!(rendered, without_log);
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn healthy_render_does_not_create_an_event_log() {
-        let root =
-            std::env::temp_dir().join(format!("starmux-events-healthy-{}", std::process::id()));
+        let tempdir = tempfile::tempdir().unwrap();
+        let root = tempdir.path().to_path_buf();
         let sidebar = Sidebar::from_toml(&format!(
             "cache_dir = {:?}\nmodules = ['blank']\n",
             root.to_str().unwrap()
@@ -1734,16 +1734,12 @@ mod tests {
         let app = Application::new(sidebar, MemoryTmux::new(snapshot));
         app.render_query("socket", "client", 30, None).unwrap();
         assert!(!root.join("events.log").exists());
-        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
     fn debug_shows_the_previous_completed_redraw_for_each_client() {
-        let root = std::env::temp_dir().join(format!(
-            "starmux-debug-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        let tempdir = tempfile::tempdir().unwrap();
+        let root = tempdir.path().to_path_buf();
         std::fs::create_dir_all(&root).unwrap();
         let sidebar = Sidebar::from_toml(&format!(
             "modules = [\"debug\"]\n[debug]\ndetails = true\ncache_dir = {:?}",
@@ -1784,7 +1780,6 @@ mod tests {
             serde_json::from_str(&app.timings("socket", "client", 30, None).unwrap()).unwrap();
         assert!(timings["query_us"].is_u64());
         assert!(timings["render_us"].is_u64());
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1851,12 +1846,9 @@ mod tests {
 
     #[test]
     fn enabled_pi_workbench_renders_only_reachable_published_sessions() {
-        use std::{fs, os::unix::net::UnixListener, thread};
-        let data_dir = std::env::temp_dir().join(format!(
-            "sm-piw-{}-{:?}",
-            std::process::id(),
-            thread::current().id()
-        ));
+        use std::{fs, os::unix::net::UnixListener};
+        let tempdir = tempfile::tempdir().unwrap();
+        let data_dir = tempdir.path().to_path_buf();
         fs::create_dir_all(data_dir.join("status")).unwrap();
         fs::create_dir_all(data_dir.join("sockets")).unwrap();
         let repo = data_dir.join("repo");
@@ -2152,14 +2144,13 @@ mod tests {
                 "sp9".into()
             )]
         );
-        fs::remove_dir_all(data_dir).unwrap();
     }
 
     #[test]
     fn pi_workbench_keeps_busy_sessions_and_hides_crashed_ones() {
         use std::{fs, os::unix::net::UnixListener};
-        let data_dir = std::env::temp_dir().join(format!("sm-busy-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&data_dir);
+        let tempdir = tempfile::tempdir().unwrap();
+        let data_dir = tempdir.path().to_path_buf();
         fs::create_dir_all(data_dir.join("status")).unwrap();
         fs::create_dir_all(data_dir.join("sockets")).unwrap();
         let busy_socket = data_dir.join("sockets/busy.sock");
@@ -2238,7 +2229,6 @@ mod tests {
         let rendered = app
             .render_query("/tmp/starmux-current.sock", "client", 40, None)
             .unwrap();
-        fs::remove_dir_all(&data_dir).unwrap();
         assert!(
             rendered.contains("busy-session") && rendered.contains("testing"),
             "{rendered}"
@@ -2248,12 +2238,9 @@ mod tests {
 
     #[test]
     fn pi_workbench_excludes_foreign_and_legacy_records_before_matching_panes() {
-        use std::{fs, os::unix::net::UnixListener, thread};
-        let data_dir = std::env::temp_dir().join(format!(
-            "sx-{}-{:?}",
-            std::process::id(),
-            thread::current().id()
-        ));
+        use std::{fs, os::unix::net::UnixListener};
+        let tempdir = tempfile::tempdir().unwrap();
+        let data_dir = tempdir.path().to_path_buf();
         fs::create_dir_all(data_dir.join("status")).unwrap();
         fs::create_dir_all(data_dir.join("sockets")).unwrap();
         let pi_socket = data_dir.join("sockets/live.sock");
@@ -2337,6 +2324,5 @@ mod tests {
             explained.contains("z-local") && !explained.contains("foreign"),
             "{explained}"
         );
-        fs::remove_dir_all(data_dir).unwrap();
     }
 }

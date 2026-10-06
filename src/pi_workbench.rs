@@ -432,7 +432,8 @@ mod context_tests {
     use super::*;
     #[test]
     fn namespaced_context_allows_missing_features() {
-        let dir = std::env::temp_dir().join(format!("starmux-context-v2-{}", std::process::id()));
+        let tempdir = tempfile::tempdir().unwrap();
+        let dir = tempdir.path().to_path_buf();
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("session.jsonl.context.json");
         fs::write(
@@ -446,11 +447,11 @@ mod context_tests {
                 && context.pull_requests.is_empty()
                 && context.skills.is_empty()
         );
-        fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn reads_only_matching_regular_context_and_caps_entries() {
-        let dir = std::env::temp_dir().join(format!("starmux-context-{}", std::process::id()));
+        let tempdir = tempfile::tempdir().unwrap();
+        let dir = tempdir.path().to_path_buf();
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("session.jsonl.context.json");
         let value = serde_json::json!({
@@ -472,6 +473,5 @@ mod context_tests {
         assert!(read_context(&link, "session").is_err());
         fs::write(&path, "{").unwrap();
         assert!(read_context(&path, "session").is_err());
-        fs::remove_dir_all(dir).unwrap();
     }
 }

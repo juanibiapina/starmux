@@ -9,6 +9,7 @@ use std::{
     process::{Command, Stdio},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use tempfile::NamedTempFile;
 
 const FRESH_MS: u64 = 60_000;
 const STALE_MS: u64 = 30 * 60_000;
@@ -298,41 +299,28 @@ fn write_state(dir: &Path, provider: &str, state: &State, token: &str) -> Result
         return Err("usage lease lost".into());
     }
     let target = state_path(dir, provider);
-    let temp = dir.join(format!("provider-{provider}.{}.tmp", token));
     let bytes = serde_json::to_vec(state).map_err(|error| error.to_string())?;
     if bytes.len() as u64 > MAX_STATE_BYTES {
         return Err("usage state too large".into());
     }
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temp)
+    let mut file = NamedTempFile::new_in(dir).map_err(|error| error.to_string())?;
+    file.write_all(&bytes).map_err(|error| error.to_string())?;
+    file.as_file()
+        .sync_all()
         .map_err(|error| error.to_string())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(fs::Permissions::from_mode(0o600))
-            .map_err(|error| error.to_string())?;
+    let guard = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(dir.join(format!("provider-{provider}.guard")))
+        .map_err(|error| error.to_string())?;
+    guard.lock_exclusive().map_err(|error| error.to_string())?;
+    if !owns_lease(dir, provider, token) {
+        return Err("usage lease lost".into());
     }
-    let result = (|| {
-        file.write_all(&bytes).map_err(|error| error.to_string())?;
-        file.sync_all().map_err(|error| error.to_string())?;
-        let guard = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(dir.join(format!("provider-{provider}.guard")))
-            .map_err(|error| error.to_string())?;
-        guard.lock_exclusive().map_err(|error| error.to_string())?;
-        if !owns_lease(dir, provider, token) {
-            return Err("usage lease lost".into());
-        }
-        fs::rename(&temp, &target).map_err(|error| error.to_string())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(temp);
-    }
-    result
+    file.persist(&target)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 fn row(provider: &str, state: &State) -> UsageRow {
@@ -463,19 +451,6 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    fn temp_dir() -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "starmux-usage-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path).unwrap();
-        path
-    }
-
     fn snapshot() -> UsageSnapshot {
         UsageSnapshot {
             provider: "codex".into(),
@@ -492,7 +467,8 @@ mod tests {
 
     #[test]
     fn one_lease_controls_a_refresh_and_fresh_results_are_reused() {
-        let dir = temp_dir();
+        let tempdir = tempfile::tempdir().unwrap();
+        let dir = tempdir.path().to_path_buf();
         let first = try_lease(&dir, "codex").unwrap();
         assert!(try_lease(&dir, "codex").is_none());
         let requests = AtomicUsize::new(0);
@@ -516,12 +492,12 @@ mod tests {
         assert_eq!(cached[0].windows[0].used_percent, 37.0);
         assert_eq!(cached[0].available_resets, Some(1));
         release_lease(&dir, "codex", &second);
-        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn legacy_cache_and_invalid_reset_count() {
-        let dir = temp_dir();
+        let tempdir = tempfile::tempdir().unwrap();
+        let dir = tempdir.path().to_path_buf();
         let lease = try_lease(&dir, "codex").unwrap();
         let state = State {
             version: 1,
@@ -542,12 +518,12 @@ mod tests {
         write_state(&dir, "codex", &invalid, &lease).unwrap();
         assert!(resolve(&["codex".into()], &dir, false)[0].unavailable);
         release_lease(&dir, "codex", &lease);
-        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn missing_cache_shows_the_failed_refresh_and_old_cache_still_loads() {
-        let dir = temp_dir();
+        let tempdir = tempfile::tempdir().unwrap();
+        let dir = tempdir.path().to_path_buf();
         let lease = try_lease(&dir, "codex").unwrap();
         refresh_owned_with("codex", &dir, &lease, |_, _| {
             Err(FetchError {
@@ -580,7 +556,6 @@ mod tests {
         let loaded = &resolve(&["codex".into()], &dir, false)[0];
         assert_eq!(loaded.windows[0].used_percent, 37.0);
         assert_eq!(loaded.refresh_failure, None);
-        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -602,7 +577,8 @@ mod tests {
 
     #[test]
     fn retry_deadline_preserves_last_good_and_suppresses_requests() {
-        let dir = temp_dir();
+        let tempdir = tempfile::tempdir().unwrap();
+        let dir = tempdir.path().to_path_buf();
         let lease = try_lease(&dir, "codex").unwrap();
         write_state(
             &dir,
@@ -651,6 +627,5 @@ mod tests {
         let recovered = &resolve(&["codex".into()], &dir, false)[0];
         assert_eq!(recovered.windows[0].used_percent, 2.0);
         assert_eq!(recovered.refresh_failure, None);
-        fs::remove_dir_all(dir).unwrap();
     }
 }

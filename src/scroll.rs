@@ -5,11 +5,10 @@ use std::{
     hash::{Hash, Hasher},
     io::{Read, Write},
     path::Path,
-    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
+use tempfile::NamedTempFile;
 
-static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
 const MAX_OFFSET: usize = 10_000;
 const MAX_AGE_SECS: u64 = 24 * 60 * 60;
 
@@ -97,11 +96,6 @@ pub(crate) fn read(dir: &Path, socket: &str, client: &str) -> usize {
 }
 
 fn write_at(dir: &Path, key: &str, state: State) -> std::io::Result<()> {
-    let temp = dir.join(format!(
-        "{key}.{}.{}.tmp",
-        std::process::id(),
-        NEXT_FILE.fetch_add(1, Ordering::Relaxed)
-    ));
     let target = dir.join(format!("{key}.json"));
     let record = Record {
         version: 1,
@@ -112,20 +106,10 @@ fn write_at(dir: &Path, key: &str, state: State) -> std::io::Result<()> {
         generation: state.generation,
         worker_until_ms: state.worker_until_ms,
     };
-    let result = (|| {
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&temp)?;
-        file.write_all(&serde_json::to_vec(&record).map_err(std::io::Error::other)?)?;
-        fs::rename(&temp, target)
-    })();
-    let _ = fs::remove_file(temp);
-    result
+    let mut file = NamedTempFile::new_in(dir)?;
+    file.write_all(&serde_json::to_vec(&record).map_err(std::io::Error::other)?)?;
+    file.persist(target)?;
+    Ok(())
 }
 
 fn update(

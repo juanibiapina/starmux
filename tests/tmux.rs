@@ -36,7 +36,8 @@ fn slim_side_status_navigates_sessions_and_keeps_layout_scroll_positions() {
         thread,
         time::{Duration, Instant},
     };
-    let root = std::env::temp_dir().join(format!("starmux-slim-live-{}", std::process::id()));
+    let tempdir = tempfile::tempdir().unwrap();
+    let root = tempdir.path().to_path_buf();
     fs::create_dir_all(&root).unwrap();
     let socket = format!("starmux-slim-live-{}", std::process::id());
     let binary = env!("CARGO_BIN_EXE_starmux");
@@ -72,7 +73,6 @@ fn slim_side_status_navigates_sessions_and_keeps_layout_scroll_positions() {
         .success()
     {
         tmux(&["kill-server"]);
-        fs::remove_dir_all(root).unwrap();
         assert_ne!(
             std::env::var_os("STARMUX_REQUIRE_SIDE_STATUS"),
             Some("1".into()),
@@ -221,7 +221,6 @@ fn slim_side_status_navigates_sessions_and_keeps_layout_scroll_positions() {
         .contains("starmux: input error"));
     tmux(&["kill-server"]);
     let _ = client.wait();
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -234,7 +233,8 @@ fn attached_side_status_shows_config_error_details() {
         time::Duration,
     };
 
-    let root = std::env::temp_dir().join(format!("starmux-live-error-{}", std::process::id()));
+    let tempdir = tempfile::tempdir().unwrap();
+    let root = tempdir.path().to_path_buf();
     fs::create_dir_all(&root).unwrap();
     let socket = format!("starmux-error-{}", std::process::id());
     let binary = env!("CARGO_BIN_EXE_starmux");
@@ -280,7 +280,6 @@ fn attached_side_status_shows_config_error_details() {
         .success();
     if !supported {
         tmux(&["kill-server"]);
-        fs::remove_dir_all(root).unwrap();
         assert_ne!(
             std::env::var_os("STARMUX_REQUIRE_SIDE_STATUS"),
             Some("1".into())
@@ -316,7 +315,6 @@ fn attached_side_status_shows_config_error_details() {
     }
     tmux(&["kill-server"]);
     let _ = client.wait();
-    fs::remove_dir_all(root).unwrap();
     assert!(paint.contains("starmux:") && paint.contains("unclosed array"));
     assert!(!paint.contains("input error"));
 }
@@ -332,7 +330,8 @@ fn gob_failures_leave_other_rows_and_diagnostics_available() {
         time::Duration,
     };
 
-    let root = std::env::temp_dir().join(format!("starmux-gob-failure-{}", std::process::id()));
+    let tempdir = tempfile::tempdir().unwrap();
+    let root = tempdir.path().to_path_buf();
     fs::create_dir_all(&root).unwrap();
     let socket = format!("starmux-gob-failure-{}", std::process::id());
     let gob = root.join("gob");
@@ -445,7 +444,6 @@ fn gob_failures_leave_other_rows_and_diagnostics_available() {
 
     tmux(&["kill-server"]);
     attached.wait().unwrap();
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -457,7 +455,8 @@ fn attached_side_status_paints_navigation_rows() {
         thread,
         time::Duration,
     };
-    let root = std::env::temp_dir().join(format!("starmux-live-{}", std::process::id()));
+    let tempdir = tempfile::tempdir().unwrap();
+    let root = tempdir.path().to_path_buf();
     fs::create_dir_all(&root).unwrap();
     let socket = format!("starmux-test-{}", std::process::id());
     let binary = env!("CARGO_BIN_EXE_starmux");
@@ -517,7 +516,6 @@ fn attached_side_status_paints_navigation_rows() {
         .success();
     if !supported {
         tmux(&["kill-server"]);
-        fs::remove_dir_all(root).unwrap();
         assert_ne!(
             std::env::var_os("STARMUX_REQUIRE_SIDE_STATUS"),
             Some("1".into()),
@@ -765,7 +763,6 @@ fn attached_side_status_paints_navigation_rows() {
     assert!(String::from_utf8_lossy(&default.stdout).contains("----------------------------"));
     tmux(&["kill-server"]);
     let _ = client.wait();
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -779,7 +776,8 @@ fn clicking_foreign_window_switches_the_attached_client_to_that_window() {
         time::Duration,
     };
 
-    let root = std::env::temp_dir().join(format!("starmux-click-{}", std::process::id()));
+    let tempdir = tempfile::tempdir().unwrap();
+    let root = tempdir.path().to_path_buf();
     fs::create_dir_all(&root).unwrap();
     let socket = format!("starmux-click-{}", std::process::id());
     let binary = env!("CARGO_BIN_EXE_starmux");
@@ -830,7 +828,6 @@ fn clicking_foreign_window_switches_the_attached_client_to_that_window() {
         .success();
     if !supported {
         tmux(&["kill-server"]);
-        fs::remove_dir_all(root).unwrap();
         assert_ne!(
             std::env::var_os("STARMUX_REQUIRE_SIDE_STATUS"),
             Some("1".into()),
@@ -975,7 +972,6 @@ fn clicking_foreign_window_switches_the_attached_client_to_that_window() {
 
     tmux(&["kill-server"]);
     let _ = client.wait();
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -990,7 +986,8 @@ fn clicking_usage_opens_the_provider_page() {
         time::Duration,
     };
 
-    let root = std::env::temp_dir().join(format!("starmux-usage-click-{}", std::process::id()));
+    let tempdir = tempfile::tempdir().unwrap();
+    let root = tempdir.path().to_path_buf();
     fs::create_dir_all(&root).unwrap();
     let socket = format!("starmux-usage-click-{}", std::process::id());
     let binary = env!("CARGO_BIN_EXE_starmux");
@@ -1086,7 +1083,6 @@ fn clicking_usage_opens_the_provider_page() {
         .success();
     if !supported {
         tmux(&["kill-server"]);
-        fs::remove_dir_all(root).unwrap();
         assert_ne!(
             std::env::var_os("STARMUX_REQUIRE_SIDE_STATUS"),
             Some("1".into())
@@ -1212,7 +1208,6 @@ fn clicking_usage_opens_the_provider_page() {
     }
     tmux(&["kill-server"]);
     let _ = client.wait();
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -1230,7 +1225,8 @@ fn pi_attention_row_click_selects_its_pane() {
         thread,
         time::Duration,
     };
-    let root = std::env::temp_dir().join(format!("starmux-pi-click-{}", std::process::id()));
+    let tempdir = tempfile::tempdir().unwrap();
+    let root = tempdir.path().to_path_buf();
     fs::create_dir_all(root.join("status")).unwrap();
     fs::create_dir_all(root.join("sockets")).unwrap();
     let socket = format!("starmux-pi-click-{}", std::process::id());
@@ -1267,7 +1263,6 @@ fn pi_attention_row_click_selects_its_pane() {
         .success();
     if !supported {
         tmux(&["kill-server"]);
-        fs::remove_dir_all(root).unwrap();
         assert_ne!(
             std::env::var_os("STARMUX_REQUIRE_SIDE_STATUS"),
             Some("1".into()),
@@ -1729,7 +1724,6 @@ action = "skill"
     running.store(false, Ordering::Relaxed);
     std::os::unix::net::UnixStream::connect(&pi_socket).unwrap();
     responder.join().unwrap();
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -1743,7 +1737,8 @@ fn wheel_scrolls_all_sidebar_rows_without_switching_windows() {
         time::Duration,
     };
 
-    let root = std::env::temp_dir().join(format!("starmux-wheel-{}", std::process::id()));
+    let tempdir = tempfile::tempdir().unwrap();
+    let root = tempdir.path().to_path_buf();
     fs::create_dir_all(&root).unwrap();
     let socket = format!("starmux-wheel-{}", std::process::id());
     let binary = env!("CARGO_BIN_EXE_starmux");
@@ -1797,7 +1792,6 @@ fn wheel_scrolls_all_sidebar_rows_without_switching_windows() {
         .success();
     if !supported {
         tmux(&["kill-server"]);
-        fs::remove_dir_all(root).unwrap();
         assert_ne!(
             std::env::var_os("STARMUX_REQUIRE_SIDE_STATUS"),
             Some("1".into()),
@@ -2035,7 +2029,6 @@ fn wheel_scrolls_all_sidebar_rows_without_switching_windows() {
     tmux(&["kill-server"]);
     let _ = second_client.wait();
     let _ = client.wait();
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -2049,7 +2042,8 @@ fn configured_actions_split_panes_and_select_each_jobs_window_through_mouse_clic
         thread,
         time::{Duration, Instant},
     };
-    let root = std::env::temp_dir().join(format!("starmux-actions-live-{}", std::process::id()));
+    let tempdir = tempfile::tempdir().unwrap();
+    let root = tempdir.path().to_path_buf();
     fs::create_dir_all(&root).unwrap();
     let root = fs::canonicalize(root).unwrap();
     let socket = format!("starmux-actions-live-{}", std::process::id());
@@ -2086,7 +2080,6 @@ fn configured_actions_split_panes_and_select_each_jobs_window_through_mouse_clic
         .success()
     {
         tmux(&["kill-server"]);
-        fs::remove_dir_all(root).unwrap();
         assert_ne!(
             std::env::var_os("STARMUX_REQUIRE_SIDE_STATUS"),
             Some("1".into())
@@ -2356,5 +2349,4 @@ action = "blank"
     tmux(&["kill-server"]);
     let _ = client.wait();
     let _ = other_client.wait();
-    fs::remove_dir_all(root).unwrap();
 }

@@ -53,7 +53,8 @@ fn help_and_adapter_expose_only_the_query_interface() {
 
 #[test]
 fn wheel_at_top_is_a_noop_without_a_tmux_refresh() {
-    let cache = std::env::temp_dir().join(format!("starmux-scroll-edge-{}", std::process::id()));
+    let tempdir = tempfile::tempdir().unwrap();
+    let cache = tempdir.path().to_path_buf();
     std::fs::create_dir_all(&cache).unwrap();
     let config = cache.join("config.toml");
     std::fs::write(
@@ -128,7 +129,6 @@ fn wheel_at_top_is_a_noop_without_a_tmux_refresh() {
         );
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    std::fs::remove_dir_all(cache).unwrap();
 }
 
 #[test]
@@ -142,7 +142,8 @@ fn configuration_commands_use_portable_defaults_and_reject_old_fields() {
     assert!(!printed.contains("#c099ff"));
     assert!(!printed.contains("window_icon"));
 
-    let root = std::env::temp_dir().join(format!("starmux-config-{}", std::process::id()));
+    let tempdir = tempfile::tempdir().unwrap();
+    let root = tempdir.path().to_path_buf();
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("starmux.toml");
     std::fs::write(&path, "format = \"$sessions\"\n").unwrap();
@@ -153,7 +154,6 @@ fn configuration_commands_use_portable_defaults_and_reject_old_fields() {
         .unwrap();
     assert!(!checked.status.success());
     assert!(String::from_utf8_lossy(&checked.stderr).contains("unknown field"));
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -197,10 +197,8 @@ fn render_query_shows_argument_errors_as_one_sidebar_row() {
 
 #[test]
 fn render_query_shows_multiline_config_diagnostic_without_interpreting_tmux_text() {
-    let root = std::env::temp_dir().join(format!(
-        "starmux-error-{}-#[fg=green]#{{client_name}}",
-        std::process::id()
-    ));
+    let tempdir = tempfile::tempdir().unwrap();
+    let root = tempdir.path().join("#[fg=green]#{client_name}");
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("config.toml");
     std::fs::write(&path, "modules = [\"sessions\"\n").unwrap();
@@ -233,7 +231,6 @@ fn render_query_shows_multiline_config_diagnostic_without_interpreting_tmux_text
     assert_eq!(checked.status.code(), Some(2));
     assert!(checked.stdout.is_empty());
     assert!(String::from_utf8_lossy(&checked.stderr).contains("line 1"));
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -267,7 +264,8 @@ fn render_query_wraps_tmux_query_failures_and_keeps_full_stderr() {
 fn usage_click_opens_only_a_known_provider_page() {
     use std::os::unix::fs::PermissionsExt;
 
-    let dir = std::env::temp_dir().join(format!("starmux-opener-{}", std::process::id()));
+    let tempdir = tempfile::tempdir().unwrap();
+    let dir = tempdir.path().to_path_buf();
     std::fs::create_dir_all(&dir).unwrap();
     let opener = if cfg!(target_os = "macos") {
         "open"
@@ -319,7 +317,6 @@ fn usage_click_opens_only_a_known_provider_page() {
             format!("{url}\n")
         );
     }
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
@@ -334,7 +331,8 @@ fn version_is_reported() {
 
 #[test]
 fn named_config_is_validated_before_querying_tmux() {
-    let root = std::env::temp_dir().join(format!("starmux-named-config-{}", std::process::id()));
+    let tempdir = tempfile::tempdir().unwrap();
+    let root = tempdir.path().to_path_buf();
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("config.toml");
     std::fs::write(
@@ -367,5 +365,4 @@ fn named_config_is_validated_before_querying_tmux() {
         .output()
         .unwrap();
     assert!(String::from_utf8_lossy(&printed.stdout).contains("[configs.right]"));
-    std::fs::remove_dir_all(root).unwrap();
 }

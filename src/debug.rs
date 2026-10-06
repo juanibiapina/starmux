@@ -5,15 +5,14 @@ use std::{
     hash::{Hash, Hasher},
     io::{Read, Write},
     path::Path,
-    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
+use tempfile::NamedTempFile;
 
 pub(crate) const STAGES: [&str; 9] = [
     "tmux", "pi", "pr", "usage", "gob", "commands", "git", "format", "top",
 ];
 const MAX_AGE_NS: u128 = 300_000_000_000;
-static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Diagnostics {
@@ -111,31 +110,16 @@ pub(crate) fn write(
         return Ok(());
     }
     let target = dir.join(format!("{key}.json"));
-    let temp = dir.join(format!(
-        "{key}.{}.{}.tmp",
-        std::process::id(),
-        NEXT_FILE.fetch_add(1, Ordering::Relaxed)
-    ));
     let record = Record {
         version: 1,
         key,
         completed_ns,
         diagnostics: diagnostics.clone(),
     };
-    let result = (|| {
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&temp)?;
-        file.write_all(&serde_json::to_vec(&record).map_err(std::io::Error::other)?)?;
-        fs::rename(&temp, target)
-    })();
-    let _ = fs::remove_file(temp);
-    result
+    let mut file = NamedTempFile::new_in(dir)?;
+    file.write_all(&serde_json::to_vec(&record).map_err(std::io::Error::other)?)?;
+    file.persist(target)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -144,7 +128,8 @@ mod tests {
 
     #[test]
     fn expired_corrupt_and_cross_client_records_are_ignored() {
-        let dir = std::env::temp_dir().join(format!("starmux-debug-record-{}", std::process::id()));
+        let tempdir = tempfile::tempdir().unwrap();
+        let dir = tempdir.path().to_path_buf();
         std::fs::create_dir_all(&dir).unwrap();
         let expected = Diagnostics {
             stages: [1200, 0, 0, 0, 0, 0, 0, 80, 0],
@@ -160,6 +145,5 @@ mod tests {
         assert!(read(&dir, "socket", "client").is_none());
         std::fs::write(&path, b"not json").unwrap();
         assert!(read(&dir, "socket", "client").is_none());
-        std::fs::remove_dir_all(dir).unwrap();
     }
 }
