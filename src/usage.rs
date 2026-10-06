@@ -222,8 +222,10 @@ fn token() -> String {
     )
 }
 
-// An advisory guard serializes stale-lease removal and replacement. Live leases
-// are still exclusive files, so a process never waits for another fetch.
+// An advisory guard serializes stale-lease removal and replacement. Callers wait
+// for the guard because it is held briefly and a forked child can inherit it
+// until exec. Live leases are still exclusive files, so a process never waits
+// for another fetch.
 fn try_lease(dir: &Path, provider: &str) -> Option<String> {
     ensure_dir(dir).ok()?;
     let guard = OpenOptions::new()
@@ -232,7 +234,7 @@ fn try_lease(dir: &Path, provider: &str) -> Option<String> {
         .truncate(false)
         .open(dir.join(format!("provider-{provider}.guard")))
         .ok()?;
-    guard.try_lock_exclusive().ok()?;
+    guard.lock_exclusive().ok()?;
     let path = lock_path(dir, provider);
     if path.exists() {
         match read_lease(dir, provider) {
