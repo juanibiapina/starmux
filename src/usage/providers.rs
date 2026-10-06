@@ -4,9 +4,7 @@ use serde_json::Value;
 use std::{fs, path::PathBuf, time::Duration};
 
 fn home() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_default()
+    dirs::home_dir().unwrap_or_default()
 }
 
 fn json_file(path: PathBuf) -> Option<Value> {

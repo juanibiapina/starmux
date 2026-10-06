@@ -66,8 +66,8 @@ struct Record {
 }
 
 pub(crate) fn default_data_dir() -> Result<PathBuf, String> {
-    std::env::var_os("HOME")
-        .map(|home| PathBuf::from(home).join(".local/share/pi"))
+    dirs::home_dir()
+        .map(|home| home.join(".local/share/pi"))
         .ok_or_else(|| "HOME is required for pi-workbench".to_owned())
 }
 
@@ -420,7 +420,7 @@ fn valid_skill_path(path: &Path) -> bool {
 }
 
 fn local_skill_path(name: &str) -> Option<PathBuf> {
-    let home = PathBuf::from(std::env::var_os("HOME")?);
+    let home = dirs::home_dir()?;
     [home.join(".agents/skills"), home.join(".pi/agent/skills")]
         .into_iter()
         .map(|dir| dir.join(name).join("SKILL.md"))

@@ -1,6 +1,6 @@
 use crate::process::{self, Limits};
 use std::{
-    path::{Path, PathBuf},
+    path::Path,
     process::Command,
     time::{Duration, Instant},
 };
@@ -15,8 +15,8 @@ pub(crate) fn run(argv: &[String], workdir: &Path) -> Result<Option<String>, Str
         .iter()
         .map(|arg| {
             if let Some(path) = arg.strip_prefix("~/") {
-                let home = std::env::var_os("HOME").ok_or("HOME is not set")?;
-                Ok(PathBuf::from(home).join(path).into_os_string())
+                let home = dirs::home_dir().ok_or("HOME is not set")?;
+                Ok(home.join(path).into_os_string())
             } else {
                 Ok(arg.into())
             }
