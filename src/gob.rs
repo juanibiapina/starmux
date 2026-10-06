@@ -15,17 +15,57 @@ pub struct GobJob {
     pub id: String,
     pub name: String,
     pub started_at: Option<OffsetDateTime>,
-    pub avg_duration_ms: u64,
+    pub expected_duration_ms: u64,
+    pub expected_upper_duration_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Progress {
+    pub(crate) elapsed: Duration,
+    pub(crate) typical: Duration,
+    pub(crate) upper: Duration,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Phase {
+    Typical { remaining: Duration },
+    Tail { remaining: Duration },
+    Overdue { over: Duration },
 }
 
 impl GobJob {
-    pub fn percent(&self, now: OffsetDateTime) -> Option<f64> {
+    pub(crate) fn progress(&self, now: OffsetDateTime) -> Option<Progress> {
         let started = self.started_at?;
-        if self.avg_duration_ms == 0 {
+        if self.expected_duration_ms == 0 {
             return None;
         }
-        let elapsed = (now - started).whole_milliseconds().max(0) as f64;
-        Some((elapsed / self.avg_duration_ms as f64 * 100.0).clamp(0.0, 100.0))
+        let elapsed = u64::try_from((now - started).whole_milliseconds()).unwrap_or(0);
+        Some(Progress {
+            elapsed: Duration::from_millis(elapsed),
+            typical: Duration::from_millis(self.expected_duration_ms),
+            upper: Duration::from_millis(
+                self.expected_upper_duration_ms
+                    .max(self.expected_duration_ms),
+            ),
+        })
+    }
+}
+
+impl Progress {
+    pub(crate) fn phase(self) -> Phase {
+        if self.elapsed >= self.upper {
+            Phase::Overdue {
+                over: self.elapsed - self.upper,
+            }
+        } else if self.elapsed >= self.typical {
+            Phase::Tail {
+                remaining: self.upper - self.elapsed,
+            }
+        } else {
+            Phase::Typical {
+                remaining: self.typical - self.elapsed,
+            }
+        }
     }
 }
 
@@ -40,7 +80,9 @@ struct Record {
     #[serde(default)]
     started_at: String,
     #[serde(default)]
-    avg_duration_ms: i64,
+    expected_duration_ms: i64,
+    #[serde(default)]
+    expected_upper_duration_ms: i64,
 }
 
 fn parse(bytes: &[u8], workdir: &Path) -> Result<Vec<GobJob>, String> {
@@ -76,7 +118,8 @@ fn parse(bytes: &[u8], workdir: &Path) -> Result<Vec<GobJob>, String> {
             id: record.id,
             name: name.chars().take(1024).collect(),
             started_at: OffsetDateTime::parse(&record.started_at, &Rfc3339).ok(),
-            avg_duration_ms: record.avg_duration_ms.max(0) as u64,
+            expected_duration_ms: record.expected_duration_ms.max(0) as u64,
+            expected_upper_duration_ms: record.expected_upper_duration_ms.max(0) as u64,
         });
         if jobs.len() == 100 {
             break;
@@ -142,7 +185,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let script = dir.join("fake-gob");
         let json = serde_json::json!([
-            {"id":"a", "status":"running", "command":["make","test"], "workdir":dir, "started_at":"2026-01-01T00:00:00Z", "avg_duration_ms":1000},
+            {"id":"a", "status":"running", "command":["make","test"], "workdir":dir, "started_at":"2026-01-01T00:00:00Z", "expected_duration_ms":1000, "expected_upper_duration_ms":1500},
             {"id":"b", "status":"stopped", "command":["sleep","2"], "workdir":dir},
             {"id":"c", "status":"running", "command":["foreign"], "workdir":"/elsewhere"}
         ]);

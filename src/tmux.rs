@@ -1,4 +1,4 @@
-use crate::{Session, Sidebar, Snapshot, Window};
+use crate::{gob::Progress, Session, Sidebar, Snapshot, Window};
 use std::{
     collections::BTreeMap,
     process::{Command, Stdio},
@@ -8,6 +8,7 @@ use std::{
 
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
+use time::OffsetDateTime;
 
 const MAX_WIDTH: usize = 300;
 const FOCUS_CHANGED: &str = "tmux focus changed during query";
@@ -1009,7 +1010,7 @@ impl<T: Tmux> Application<T> {
                         "gob id={:?} name={:?} progress={:?}\n",
                         job.id,
                         job.name,
-                        job.percent(time::OffsetDateTime::now_utc())
+                        job.progress(OffsetDateTime::now_utc()).map(Progress::phase)
                     ));
                 }
                 gob_jobs = jobs;

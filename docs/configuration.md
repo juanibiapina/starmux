@@ -76,7 +76,7 @@ The default slim list inherits the top-level `modules`. Each named list inherits
 | Usage window | Provider icon; cached failures use `󰌾` or `` | Pie of used quota, such as `◑` for roughly 50% used |
 | Host metric | `󰻠` CPU, `󰍛` memory, battery-state icon | Pie of CPU/memory used or battery charge remaining; `󰋗` unavailable |
 | Running job | `` | `▶` running |
-| Job progress | `↳` | Estimated elapsed-time gauge |
+| Job progress | `↳` | Elapsed share of the typical duration; `█` in `overdue_style` when longer than usual |
 | Git | `` conflicts, `↻` operation, `` dirty, `✓` clean, in priority order | `↕` diverged, `↑` ahead, `↓` behind, `·` neither |
 | Named command | Configured `slim_icon`, default `` | One glyph only |
 | Debug timing | `◷` previous timing available, `󰋗` unavailable | One glyph only |
@@ -489,10 +489,21 @@ format = "  $state $name"
 heading_style = "bold"
 running_style = "fg=green"
 progress_style = "fg=green"
+overdue_style = "fg=yellow"
 bar_track_color = "colour238"
 ```
 
-Gob must be installed to show jobs. `format` accepts `$state`, `$name`, and `$id`. `$name` shows the job description, falling back to its command or ID. Use `heading_style` for the `Jobs` heading, `running_style` for the state icon, `progress_style` for the estimated progress bar, and `bar_track_color` for its empty track. Progress is based on previous successful runs, so a full bar does not mean the job has finished. Rows have no click action by default. See [click actions](#click-actions) for overrides.
+Gob must be installed to show jobs. `format` accepts `$state`, `$name`, and `$id`. `$name` shows the job description, falling back to its command or ID. Use `heading_style` for the `Jobs` heading, `running_style` for the state icon, `progress_style` for the progress bar, `overdue_style` for a job running longer than usual, and `bar_track_color` for the empty track.
+
+Jobs that gob has seen finish show a progress bar below their name. The solid track ends at the typical run duration, and the dashed line after it ends where 90% of runs have finished. The label on the right shows the time left:
+
+| Label | Meaning |
+| --- | --- |
+| `~40s` | About 40 seconds left in a typical run |
+| `<20s` | Past the typical duration; 90% of runs finish within 20 seconds |
+| `+1m` | 1 minute past the time 90% of runs finish within |
+
+Jobs that usually run until stopped, such as servers, show no bar. The bar requires a gob version that reports expected durations. Rows have no click action by default. See [click actions](#click-actions) for overrides.
 
 ## External commands
 

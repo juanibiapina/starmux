@@ -1965,7 +1965,8 @@ providers = ["codex"]
         id: "1".into(),
         name: "build".into(),
         started_at: None,
-        avg_duration_ms: 0,
+        expected_duration_ms: 0,
+        expected_upper_duration_ms: 0,
     };
     let git = starmux::GitStatus {
         branch: "main".into(),

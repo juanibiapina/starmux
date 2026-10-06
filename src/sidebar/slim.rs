@@ -318,13 +318,23 @@ impl Sidebar {
 
     fn slim_job(&self, row: &mut Row, jobs: &[crate::GobJob]) -> Result<(), String> {
         if row.identity.get("part") == "progress" {
-            let percent = jobs
+            let progress = jobs
                 .iter()
                 .find(|j| j.id == row.identity.get("job_id"))
-                .and_then(|j| j.percent(time::OffsetDateTime::now_utc()));
+                .and_then(|j| j.progress(time::OffsetDateTime::now_utc()));
+            let (glyph, style) = match progress.map(|p| (p, p.phase())) {
+                None => (UNKNOWN, &self.config.gob.progress_style),
+                Some((_, crate::gob::Phase::Overdue { .. })) => {
+                    ("█", &self.config.gob.overdue_style)
+                }
+                Some((p, _)) => (
+                    gauge(p.elapsed.as_secs_f64() / p.typical.as_secs_f64() * 100.0),
+                    &self.config.gob.progress_style,
+                ),
+            };
             row.spans = vec![Span {
-                text: format!("{}{}", "↳", percent.map_or(UNKNOWN, gauge)),
-                style: resolve_style(&self.config.gob.progress_style, "default", &self.palette)?,
+                text: format!("↳{glyph}"),
+                style: resolve_style(style, "default", &self.palette)?,
             }];
         } else {
             row.spans = vec![Span {

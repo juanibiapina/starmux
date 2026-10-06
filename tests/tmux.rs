@@ -2147,7 +2147,7 @@ action = "blank"
     let gob = root.join("gob");
     let jobs = root.join("jobs.json");
     fs::write(&jobs, serde_json::to_string(&serde_json::json!([
-        {"id":"build", "status":"running", "command":["build"], "description":"Build assets", "workdir":root, "started_at":"2020-01-01T00:00:00Z", "avg_duration_ms":1000},
+        {"id":"build", "status":"running", "command":["build"], "description":"Build assets", "workdir":root, "started_at":"2020-01-01T00:00:00Z", "expected_duration_ms":1000, "expected_upper_duration_ms":1000},
         {"id":"test", "status":"running", "command":["test"], "description":"Test assets", "workdir":root}
     ])).unwrap()).unwrap();
     fs::write(&gob, format!("#!/bin/sh\ncat '{}'\n", jobs.display())).unwrap();

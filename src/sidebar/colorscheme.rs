@@ -57,6 +57,7 @@ unavailable_style = "fg=muted"
 heading_style = "fg=text,bold"
 running_style = "fg=green"
 progress_style = "fg=green"
+overdue_style = "fg=warning"
 bar_track_color = "border"
 
 [git]

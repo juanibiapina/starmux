@@ -51,7 +51,8 @@ impl Fixture {
                 id: "build-1".into(),
                 name: "Build assets".into(),
                 started_at: Some(time::OffsetDateTime::now_utc()),
-                avg_duration_ms: 1000,
+                expected_duration_ms: 1000,
+                expected_upper_duration_ms: 1000,
             }],
             usage: vec![UsageRow {
                 provider: "anthropic".into(),
@@ -231,7 +232,8 @@ action = "usage"
             id: "other".into(),
             name: "AAA".into(),
             started_at: None,
-            avg_duration_ms: 0,
+            expected_duration_ms: 0,
+            expected_upper_duration_ms: 0,
         },
     );
     let after = tokens(

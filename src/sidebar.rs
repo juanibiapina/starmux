@@ -239,6 +239,7 @@ struct GobConfig {
     heading_style: String,
     running_style: String,
     progress_style: String,
+    overdue_style: String,
     bar_track_color: String,
 }
 
@@ -383,6 +384,7 @@ impl Default for GobConfig {
             heading_style: "bold".into(),
             running_style: "fg=green".into(),
             progress_style: "fg=green".into(),
+            overdue_style: "fg=yellow".into(),
             bar_track_color: "colour238".into(),
         }
     }
@@ -848,6 +850,7 @@ impl Sidebar {
             &config.gob.heading_style,
             &config.gob.running_style,
             &config.gob.progress_style,
+            &config.gob.overdue_style,
             &config.git.branch_style,
             &config.git.upstream_style,
             &config.git.divergence_style,
@@ -2042,8 +2045,6 @@ impl Sidebar {
         }
         let heading = resolve_style(&self.config.gob.heading_style, "default", &self.palette)?;
         let green = resolve_style(&self.config.gob.running_style, "default", &self.palette)?;
-        let progress = resolve_style(&self.config.gob.progress_style, "default", &self.palette)?;
-        let track = resolve_color(&self.config.gob.bar_track_color, &self.palette)?;
         let mut rows = vec![Row {
             divider: false,
             identity: crate::actions::Identity::new("heading"),
@@ -2087,39 +2088,15 @@ impl Sidebar {
                 focus: false,
                 selected: false,
             });
-            if let Some(percent) = job.percent(time::OffsetDateTime::now_utc()) {
-                let label = format!("{:>4}", format!("{percent:.0}%"));
-                let right_pad = if width >= label.len() + 2 { 2 } else { 0 };
-                let gap = usize::from(width > label.len() + right_pad + 1);
-                let indent = 4.min(width.saturating_sub(label.len() + right_pad + gap + 1));
-                let length = width.saturating_sub(indent + gap + label.len() + right_pad);
-                let filled = ((percent / 100.0 * length as f64).round() as usize).min(length);
-                let mut bar = BTreeMap::from([(
-                    "bar",
-                    Value::Spans(vec![Span {
-                        text: format!("{}{}", "█".repeat(filled), "░".repeat(length - filled)),
-                        style: progress.clone(),
-                    }]),
-                )]);
-                shade_usage_bar(&mut bar, &progress, &track, "default");
-                let mut spans = vec![Span {
-                    text: " ".repeat(indent),
-                    style: "default".into(),
-                }];
-                if let Some(Value::Spans(glyphs)) = bar.remove("bar") {
-                    spans.extend(glyphs);
-                }
-                spans.push(Span {
-                    text: format!("{}{label}{}", " ".repeat(gap), " ".repeat(right_pad)),
-                    style: "default".into(),
-                });
+            if let Some(progress) = job.progress(time::OffsetDateTime::now_utc()) {
+                let spans = self.render_gob_progress(progress, width)?;
                 rows.push(Row {
                     divider: false,
                     identity: crate::actions::Identity::new("job")
                         .field("job_id", &job.id)
                         .field("name", &job.name)
                         .field("part", "progress"),
-                    spans: coalesce(spans),
+                    spans,
                     fill: None,
                     range: None,
                     focus: false,
@@ -2128,6 +2105,79 @@ impl Sidebar {
             }
         }
         Ok(rows)
+    }
+
+    fn render_gob_progress(
+        &self,
+        progress: crate::gob::Progress,
+        width: usize,
+    ) -> Result<Vec<Span>, String> {
+        const EIGHTHS: [char; 8] = ['▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
+        let phase = progress.phase();
+        let style = if matches!(phase, crate::gob::Phase::Overdue { .. }) {
+            &self.config.gob.overdue_style
+        } else {
+            &self.config.gob.progress_style
+        };
+        let fill = foreground(&resolve_style(style, "default", &self.palette)?);
+        let track = resolve_color(&self.config.gob.bar_track_color, &self.palette)?;
+        let label = format!("{:>4}", gob_label(phase));
+        let right_pad = if width >= label.len() + 2 { 2 } else { 0 };
+        let gap = usize::from(width > label.len() + right_pad + 1);
+        let indent = 4.min(width.saturating_sub(label.len() + right_pad + gap + 1));
+        let length = width.saturating_sub(indent + gap + label.len() + right_pad);
+        let ratio = |part: std::time::Duration| part.as_secs_f64() / progress.upper.as_secs_f64();
+        let boundary = if progress.upper > progress.typical && length >= 2 {
+            ((ratio(progress.typical) * length as f64).round() as usize).clamp(1, length - 1)
+        } else {
+            length
+        };
+        let eighths =
+            ((ratio(progress.elapsed) * (length * 8) as f64).round() as usize).min(length * 8);
+        let mut spans = vec![Span {
+            text: " ".repeat(indent),
+            style: "default".into(),
+        }];
+        for cell in 0..length {
+            let level = eighths.saturating_sub(cell * 8).min(8);
+            let background = if cell < boundary {
+                track.as_str()
+            } else {
+                "default"
+            };
+            let (glyph, foreground) = match (level, cell < boundary) {
+                (0, true) => (' ', ""),
+                (0, false) => ('┄', track.as_str()),
+                _ => (EIGHTHS[level - 1], fill.as_str()),
+            };
+            let style = match (foreground, glyph) {
+                ("", _) => format!("bg={background}"),
+                (color, '┄') => format!("fg={color},bg={background}"),
+                (fill, _) => format!("{fill},bg={background}"),
+            };
+            spans.push(Span {
+                text: glyph.to_string(),
+                style,
+            });
+        }
+        let text = label.trim_start();
+        spans.push(Span {
+            text: " ".repeat(gap + label.len() - text.len()),
+            style: "default".into(),
+        });
+        let label_style = match (phase, fill.is_empty()) {
+            (crate::gob::Phase::Overdue { .. }, false) => format!("{fill},bg=default"),
+            _ => "default".into(),
+        };
+        spans.push(Span {
+            text: text.into(),
+            style: label_style,
+        });
+        spans.push(Span {
+            text: " ".repeat(right_pad),
+            style: "default".into(),
+        });
+        Ok(coalesce(spans))
     }
 
     #[expect(
@@ -2703,6 +2753,35 @@ fn usage_normal_style(style: &str) -> String {
     } else {
         format!("{style},bg=default")
     }
+}
+
+fn foreground(style: &str) -> String {
+    style
+        .split(',')
+        .filter(|part| !part.starts_with("bg=") && *part != "default")
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn gob_label(phase: crate::gob::Phase) -> String {
+    let (prefix, duration) = match phase {
+        crate::gob::Phase::Typical { remaining } => ('~', remaining),
+        crate::gob::Phase::Tail { remaining } => ('<', remaining),
+        crate::gob::Phase::Overdue { over } => ('+', over),
+    };
+    let seconds = duration.as_millis().div_ceil(1000).max(1);
+    let minutes = seconds.div_ceil(60);
+    let hours = seconds.div_ceil(3600);
+    let text = if seconds < 60 {
+        format!("{seconds}s")
+    } else if minutes < 60 {
+        format!("{minutes}m")
+    } else if hours < 100 {
+        format!("{hours}h")
+    } else {
+        format!("{}d", seconds.div_ceil(86_400).min(99))
+    };
+    format!("{prefix}{text}")
 }
 
 fn shade_usage_bar(values: &mut BTreeMap<&str, Value>, color: &str, track: &str, normal: &str) {
