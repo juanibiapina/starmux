@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Improve performance to avoid flicker when sending messages in a pi session
+
 ## [0.7.0] - 2026-10-05
 
 ### Added

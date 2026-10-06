@@ -1851,12 +1851,7 @@ mod tests {
 
     #[test]
     fn enabled_pi_workbench_renders_only_reachable_published_sessions() {
-        use std::{
-            fs,
-            io::{Read, Write},
-            os::unix::net::UnixListener,
-            thread,
-        };
+        use std::{fs, os::unix::net::UnixListener, thread};
         let data_dir = std::env::temp_dir().join(format!(
             "sm-piw-{}-{:?}",
             std::process::id(),
@@ -1868,21 +1863,7 @@ mod tests {
         fs::create_dir_all(repo.join(".git")).unwrap();
         fs::create_dir_all(repo.join("src")).unwrap();
         let socket_path = data_dir.join("sockets/live.sock");
-        let listener = UnixListener::bind(&socket_path).unwrap();
-        let responder = thread::spawn(move || loop {
-            let (mut socket, _) = listener.accept().unwrap();
-            let mut request = [0; 128];
-            let len = socket.read(&mut request).unwrap();
-            if len == 0 {
-                break;
-            }
-            assert!(std::str::from_utf8(&request[..len])
-                .unwrap()
-                .contains("\"ping\""));
-            socket
-                .write_all(b"{\"ok\":true,\"result\":{\"type\":\"pong\"}}\n")
-                .unwrap();
-        });
+        let _listener = UnixListener::bind(&socket_path).unwrap();
         let record = |id: &str, socket: &std::path::Path, name: &str, cwd: &std::path::Path| {
             serde_json::json!({
                 "version": 2, "sessionId": id, "name": name, "pid": 1,
@@ -2141,8 +2122,6 @@ mod tests {
         assert!(fs::read_to_string(&log_path)
             .unwrap()
             .contains("invalid context JSON"));
-        drop(std::os::unix::net::UnixStream::connect(&socket_path).unwrap());
-        responder.join().unwrap();
         assert!(rendered.contains("#[bold] repo#[bg=default]"), "{rendered}");
         assert!(
             rendered.contains("#[range=user|sp9 list=focus ]"),
@@ -2177,13 +2156,99 @@ mod tests {
     }
 
     #[test]
+    fn pi_workbench_keeps_busy_sessions_and_hides_crashed_ones() {
+        use std::{fs, os::unix::net::UnixListener};
+        let data_dir = std::env::temp_dir().join(format!("sm-busy-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&data_dir);
+        fs::create_dir_all(data_dir.join("status")).unwrap();
+        fs::create_dir_all(data_dir.join("sockets")).unwrap();
+        let busy_socket = data_dir.join("sockets/busy.sock");
+        let _busy_listener = UnixListener::bind(&busy_socket).unwrap();
+        let crashed_socket = data_dir.join("sockets/crashed.sock");
+        drop(UnixListener::bind(&crashed_socket).unwrap());
+        let skill_path = data_dir.join("skills/testing/SKILL.md");
+        fs::create_dir_all(skill_path.parent().unwrap()).unwrap();
+        fs::write(&skill_path, "# Testing").unwrap();
+        for (id, socket, pane) in [
+            ("busy", &busy_socket, "%0"),
+            ("crashed", &crashed_socket, "%1"),
+        ] {
+            let session_file = data_dir.join(format!("{id}.jsonl"));
+            let context_path = data_dir.join(format!("{id}.jsonl.context.json"));
+            fs::write(
+                &context_path,
+                serde_json::json!({
+                    "version": 2, "sessionId": id,
+                    "extensions": {"pi-skills": {"version": 1, "data": {
+                        "skills": ["testing"], "skillPaths": {"testing": skill_path}
+                    }}}
+                })
+                .to_string(),
+            )
+            .unwrap();
+            fs::write(
+                data_dir.join(format!("status/{id}.json")),
+                serde_json::json!({
+                    "version": 2, "sessionId": id, "name": format!("{id}-session"), "pid": 1,
+                    "cwd": "/tmp", "startedAt": "2026-01-01T00:00:00Z",
+                    "updatedAt": "2026-01-01T00:00:00Z", "state": "working",
+                    "sessionFile": session_file, "contextPath": context_path,
+                    "extensions": {
+                        "pi-socket": {"version": 1, "data": {"socketPath": socket}},
+                        "pi-tmux": {"version": 1, "data": {
+                            "paneId": pane, "sessionName": "main",
+                            "socketPath": "/tmp/starmux-current.sock"
+                        }}
+                    }
+                })
+                .to_string(),
+            )
+            .unwrap();
+        }
+        let config = format!(
+            "cache_dir = {0:?}\nmodules = [\"pi-workbench\", \"pi-context\"]\n[pi-workbench]\ndata_dir = {0:?}\nformat = \"$name\"\n",
+            data_dir.to_str().unwrap()
+        );
+        let tmux = MemoryTmux::new(Snapshot {
+            width: 40,
+            client_width: 100,
+            client_height: 25,
+            status_lines: 1,
+            current_session: "$0".into(),
+            current_pane: "%0".into(),
+            pane_path: "/tmp".into(),
+            sessions: vec![Session {
+                id: "$0".into(),
+                name: "main".into(),
+                windows: vec![],
+            }],
+        })
+        .with_panes(
+            ["%0", "%1"]
+                .map(|id| Pane {
+                    id: id.into(),
+                    session: "$0".into(),
+                    session_name: "main".into(),
+                    window: "@9".into(),
+                    state: "working".into(),
+                })
+                .to_vec(),
+        );
+        let app = Application::new(Sidebar::from_toml(&config).unwrap(), tmux);
+        let rendered = app
+            .render_query("/tmp/starmux-current.sock", "client", 40, None)
+            .unwrap();
+        fs::remove_dir_all(&data_dir).unwrap();
+        assert!(
+            rendered.contains("busy-session") && rendered.contains("testing"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("crashed-session"), "{rendered}");
+    }
+
+    #[test]
     fn pi_workbench_excludes_foreign_and_legacy_records_before_matching_panes() {
-        use std::{
-            fs,
-            io::{Read, Write},
-            os::unix::net::UnixListener,
-            thread,
-        };
+        use std::{fs, os::unix::net::UnixListener, thread};
         let data_dir = std::env::temp_dir().join(format!(
             "sx-{}-{:?}",
             std::process::id(),
@@ -2192,17 +2257,7 @@ mod tests {
         fs::create_dir_all(data_dir.join("status")).unwrap();
         fs::create_dir_all(data_dir.join("sockets")).unwrap();
         let pi_socket = data_dir.join("sockets/live.sock");
-        let listener = UnixListener::bind(&pi_socket).unwrap();
-        let responder = thread::spawn(move || {
-            for _ in 0..2 {
-                let (mut stream, _) = listener.accept().unwrap();
-                let mut request = [0; 128];
-                assert!(stream.read(&mut request).unwrap() > 0);
-                stream
-                    .write_all(b"{\"ok\":true,\"result\":{\"type\":\"pong\"}}\n")
-                    .unwrap();
-            }
-        });
+        let _listener = UnixListener::bind(&pi_socket).unwrap();
         let record = |id: &str, tmux: serde_json::Value| {
             serde_json::json!({
                 "version": 2, "sessionId": id, "name": id, "pid": 1,
@@ -2282,7 +2337,6 @@ mod tests {
             explained.contains("z-local") && !explained.contains("foreign"),
             "{explained}"
         );
-        responder.join().unwrap();
         fs::remove_dir_all(data_dir).unwrap();
     }
 }

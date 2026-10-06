@@ -1220,7 +1220,7 @@ fn clicking_usage_opens_the_provider_page() {
 fn pi_attention_row_click_selects_its_pane() {
     use std::{
         fs,
-        io::{Read, Write},
+        io::Write,
         os::unix::net::UnixListener,
         process::{Command, Stdio},
         sync::{
@@ -1322,16 +1322,9 @@ fn pi_attention_row_click_selects_its_pane() {
     let running = Arc::new(AtomicBool::new(true));
     let listening = running.clone();
     let responder = thread::spawn(move || {
-        while let Ok((mut stream, _)) = listener.accept() {
+        while listener.accept().is_ok() {
             if !listening.load(Ordering::Relaxed) {
                 break;
-            }
-            stream
-                .set_read_timeout(Some(Duration::from_millis(40)))
-                .unwrap();
-            let mut request = [0; 128];
-            if stream.read(&mut request).is_ok_and(|count| count > 0) {
-                let _ = stream.write_all(b"{\"ok\":true,\"result\":{\"type\":\"pong\"}}\n");
             }
         }
     });

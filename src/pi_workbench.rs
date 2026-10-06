@@ -2,7 +2,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::{
     fs,
-    io::{Read, Write},
+    io::Read,
     os::unix::{fs::FileTypeExt, net::UnixStream},
     path::{Path, PathBuf},
     time::{Duration, Instant},
@@ -11,8 +11,6 @@ use std::{
 const MAX_RECORDS: usize = 32;
 const MAX_DIRECTORY_ENTRIES: usize = 256;
 const MAX_RECORD_BYTES: u64 = 1024 * 1024;
-const MAX_RESPONSE_BYTES: usize = 1024;
-const PING_TIMEOUT: Duration = Duration::from_millis(40);
 const QUERY_BUDGET: Duration = Duration::from_millis(200);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -166,9 +164,7 @@ pub(crate) fn list(data_dir: &Path, tmux_socket: &Path) -> Result<Vec<LiveEntry>
         if !socket_metadata.file_type().is_socket() {
             continue;
         }
-        let remaining = QUERY_BUDGET.saturating_sub(started.elapsed());
-        let timeout = PING_TIMEOUT.min(remaining);
-        if timeout.is_zero() || !ping(socket_path, timeout) {
+        if UnixStream::connect(socket_path).is_err() {
             continue;
         }
         let name = record
@@ -256,43 +252,6 @@ fn valid_tmux_id(value: &str, prefix: char) -> bool {
     value.strip_prefix(prefix).is_some_and(|digits| {
         !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
     })
-}
-
-fn ping(path: &Path, timeout: Duration) -> bool {
-    let started = Instant::now();
-    let Ok(mut socket) = UnixStream::connect(path) else {
-        return false;
-    };
-    if socket.set_write_timeout(Some(timeout)).is_err()
-        || socket
-            .write_all(b"{\"type\":\"ping\",\"protocolVersion\":1}\n")
-            .is_err()
-    {
-        return false;
-    }
-    let mut response = [0; MAX_RESPONSE_BYTES];
-    let mut length = 0;
-    while length < response.len() {
-        let remaining = timeout.saturating_sub(started.elapsed());
-        if remaining.is_zero() || socket.set_read_timeout(Some(remaining)).is_err() {
-            return false;
-        }
-        let Ok(count) = socket.read(&mut response[length..]) else {
-            return false;
-        };
-        if count == 0 {
-            return false;
-        }
-        length += count;
-        if let Some(end) = response[..length].iter().position(|byte| *byte == b'\n') {
-            let Ok(value) = serde_json::from_slice::<Value>(&response[..end]) else {
-                return false;
-            };
-            return value.get("ok") == Some(&Value::Bool(true))
-                && value.pointer("/result/type") == Some(&Value::String("pong".into()));
-        }
-    }
-    false
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
