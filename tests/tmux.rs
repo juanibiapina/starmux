@@ -310,14 +310,14 @@ fn attached_side_status_shows_config_error_details() {
     for _ in 0..35 {
         thread::sleep(Duration::from_millis(100));
         paint = fs::read_to_string(&capture).unwrap();
-        if paint.contains("starmux:") && paint.contains("invalid array") {
+        if paint.contains("starmux:") && paint.contains("unclosed array") {
             break;
         }
     }
     tmux(&["kill-server"]);
     let _ = client.wait();
     fs::remove_dir_all(root).unwrap();
-    assert!(paint.contains("starmux:") && paint.contains("invalid array"));
+    assert!(paint.contains("starmux:") && paint.contains("unclosed array"));
     assert!(!paint.contains("input error"));
 }
 
