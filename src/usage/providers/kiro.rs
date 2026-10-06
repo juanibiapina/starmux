@@ -1,31 +1,22 @@
 use super::*;
+use crate::process::{self, Limits};
 use std::{
     process::{Command, Output, Stdio},
-    thread,
     time::Instant,
 };
 
 fn run_kiro(args: &[&str], timeout: Duration) -> Result<Output, FetchError> {
-    let mut child = Command::new("kiro-cli")
+    let mut command = Command::new("kiro-cli");
+    command
         .args(args)
         .env("TERM", "xterm-256color")
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .stdout(Stdio::piped())
-        .spawn()
-        .map_err(|_| failure())?;
-    let deadline = Instant::now() + timeout;
-    loop {
-        if child.try_wait().map_err(|_| failure())?.is_some() {
-            return child.wait_with_output().map_err(|_| failure());
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(failure());
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
+        .stdin(Stdio::null());
+    let limits = Limits {
+        deadline: Instant::now() + timeout,
+        stdout: 1024 * 1024,
+        stderr: 0,
+    };
+    process::run(command, limits).map_err(|_| failure())
 }
 
 pub(super) fn strip_ansi(input: &str) -> String {

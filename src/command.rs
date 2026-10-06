@@ -1,42 +1,16 @@
+use crate::process::{self, Limits};
 use std::{
-    fs::{self, OpenOptions},
-    io::Read,
-    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
-    sync::atomic::{AtomicU64, Ordering},
-    thread,
+    process::Command,
     time::{Duration, Instant},
 };
 
 const TIMEOUT: Duration = Duration::from_millis(500);
 const MAX_OUTPUT: u64 = 16 * 1024;
-static NEXT_ID: AtomicU64 = AtomicU64::new(0);
-
-struct OutputFile(PathBuf);
-
-impl Drop for OutputFile {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
-    }
-}
-
 pub(crate) fn run(argv: &[String], workdir: &Path) -> Result<Option<String>, String> {
     if !workdir.is_dir() {
         return Ok(None);
     }
-    let path = std::env::temp_dir().join(format!(
-        "starmux-command-{}-{}",
-        std::process::id(),
-        NEXT_ID.fetch_add(1, Ordering::Relaxed)
-    ));
-    let file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&path)
-        .map_err(|error| format!("create command output: {error}"))?;
-    let output = OutputFile(path);
     let args: Vec<_> = argv[1..]
         .iter()
         .map(|arg| {
@@ -48,54 +22,26 @@ pub(crate) fn run(argv: &[String], workdir: &Path) -> Result<Option<String>, Str
             }
         })
         .collect::<Result<_, &str>>()?;
-    let mut child = match Command::new(&argv[0])
-        .args(args)
-        .current_dir(workdir)
-        .stdout(Stdio::from(file))
-        .stderr(Stdio::null())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Err("executable not found".into());
-        }
-        Err(error) => return Err(format!("start command: {error}")),
+    let mut command = Command::new(&argv[0]);
+    command.args(args).current_dir(workdir);
+    let limits = Limits {
+        deadline: Instant::now() + TIMEOUT,
+        stdout: MAX_OUTPUT,
+        stderr: 0,
     };
-    let started = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if fs::metadata(&output.0).is_ok_and(|file| file.len() > MAX_OUTPUT) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("command output exceeds 16 KiB".into());
-            }
-            Ok(None) if started.elapsed() < TIMEOUT => thread::sleep(Duration::from_millis(5)),
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("command timed out after 500 ms".into());
-            }
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("wait for command: {error}"));
-            }
+    let output = process::run(command, limits).map_err(|error| match error {
+        process::Error::Spawn(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            "executable not found".to_owned()
         }
-    };
-    if !status.success() {
-        return Err(format!("command exited with {status}"));
+        process::Error::Spawn(error) => format!("start command: {error}"),
+        process::Error::TimedOut => "command timed out after 500 ms".into(),
+        process::Error::TooLarge(_) => "command output exceeds 16 KiB".into(),
+        process::Error::Io(error) => format!("wait for command: {error}"),
+    })?;
+    if !output.status.success() {
+        return Err(format!("command exited with {}", output.status));
     }
-    let mut bytes = Vec::new();
-    fs::File::open(&output.0)
-        .map_err(|error| format!("read command output: {error}"))?
-        .take(MAX_OUTPUT + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| format!("read command output: {error}"))?;
-    if bytes.len() as u64 > MAX_OUTPUT {
-        return Err("command output exceeds 16 KiB".into());
-    }
-    let text = String::from_utf8(bytes).map_err(|_| "command output is not UTF-8")?;
+    let text = String::from_utf8(output.stdout).map_err(|_| "command output is not UTF-8")?;
     Ok(text
         .lines()
         .next()

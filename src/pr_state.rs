@@ -1,3 +1,4 @@
+use crate::process::{self, Limits};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, OpenOptions},
@@ -208,50 +209,27 @@ fn fetch(endpoint: &str) -> Option<PrState> {
 }
 
 fn fetch_with(command: &str, endpoint: &str) -> Option<PrState> {
-    let mut child = Command::new(command)
-        .args([
-            "api",
-            "--hostname",
-            "github.com",
-            endpoint,
-            "--jq",
-            "{state: .state, draft: .draft, merged_at: .merged_at}",
-        ])
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    let start = std::time::Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                if !status.success() {
-                    return None;
-                }
-                let mut bytes = Vec::new();
-                child
-                    .stdout
-                    .take()?
-                    .take(2049)
-                    .read_to_end(&mut bytes)
-                    .ok()?;
-                if bytes.len() > 2048 {
-                    return None;
-                }
-                return classify(&serde_json::from_slice(&bytes).ok()?);
-            }
-            Ok(None) if start.elapsed() < Duration::from_secs(5) => {
-                std::thread::sleep(Duration::from_millis(25))
-            }
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-        }
+    let mut gh = Command::new(command);
+    gh.args([
+        "api",
+        "--hostname",
+        "github.com",
+        endpoint,
+        "--jq",
+        "{state: .state, draft: .draft, merged_at: .merged_at}",
+    ])
+    .env("GIT_TERMINAL_PROMPT", "0")
+    .stdin(Stdio::null());
+    let limits = Limits {
+        deadline: std::time::Instant::now() + Duration::from_secs(5),
+        stdout: 2048,
+        stderr: 0,
+    };
+    let output = process::run(gh, limits).ok()?;
+    if !output.status.success() {
+        return None;
     }
+    classify(&serde_json::from_slice(&output.stdout).ok()?)
 }
 
 fn classify(value: &serde_json::Value) -> Option<PrState> {

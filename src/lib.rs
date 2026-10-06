@@ -13,6 +13,7 @@ mod navigation;
 pub use gob::GobJob;
 mod pi_workbench;
 pub mod pr_state;
+mod process;
 mod scroll;
 pub use scroll::ScrollDirection;
 mod sidebar;

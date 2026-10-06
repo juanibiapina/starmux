@@ -1,17 +1,12 @@
+use crate::process::{self, Limits};
 use std::{
-    fs::{self, OpenOptions},
-    io::Read,
-    os::unix::fs::OpenOptionsExt,
     path::Path,
-    process::{Command, Stdio},
-    sync::atomic::{AtomicU64, Ordering},
-    thread,
+    process::Command,
     time::{Duration, Instant},
 };
 
 const LIMIT: u64 = 2 * 1024 * 1024;
 const DEADLINE: Duration = Duration::from_millis(1500);
-static NEXT: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Default)]
 pub struct GitStatus {
@@ -40,69 +35,28 @@ impl GitStatus {
     }
 }
 
-struct Temp(std::path::PathBuf);
-impl Drop for Temp {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
-    }
-}
-
 fn git(dir: &Path, args: &[&str], started: Instant) -> Result<Vec<u8>, String> {
-    let path = std::env::temp_dir().join(format!(
-        "starmux-git-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&path)
-        .map_err(|e| format!("git output: {e}"))?;
-    let output = Temp(path);
-    let mut child = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .args(["--no-optional-locks", "-c", "color.ui=false"])
         .args(args)
         .current_dir(dir)
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .stdout(Stdio::from(file))
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("git: {e}"))?;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if started.elapsed() >= DEADLINE => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("git timed out".into());
-            }
-            Ok(None) if fs::metadata(&output.0).is_ok_and(|meta| meta.len() > LIMIT) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("git output exceeds 2 MiB".into());
-            }
-            Ok(None) => thread::sleep(Duration::from_millis(5)),
-            Err(e) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("git wait: {e}"));
-            }
-        }
+        .env("GIT_OPTIONAL_LOCKS", "0");
+    let limits = Limits {
+        deadline: started + DEADLINE,
+        stdout: LIMIT,
+        stderr: 0,
     };
-    if !status.success() {
-        return Err(format!("git {} exited with {status}", args[0]));
+    let output = process::run(command, limits).map_err(|error| match error {
+        process::Error::Spawn(error) => format!("git: {error}"),
+        process::Error::TimedOut => "git timed out".into(),
+        process::Error::TooLarge(_) => "git output exceeds 2 MiB".into(),
+        process::Error::Io(error) => format!("git wait: {error}"),
+    })?;
+    if !output.status.success() {
+        return Err(format!("git {} exited with {}", args[0], output.status));
     }
-    let mut bytes = Vec::new();
-    fs::File::open(&output.0)
-        .map_err(|e| format!("git output: {e}"))?
-        .take(LIMIT + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|e| format!("git output: {e}"))?;
-    if bytes.len() as u64 > LIMIT {
-        return Err("git output exceeds 2 MiB".into());
-    }
-    Ok(bytes)
+    Ok(output.stdout)
 }
 
 pub(crate) fn query(dir: &Path) -> Result<Option<GitStatus>, String> {

@@ -9,6 +9,7 @@
 ### Fixed
 
 - Improve performance to avoid flicker when sending messages in a pi session
+- Fix Kiro usage and pull request states failing when their command prints more than 64 KiB
 
 ## [0.7.0] - 2026-10-05
 

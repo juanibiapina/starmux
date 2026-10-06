@@ -208,34 +208,18 @@ fn sample() -> HostStatus {
 
 #[cfg(target_os = "macos")]
 fn battery() -> Option<Battery> {
-    let mut child = Command::new("pmset")
-        .args(["-g", "batt"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    let deadline = std::time::Instant::now() + Duration::from_millis(500);
-    loop {
-        match child.try_wait().ok()? {
-            Some(status) if status.success() => break,
-            Some(_) => return None,
-            None if std::time::Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(10))
-            }
-            None => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-        }
+    let mut pmset = Command::new("pmset");
+    pmset.args(["-g", "batt"]);
+    let limits = crate::process::Limits {
+        deadline: std::time::Instant::now() + Duration::from_millis(500),
+        stdout: 4096,
+        stderr: 0,
+    };
+    let output = crate::process::run(pmset, limits).ok()?;
+    if !output.status.success() {
+        return None;
     }
-    let mut output = String::new();
-    child
-        .stdout
-        .take()?
-        .take(4096)
-        .read_to_string(&mut output)
-        .ok()?;
+    let output = String::from_utf8(output.stdout).ok()?;
     let line = output.lines().find(|line| line.contains('%'))?;
     let prefix = line.split('%').next()?;
     let percent = prefix

@@ -8,6 +8,7 @@ Starmux is a Rust CLI for a vertical tmux sidebar. It requires a tmux build with
 - `src/tmux.rs`: tmux queries, snapshots, focus validation, and activation
 - `src/sidebar.rs`: configuration, safe formatting, and rendering
 - `src/navigation.rs`: cross-session click targets
+- `src/process.rs`: child processes with deadlines and output caps
 - `src/usage/providers/`: provider credentials, requests, and response parsing
 - `tests/tmux.rs`: live attached-client contracts
 

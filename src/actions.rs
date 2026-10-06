@@ -1,14 +1,10 @@
+use crate::process::{self, Limits};
 use crate::Snapshot;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs::{self, OpenOptions},
-    io::Read,
-    os::unix::fs::OpenOptionsExt,
     path::Path,
     process::{Command, Stdio},
-    sync::atomic::{AtomicU64, Ordering},
-    thread,
     time::{Duration, Instant},
 };
 
@@ -514,73 +510,31 @@ pub(crate) fn token_module(token: &str) -> Result<&'static str, String> {
         .ok_or_else(|| "invalid action module".into())
 }
 
-static NEXT_OUTPUT: AtomicU64 = AtomicU64::new(0);
-struct OutputFile(std::path::PathBuf);
-impl Drop for OutputFile {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
-    }
-}
-
 pub(crate) fn run(args: &[String], directory: &Path) -> Result<(), String> {
     validate_args(args)?;
-    let path = std::env::temp_dir().join(format!(
-        "starmux-action-{}-{}",
-        std::process::id(),
-        NEXT_OUTPUT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&path)
-        .map_err(|error| format!("create action stderr: {error}"))?;
-    let output = OutputFile(path);
-    let mut child = Command::new(&args[0])
+    let mut command = Command::new(&args[0]);
+    command
         .args(&args[1..])
         .current_dir(directory)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::from(file))
-        .spawn()
-        .map_err(|error| format!("start click action: {error}"))?;
-    let started = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if fs::metadata(&output.0).is_ok_and(|file| file.len() > 16384) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("click action stderr exceeds 16 KiB".into());
-            }
-            Ok(None) if started.elapsed() < Duration::from_secs(2) => {
-                thread::sleep(Duration::from_millis(5))
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("click action timed out after 2 seconds".into());
-            }
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("wait for click action: {error}"));
-            }
-        }
+        .stdin(Stdio::null());
+    let limits = Limits {
+        deadline: Instant::now() + Duration::from_secs(2),
+        stdout: 0,
+        stderr: 16384,
     };
-    let mut bytes = Vec::new();
-    fs::File::open(&output.0)
-        .and_then(|file| file.take(16385).read_to_end(&mut bytes))
-        .map_err(|error| format!("read action stderr: {error}"))?;
-    if bytes.len() > 16384 {
-        return Err("click action stderr exceeds 16 KiB".into());
-    }
-    if status.success() {
+    let output = process::run(command, limits).map_err(|error| match error {
+        process::Error::Spawn(error) => format!("start click action: {error}"),
+        process::Error::TimedOut => "click action timed out after 2 seconds".into(),
+        process::Error::TooLarge(_) => "click action stderr exceeds 16 KiB".into(),
+        process::Error::Io(error) => format!("wait for click action: {error}"),
+    })?;
+    if output.status.success() {
         Ok(())
     } else {
         Err(format!(
-            "click action exited with {status}: {}",
-            String::from_utf8_lossy(&bytes).trim()
+            "click action exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
         ))
     }
 }

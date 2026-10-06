@@ -1,9 +1,8 @@
+use crate::process::{self, Limits, Stream};
 use serde::Deserialize;
 use std::{
-    io::Read,
     path::Path,
-    process::{Command, Stdio},
-    thread,
+    process::Command,
     time::{Duration, Instant},
 };
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -100,57 +99,35 @@ fn list_with(binary: &str, workdir: &Path) -> Result<Vec<GobJob>, String> {
     if !workdir.is_dir() {
         return Ok(Vec::new());
     }
-    let mut child = match Command::new(binary)
-        .args(["list", "--json"])
-        .current_dir(workdir)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(format!("gob list: {error}")),
+    let mut command = Command::new(binary);
+    command.args(["list", "--json"]).current_dir(workdir);
+    let limits = Limits {
+        deadline: Instant::now() + TIMEOUT,
+        stdout: MAX_OUTPUT,
+        stderr: 4096,
     };
-    let stdout = child.stdout.take().ok_or("gob stdout unavailable")?;
-    let stderr = child.stderr.take().ok_or("gob stderr unavailable")?;
-    let output = thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let result = stdout.take(MAX_OUTPUT + 1).read_to_end(&mut bytes);
-        (result, bytes)
-    });
-    let errors = thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let _ = stderr.take(4096).read_to_end(&mut bytes);
-        bytes
-    });
-    let started = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if started.elapsed() < TIMEOUT => thread::sleep(Duration::from_millis(10)),
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = output.join();
-                let _ = errors.join();
-                return Err("gob list timed out".into());
-            }
-            Err(error) => return Err(format!("gob list: {error}")),
+    let output = match process::run(command, limits) {
+        Ok(output) => output,
+        Err(process::Error::Spawn(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Vec::new())
         }
+        Err(process::Error::Spawn(error)) => return Err(format!("gob list: {error}")),
+        Err(process::Error::TimedOut) => return Err("gob list timed out".into()),
+        Err(process::Error::TooLarge(Stream::Stdout)) => {
+            return Err("gob list output exceeds 2 MiB".into())
+        }
+        Err(process::Error::TooLarge(Stream::Stderr)) => {
+            return Err("gob list error output exceeds 4 KiB".into())
+        }
+        Err(process::Error::Io(error)) => return Err(format!("gob list output: {error}")),
     };
-    let (read, bytes) = output.join().map_err(|_| "gob output reader failed")?;
-    read.map_err(|error| format!("gob list output: {error}"))?;
-    let stderr = errors.join().map_err(|_| "gob error reader failed")?;
-    if bytes.len() as u64 > MAX_OUTPUT {
-        return Err("gob list output exceeds 2 MiB".into());
-    }
-    if !status.success() {
+    if !output.status.success() {
         return Err(format!(
             "gob list failed: {}",
-            String::from_utf8_lossy(&stderr).trim()
+            String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    parse(&bytes, workdir)
+    parse(&output.stdout, workdir)
 }
 
 #[cfg(test)]
