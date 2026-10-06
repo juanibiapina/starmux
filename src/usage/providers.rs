@@ -329,8 +329,17 @@ mod tests {
     }
 
     #[test]
-    fn strips_kiro_terminal_colors() {
-        assert_eq!(kiro::strip_ansi("\u{1b}[32m████ 72%\u{1b}[0m"), "████ 72%");
+    fn parses_kiro_credits_through_terminal_escapes() {
+        assert_eq!(
+            kiro::credits_percent(b"\x1b[32m\xe2\x96\x88\xe2\x96\x88 72%\x1b[0m"),
+            72.
+        );
+        assert_eq!(
+            kiro::credits_percent(
+                b"\x1b]8;;https://kiro.dev/usage\x1b\\Usage\x1b]8;;\x1b\\ (30 of 120 covered in plan)"
+            ),
+            25.
+        );
     }
 
     #[test]

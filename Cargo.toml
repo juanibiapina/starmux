@@ -27,6 +27,7 @@ dirs = "7"
 clap = { version = "4.6", features = ["derive"] }
 wait-timeout = "0.2"
 tempfile = "3"
+strip-ansi-escapes = "0.2"
 
 [dev-dependencies]
 vt100 = "0.16"
