@@ -2,6 +2,7 @@
 name = "starmux"
 version = "0.7.0"
 edition = "2021"
+rust-version = "1.89"
 license = "MIT"
 description = "A fast and configurable tmux sidebar"
 repository = "https://github.com/juanibiapina/starmux"
@@ -14,7 +15,6 @@ publish = false
 dist = true
 
 [dependencies]
-fs2 = "0.4.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1"

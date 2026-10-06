@@ -1,6 +1,5 @@
 mod providers;
 
-use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, OpenOptions},
@@ -235,7 +234,7 @@ fn try_lease(dir: &Path, provider: &str) -> Option<String> {
         .truncate(false)
         .open(dir.join(format!("provider-{provider}.guard")))
         .ok()?;
-    guard.lock_exclusive().ok()?;
+    guard.lock().ok()?;
     let path = lock_path(dir, provider);
     if path.exists() {
         match read_lease(dir, provider) {
@@ -289,7 +288,7 @@ fn release_lease(dir: &Path, provider: &str, token: &str) {
     else {
         return;
     };
-    if guard.lock_exclusive().is_ok() && owns_lease(dir, provider, token) {
+    if guard.lock().is_ok() && owns_lease(dir, provider, token) {
         let _ = fs::remove_file(lock_path(dir, provider));
     }
 }
@@ -314,7 +313,7 @@ fn write_state(dir: &Path, provider: &str, state: &State, token: &str) -> Result
         .truncate(false)
         .open(dir.join(format!("provider-{provider}.guard")))
         .map_err(|error| error.to_string())?;
-    guard.lock_exclusive().map_err(|error| error.to_string())?;
+    guard.lock().map_err(|error| error.to_string())?;
     if !owns_lease(dir, provider, token) {
         return Err("usage lease lost".into());
     }

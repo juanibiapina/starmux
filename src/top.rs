@@ -1,4 +1,3 @@
-use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, OpenOptions},
@@ -88,7 +87,7 @@ fn lock(dir: &Path) -> Option<fs::File> {
         .truncate(false)
         .open(dir.join("status.lock"))
         .ok()?;
-    file.try_lock_exclusive().ok()?;
+    file.try_lock().ok()?;
     Some(file)
 }
 

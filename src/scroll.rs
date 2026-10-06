@@ -1,4 +1,3 @@
-use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, OpenOptions},
@@ -133,7 +132,7 @@ fn update(
         options.mode(0o600);
     }
     let lock = options.open(dir.join(format!("{key}.lock")))?;
-    lock.lock_exclusive()?;
+    lock.lock()?;
     let current = read_at(dir, &key).unwrap_or_default();
     let mut next = change(current);
     next.offset = next.offset.min(MAX_OFFSET);

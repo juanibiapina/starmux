@@ -1,4 +1,3 @@
-use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, OpenOptions},
@@ -105,7 +104,7 @@ pub(crate) fn write(
         options.mode(0o600);
     }
     let lock = options.open(dir.join(format!("{key}.lock")))?;
-    lock.try_lock_exclusive()?;
+    lock.try_lock()?;
     if read_record(dir, &key).is_some_and(|record| record.completed_ns > completed_ns) {
         return Ok(());
     }
