@@ -2197,10 +2197,10 @@ impl Sidebar {
     fn build_icon(&self, state: Option<crate::BuildState>) -> (&'static str, &str) {
         let cfg = &self.config.pi_context;
         match state {
-            Some(crate::BuildState::Success) => ("\u{eab2}", &cfg.build_success_style),
-            Some(crate::BuildState::Failure) => ("\u{ea76}", &cfg.build_failure_style),
-            Some(crate::BuildState::Pending) => ("\u{eb7c}", &cfg.build_pending_style),
-            None => ("\u{eafc}", &cfg.unknown_style),
+            Some(crate::BuildState::Success) => ("✓", &cfg.build_success_style),
+            Some(crate::BuildState::Failure) => ("✗", &cfg.build_failure_style),
+            Some(crate::BuildState::Pending) => ("●", &cfg.build_pending_style),
+            None => ("·", &cfg.unknown_style),
         }
     }
 
@@ -2228,8 +2228,7 @@ impl Sidebar {
                         style: &str,
                         icon: Option<(&str, &str)>,
                         range: Option<Range>,
-                        identity: crate::actions::Identity,
-                        trailing: Option<(&str, &str)>|
+                        identity: crate::actions::Identity|
          -> Result<(), String> {
             let mut spans = Vec::new();
             if let Some((glyph, icon_style)) = icon {
@@ -2250,16 +2249,6 @@ impl Sidebar {
                 text,
                 style: resolve_style(style, "default", &self.palette)?,
             });
-            if let Some((glyph, glyph_style)) = trailing {
-                spans.push(Span {
-                    text: " ".into(),
-                    style: "default".into(),
-                });
-                spans.push(Span {
-                    text: glyph.into(),
-                    style: resolve_style(glyph_style, "default", &self.palette)?,
-                });
-            }
             rows.push(Row {
                 divider: false,
                 identity,
@@ -2278,7 +2267,6 @@ impl Sidebar {
             None,
             None,
             crate::actions::Identity::new("heading"),
-            None,
         )?;
         if !context.plans.is_empty() {
             push(
@@ -2287,7 +2275,6 @@ impl Sidebar {
                 None,
                 None,
                 crate::actions::Identity::new("category").field("category", "plans"),
-                None,
             )?;
             for (index, plan) in context.plans.iter().enumerate() {
                 let range = plan
@@ -2310,7 +2297,6 @@ impl Sidebar {
                             identity
                         }
                     },
-                    None,
                 )?;
             }
         }
@@ -2321,7 +2307,6 @@ impl Sidebar {
                 None,
                 None,
                 crate::actions::Identity::new("category").field("category", "prs"),
-                None,
             )?;
             for (index, pull_request) in context.pull_requests.iter().enumerate() {
                 let url = &pull_request.url;
@@ -2340,8 +2325,10 @@ impl Sidebar {
                     crate::pr_state::PrState::Closed => " closed",
                     _ => "",
                 };
-                let build = pull_request.build.map(|state| self.build_icon(Some(state)));
-                let available = width.saturating_sub(if build.is_some() { 6 } else { 4 });
+                let style = pull_request
+                    .build
+                    .map_or(style.as_str(), |state| self.build_icon(Some(state)).1);
+                let available = width.saturating_sub(4);
                 let label = if label.len() + state_word.len() <= available {
                     format!("{label}{state_word}")
                 } else if label.len() <= available {
@@ -2357,14 +2344,13 @@ impl Sidebar {
                 } else {
                     label
                 };
-                let token = crate::navigation::pr_token(pane, url, index)?;
+                let token = crate::navigation::link_token(pane, url, index)?;
                 push(
                     label,
                     &cfg.text_style,
                     Some((glyph, style)),
-                    Some(Range::PullRequest(token)),
+                    Some(Range::Link(token)),
                     crate::actions::Identity::new("pr").field("url", url),
-                    build,
                 )?;
             }
         }
@@ -2375,9 +2361,13 @@ impl Sidebar {
                 None,
                 None,
                 crate::actions::Identity::new("category").field("category", "builds"),
-                None,
             )?;
-            for build in &context.builds {
+            for (index, build) in context.builds.iter().enumerate() {
+                let token = crate::navigation::link_token(
+                    pane,
+                    &build.url,
+                    context.pull_requests.len() + index,
+                )?;
                 let name = build
                     .repository
                     .split_once('/')
@@ -2386,11 +2376,10 @@ impl Sidebar {
                     format!("{name}:{}", build.branch),
                     &cfg.text_style,
                     Some(self.build_icon(build.state)),
-                    None,
+                    Some(Range::Link(token)),
                     crate::actions::Identity::new("build")
                         .field("repository", &build.repository)
                         .field("branch", &build.branch),
-                    None,
                 )?;
             }
         }
@@ -2401,7 +2390,6 @@ impl Sidebar {
                 None,
                 None,
                 crate::actions::Identity::new("category").field("category", "skills"),
-                None,
             )?;
             for (index, skill) in context.skills.iter().enumerate() {
                 let range = skill
@@ -2424,7 +2412,6 @@ impl Sidebar {
                         }
                         identity
                     },
-                    None,
                 )?;
             }
         }
@@ -3235,7 +3222,7 @@ enum Range {
     Window(String),
     PiPane(String),
     UsagePage(String),
-    PullRequest(String),
+    Link(String),
     File(String),
     Action(String),
 }
@@ -3336,7 +3323,7 @@ fn render_rows(rows: &[Row], width: usize, text_color: Option<&str>) -> String {
                 | Range::Window(token)
                 | Range::PiPane(token)
                 | Range::UsagePage(token)
-                | Range::PullRequest(token)
+                | Range::Link(token)
                 | Range::File(token)
                 | Range::Action(token),
             ) => token.as_str(),

@@ -463,7 +463,7 @@ build_pending_style = "fg=yellow"
 
 Use `heading_style` for the selected session's `π` heading, `category_style` for the Plans, PRs, Builds, and Skills labels, and `text_style` for item text. `plan_style` and `skill_style` style the plan and skill icons. PR icons use `open_style`, `draft_style`, `merged_style`, `closed_style`, or `unknown_style` according to their state.
 
-Pull requests show the build status of their branch's last pushed commit after their name. Builds lists pushes without a pull request, such as pushes to `main`, as `repo:branch`. Build icons use `build_success_style`, `build_failure_style`, or `build_pending_style`; builds without checks use `unknown_style`. Builds require the pi-git and pi-github extensions from pi-workbench.
+When a pull request's branch has a build pushed in the session, its icon takes the build's color instead of its state color. Builds lists pushes without a pull request, such as pushes to `main`, as `repo:branch` after `✓` (passed), `✗` (failed), `●` (running), or `·` (no checks). Click a pull request to open it on GitHub, or a build to open its commit's checks. Build icons use `build_success_style`, `build_failure_style`, or `build_pending_style`; builds without checks use `unknown_style`. Builds require the pi-git and pi-github extensions from pi-workbench.
 
 Plans and skills open with the system's file handler by default. Set `open_command` under `[pi-context]` to override that handler:
 

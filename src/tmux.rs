@@ -1171,16 +1171,12 @@ impl<T: Tmux> Application<T> {
         }
         if token.starts_with("sr") {
             if !self.sidebar.pi_context_enabled() {
-                return Err("PR click target is not enabled".into());
+                return Err("link click target is not enabled".into());
             }
             let snapshot = self.snapshot(socket, client, width, None)?;
             let (_, context) = self.pi_sessions(socket, &snapshot, None)?;
-            let context = context.ok_or("PR click target is no longer present")?;
-            let url = crate::navigation::pr_target(
-                token,
-                &snapshot.current_pane,
-                &context.pull_requests,
-            )?;
+            let context = context.ok_or("link click target is no longer present")?;
+            let url = crate::navigation::link_target(token, &snapshot.current_pane, &context)?;
             return self.tmux.open_url(url);
         }
         self.tmux.activate(socket, client, token)
@@ -2050,8 +2046,8 @@ mod tests {
         updated_context["extensions"]["pi-github"]["data"]["pullRequests"] =
             serde_json::json!([pr_url, second_url]);
         fs::write(&context_path, updated_context.to_string()).unwrap();
-        let token = crate::navigation::pr_token("%0", pr_url, 0).unwrap();
-        let second_token = crate::navigation::pr_token("%0", second_url, 1).unwrap();
+        let token = crate::navigation::link_token("%0", pr_url, 0).unwrap();
+        let second_token = crate::navigation::link_token("%0", second_url, 1).unwrap();
         app.activate("/tmp/starmux-current.sock", "client", &token)
             .unwrap();
         app.activate("/tmp/starmux-current.sock", "client", &second_token)
@@ -2071,6 +2067,27 @@ mod tests {
         assert_eq!(
             tmux.opened_urls(),
             [browser_url.as_str(), pr_url, second_url]
+        );
+        updated_context["extensions"]["pi-github"]["data"] = serde_json::json!({
+            "pullRequests": [],
+            "builds": [{"repository": "owner/repo", "branch": "main", "sha": "0123abc",
+                        "pushedAt": "2026-10-07T10:40:30.000Z", "source": "agent", "checks": null}]
+        });
+        fs::write(&context_path, updated_context.to_string()).unwrap();
+        let with_build = context_app
+            .render_query("/tmp/starmux-current.sock", "client", 40, None)
+            .unwrap();
+        let build_token = with_build
+            .split("#[range=user|")
+            .find(|row| row.contains("repo:main"))
+            .and_then(|row| row.split(' ').next())
+            .unwrap()
+            .to_owned();
+        app.activate("/tmp/starmux-current.sock", "client", &build_token)
+            .unwrap();
+        assert_eq!(
+            tmux.opened_urls().last().map(String::as_str),
+            Some("https://github.com/owner/repo/commit/0123abc/checks")
         );
         let log_path = data_dir.join("events.log");
         fs::write(

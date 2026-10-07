@@ -4,11 +4,7 @@
 
 ### Added
 
-- Show build status of the selected Pi session's pull requests and pushed branches from pi-workbench.
-
-### Changed
-
-- Show Gob job progress like gob's own progress bar: elapsed and typical time such as `1m4s / ~20s`.
+- Show build status of the selected Pi session's pull requests and pushed branches from pi-workbench. Click a build to open its checks on GitHub.
 
 ## [0.8.0] - 2026-10-06
 

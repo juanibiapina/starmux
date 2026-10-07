@@ -180,15 +180,14 @@ impl Sidebar {
                     .iter()
                     .find(|pr| pr.url == row.identity.get("url"))
             });
-            let marker = match pull_request {
-                Some(pr) if pr.build.is_some() => Some(self.build_icon(pr.build)),
-                Some(pr) if pr.state != crate::pr_state::PrState::Unknown => None,
-                _ => Some((UNKNOWN, self.config.pi_context.unknown_style.as_str())),
-            };
-            if let Some((glyph, style)) = marker {
+            if pull_request.is_none_or(|pr| pr.state == crate::pr_state::PrState::Unknown) {
                 row.spans.push(Span {
-                    text: glyph.into(),
-                    style: resolve_style(style, "default", &self.palette)?,
+                    text: UNKNOWN.into(),
+                    style: resolve_style(
+                        &self.config.pi_context.unknown_style,
+                        "default",
+                        &self.palette,
+                    )?,
                 });
             }
         }

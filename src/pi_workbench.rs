@@ -284,6 +284,7 @@ pub struct PiPullRequest {
 pub struct PiBuild {
     pub repository: String,
     pub branch: String,
+    pub url: String,
     pub state: Option<BuildState>,
 }
 
@@ -488,6 +489,14 @@ fn read_github(data: &Value) -> Result<GithubContext, String> {
 fn read_build(value: &Value) -> Option<PiBuild> {
     let repository = value.get("repository")?.as_str()?;
     let branch = value.get("branch")?.as_str()?;
+    let sha = value.get("sha")?.as_str()?;
+    if !(7..=64).contains(&sha.len())
+        || !sha
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return None;
+    }
     let state = match value.get("checks") {
         None | Some(Value::Null) => None,
         Some(checks) => match checks.get("state")?.as_str()? {
@@ -501,6 +510,7 @@ fn read_build(value: &Value) -> Option<PiBuild> {
     (valid_repository(repository) && valid_branch(branch)).then(|| PiBuild {
         repository: repository.to_owned(),
         branch: branch.to_owned(),
+        url: format!("https://github.com/{repository}/commit/{sha}/checks"),
         state,
     })
 }
@@ -607,14 +617,14 @@ mod context_tests {
 
     fn build(repository: &str, branch: &str, checks: serde_json::Value) -> serde_json::Value {
         serde_json::json!({
-            "repository": repository, "branch": branch, "sha": "abc",
+            "repository": repository, "branch": branch, "sha": "abc1234",
             "pushedAt": "2026-10-07T10:40:30.000Z", "source": "agent", "checks": checks
         })
     }
 
     #[test]
     fn pull_requests_take_the_build_of_their_branch_and_other_builds_stay_separate() {
-        let checks = |state: &str| serde_json::json!({"sha": "abc", "state": state, "updatedAt": "", "runs": []});
+        let checks = |state: &str| serde_json::json!({"sha": "abc1234", "state": state, "updatedAt": "", "runs": []});
         let context = github_context(serde_json::json!({"version": 1, "data": {
             "builds": [
                 build("owner/repo", "feature", checks("failure")),
@@ -648,6 +658,7 @@ mod context_tests {
         let build = |repository: &str, branch: &str, state| PiBuild {
             repository: repository.into(),
             branch: branch.into(),
+            url: format!("https://github.com/{repository}/commit/abc1234/checks"),
             state,
         };
         assert_eq!(
@@ -693,6 +704,8 @@ mod context_tests {
             serde_json::json!({"builds": [build("owner/repo/x", "main", serde_json::Value::Null)]}),
             serde_json::json!({"builds": [build("owner/repo", "main\u{1b}[31m", serde_json::Value::Null)]}),
             serde_json::json!({"builds": [build("owner/repo", "", serde_json::Value::Null)]}),
+            serde_json::json!({"builds": [{"repository": "owner/repo", "branch": "main", "sha": "abc", "checks": null}]}),
+            serde_json::json!({"builds": [{"repository": "owner/repo", "branch": "main", "sha": "ABC1234/../x", "checks": null}]}),
             serde_json::json!({"builds": [build("owner/repo", "main", serde_json::json!({"state": "skipped"}))]}),
             serde_json::json!({"builds": [], "pullRequests": [pr("other/repo", serde_json::Value::Null, "open")]}),
             serde_json::json!({"builds": [], "pullRequests": [pr("owner/repo", serde_json::json!(3), "open")]}),

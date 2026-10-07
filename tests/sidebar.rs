@@ -1659,6 +1659,10 @@ fn pi_context_shows_build_state_on_pull_requests_and_lists_other_builds() {
     let build = |branch: &str, state| starmux::PiBuild {
         repository: "owner/repo".into(),
         branch: branch.into(),
+        url: format!(
+            "https://github.com/owner/repo/commit/{:07x}/checks",
+            branch.len()
+        ),
         state,
     };
     let context = starmux::PiContext {
@@ -1674,44 +1678,34 @@ fn pi_context_shows_build_state_on_pull_requests_and_lists_other_builds() {
         ],
         ..Default::default()
     };
-    let render = |width| {
-        let mut input = snapshot();
-        input.width = width;
-        sidebar
-            .render_with_inputs(
-                &input,
-                starmux::RenderInputs {
-                    top: None,
-                    pi_sessions: &[],
-                    usage_rows: &[],
-                    gob_jobs: &[],
-                    context: Some(&context),
-                    commands: &BTreeMap::new(),
-                    git: None,
-                    debug: None,
-                },
-            )
-            .unwrap()
-    };
-    let rendered = render(40);
+    let rendered = sidebar
+        .render_with_inputs(
+            &snapshot(),
+            starmux::RenderInputs {
+                top: None,
+                pi_sessions: &[],
+                usage_rows: &[],
+                gob_jobs: &[],
+                context: Some(&context),
+                commands: &BTreeMap::new(),
+                git: None,
+                debug: None,
+            },
+        )
+        .unwrap();
     for expected in [
-        "owner/repo##42#[default] #[fg=red]\u{ea76}",
+        "#[fg=red]\u{ea64}#[default] #[default]owner/repo##42",
         " Builds",
-        "#[fg=green]\u{eab2}#[default] #[default]repo:main",
-        "#[fg=yellow]\u{eb7c}#[default] #[default]repo:release",
-        "#[fg=brightblack]\u{eafc}#[default] #[default]repo:##[fg=red]docs",
+        "#[fg=green]✓#[default] #[default]repo:main",
+        "#[fg=yellow]●#[default] #[default]repo:release",
+        "#[fg=brightblack]·#[default] #[default]repo:##[fg=red]docs",
     ] {
         assert!(
             rendered.contains(expected),
             "missing {expected}: {rendered}"
         );
     }
-    assert_eq!(rendered.matches("#[range=user|sr").count(), 1, "{rendered}");
-    let narrow = render(16);
-    assert!(
-        narrow.contains("…##42#[default] #[fg=red]\u{ea76}"),
-        "{narrow}"
-    );
+    assert_eq!(rendered.matches("#[range=user|sr").count(), 4, "{rendered}");
 }
 
 #[test]

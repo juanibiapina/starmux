@@ -33,15 +33,26 @@ pub(crate) fn plan_browser_url(origin: &str, session_id: &str, id: &str) -> Resu
     Ok(format!("{origin}/plans/{session_id}/{id}"))
 }
 
+// Pull requests come first, then builds, so one index addresses every GitHub link.
+pub(crate) fn links(context: &crate::PiContext) -> impl Iterator<Item = &str> {
+    context
+        .pull_requests
+        .iter()
+        .map(|pr| pr.url.as_str())
+        .chain(context.builds.iter().map(|build| build.url.as_str()))
+}
+
 // tmux user ranges hold at most 15 bytes. Recheck the current pane and URL on click.
-pub(crate) fn pr_token(pane: &str, url: &str, index: usize) -> Result<String, String> {
-    if index >= 16
+pub(crate) fn link_token(pane: &str, url: &str, index: usize) -> Result<String, String> {
+    if index >= 32
         || !pane
             .strip_prefix('%')
             .is_some_and(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
-        || crate::pr_state::parse_url(url).is_none()
+        || !url.starts_with("https://github.com/")
+        || url.len() > 512
+        || url.bytes().any(|b| !b.is_ascii_graphic())
     {
-        return Err("invalid PR click target".into());
+        return Err("invalid link click target".into());
     }
     let mut hash = 0xcbf29ce484222325u64;
     for byte in pane.bytes().chain([0]).chain(url.bytes()) {
@@ -50,21 +61,20 @@ pub(crate) fn pr_token(pane: &str, url: &str, index: usize) -> Result<String, St
     Ok(format!("sr{index:02x}{:010x}", hash & 0xffffffffff))
 }
 
-pub(crate) fn pr_target<'a>(
+pub(crate) fn link_target<'a>(
     token: &str,
     pane: &str,
-    pull_requests: &'a [crate::PiPullRequest],
+    context: &'a crate::PiContext,
 ) -> Result<&'a str, String> {
     if token.len() != 14 || !token.starts_with("sr") {
-        return Err("invalid PR click target".into());
+        return Err("invalid link click target".into());
     }
-    let index = usize::from_str_radix(&token[2..4], 16).map_err(|_| "invalid PR click target")?;
-    let url = &pull_requests
-        .get(index)
-        .ok_or("PR click target is no longer present")?
-        .url;
-    if pr_token(pane, url, index)? != token {
-        return Err("PR click target is no longer present".into());
+    let index = usize::from_str_radix(&token[2..4], 16).map_err(|_| "invalid link click target")?;
+    let url = links(context)
+        .nth(index)
+        .ok_or("link click target is no longer present")?;
+    if link_token(pane, url, index)? != token {
+        return Err("link click target is no longer present".into());
     }
     Ok(url)
 }

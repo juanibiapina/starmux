@@ -100,6 +100,7 @@ impl Fixture {
                 builds: vec![PiBuild {
                     repository: "owner/repo".into(),
                     branch: "main".into(),
+                    url: "https://github.com/owner/repo/commit/abc1234/checks".into(),
                     state: Some(BuildState::Success),
                 }],
             },
@@ -428,7 +429,7 @@ fn slim_modules_show_source_items_and_keep_individual_actions() {
     let output = sidebar.render_with_inputs(&state, fixture.input()).unwrap();
     let rows = visible_rows(&output);
     let expected = vec![
-        "󰻠󰋗", "󰍛󰋗", "󰁹󰋗", "󰆍●", "○●", "◔", "▶", "↳░", "◇ ", "", " ", "✓·", " ", "◷ ", "--",
+        "󰻠󰋗", "󰍛󰋗", "󰁹󰋗", "󰆍●", "○●", "◔", "▶", "↳░", "◇ ", " ", "✓ ", "✓·", " ", "◷ ", "--",
         "  ", "--",
     ];
     assert_eq!(rows[..expected.len()], expected, "{output}");
@@ -552,8 +553,9 @@ action = "item"
     let output = sidebar.render_with_inputs(&state, fixture.input()).unwrap();
     assert_eq!(
         visible_rows(&output),
-        ["◇ ", "◇ ", "\u{ea64}\u{ea76}", "\u{eafe} ", "\u{eab2} "]
+        ["◇ ", "◇ ", "\u{ea64} ", "\u{eafe} ", "✓ "]
     );
+    assert!(output.contains("#[fg=red]\u{ea64}"), "{output}");
     let targets = tokens(&output);
     assert_eq!(targets.len(), 5);
     assert!(targets.iter().all(|target| target.starts_with("sc")));
