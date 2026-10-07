@@ -59,7 +59,6 @@ fn render(sidebar: &Sidebar, status: Option<&HostStatus>, width: usize) -> Strin
                 usage_rows: &[],
                 gob_jobs: &[],
                 context: None,
-                states: &[],
                 commands: &BTreeMap::new(),
                 git: None,
                 debug: None,

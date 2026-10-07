@@ -192,7 +192,7 @@ Usage windows expose their raw provider labels and optional durations. The examp
 | `top` | `heading`, `metric` | `metric`: `cpu`, `memory`, `battery` |
 | `gob` | `heading`, `job` | `job_id`, `name` |
 | `usage` | `provider`, `cache-age`, `window` | `provider`; windows also have `label`, optional `duration_seconds` |
-| `pi-context` | `heading`, `category`, `plan`, `skill`, `pr` | Categories: `category` (`plans`, `skills`, `prs`); plans: `file`, `title`; skills: `name`, optional `file`; PRs: `url` |
+| `pi-context` | `heading`, `category`, `plan`, `skill`, `pr`, `build` | Categories: `category` (`plans`, `prs`, `builds`, `skills`); plans: `file`, `title`; skills: `name`, optional `file`; PRs: `url`; builds: `repository`, `branch` |
 | `sessions` | `session`, `window` | `target_session`, `name`; windows also have `target_window`, `index` |
 | `pi-workbench` | `heading`, `project`, `session` | `project`; sessions also have `name`, optional `target_pane`, `target_window` |
 | `git` | `line`, `summary` | Full-layout lines have `slot`: entry in the configured `git.lines` list; the slim summary has no slot |
@@ -440,7 +440,7 @@ Pi sessions require pi-workbench to publish session status. The default data dir
 
 ## Selected Pi context
 
-Add `pi-context` to show the plans, pull requests, and loaded skills recorded by pi-workbench for the Pi session in the selected tmux pane. It can be placed independently of `pi-workbench`:
+Add `pi-context` to show the plans, pull requests, builds, and loaded skills recorded by pi-workbench for the Pi session in the selected tmux pane. It can be placed independently of `pi-workbench`:
 
 ```toml
 modules = ["sessions", "divider", "pi-workbench", "divider", "pi-context"]
@@ -456,9 +456,14 @@ draft_style = "fg=brightblack"
 merged_style = "fg=magenta"
 closed_style = "fg=red"
 unknown_style = "fg=brightblack"
+build_success_style = "fg=green"
+build_failure_style = "fg=red"
+build_pending_style = "fg=yellow"
 ```
 
-Use `heading_style` for the selected session's `π` heading, `category_style` for the Plans, PRs, and Skills labels, and `text_style` for item text. `plan_style` and `skill_style` style the plan and skill icons. PR icons use `open_style`, `draft_style`, `merged_style`, `closed_style`, or `unknown_style` according to their state.
+Use `heading_style` for the selected session's `π` heading, `category_style` for the Plans, PRs, Builds, and Skills labels, and `text_style` for item text. `plan_style` and `skill_style` style the plan and skill icons. PR icons use `open_style`, `draft_style`, `merged_style`, `closed_style`, or `unknown_style` according to their state.
+
+Pull requests show the build status of their branch's last pushed commit after their name. Builds lists pushes without a pull request, such as pushes to `main`, as `repo:branch`. Build icons use `build_success_style`, `build_failure_style`, or `build_pending_style`; builds without checks use `unknown_style`. Builds require the pi-git and pi-github extensions from pi-workbench.
 
 Plans and skills open with the system's file handler by default. Set `open_command` under `[pi-context]` to override that handler:
 

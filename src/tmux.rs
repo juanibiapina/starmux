@@ -740,12 +740,12 @@ impl<T: Tmux> Application<T> {
         let snapshot = self.snapshot(socket, client, width, focus)?;
         diagnostics.stages[0] = started.elapsed().as_micros() as u64;
         events.pane.clone_from(&snapshot.current_pane);
-        let (pi_sessions, context) = self.pi_sessions(socket, &snapshot, Some(events))?;
+        let (pi_sessions, mut context) = self.pi_sessions(socket, &snapshot, Some(events))?;
         if self.sidebar.pi_workbench_data_dir().is_some() {
             diagnostics.stages[1] =
                 (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
         }
-        let states = self.pr_states(context.as_ref(), spawn);
+        self.overlay_pr_states(context.as_mut(), spawn);
         if context
             .as_ref()
             .is_some_and(|context| !context.pull_requests.is_empty())
@@ -804,7 +804,6 @@ impl<T: Tmux> Application<T> {
                 usage_rows: &usage,
                 gob_jobs: &jobs,
                 context: context.as_ref(),
-                states: &states,
                 commands: &commands,
                 git: git.as_ref(),
                 debug: previous,
@@ -884,22 +883,16 @@ impl<T: Tmux> Application<T> {
         ))
     }
 
-    fn pr_states(
-        &self,
-        context: Option<&crate::PiContext>,
-        spawn: bool,
-    ) -> Vec<crate::pr_state::PrState> {
-        let Some(context) = context else {
-            return Vec::new();
+    fn overlay_pr_states(&self, context: Option<&mut crate::PiContext>, spawn: bool) {
+        let (Some(context), Some(dir)) = (context, self.sidebar.cache_dir("pr-state")) else {
+            return;
         };
-        let Some(dir) = self.sidebar.cache_dir("pr-state") else {
-            return vec![crate::pr_state::PrState::Unknown; context.pull_requests.len()];
-        };
-        context
-            .pull_requests
-            .iter()
-            .map(|url| crate::pr_state::resolve(url, &dir, spawn))
-            .collect()
+        for pull_request in &mut context.pull_requests {
+            let cached = crate::pr_state::resolve(&pull_request.url, &dir, spawn);
+            if cached != crate::pr_state::PrState::Unknown {
+                pull_request.state = cached;
+            }
+        }
     }
 
     fn commands(&self, snapshot: &Snapshot) -> (BTreeMap<String, String>, Vec<String>) {
@@ -1061,7 +1054,6 @@ impl<T: Tmux> Application<T> {
                 commands: &commands,
                 git: git.as_ref(),
                 debug: debug.as_ref(),
-                states: &[],
             },
         )? {
             result.push_str(&format!("click: {warning}\n"));
@@ -1264,7 +1256,6 @@ impl<T: Tmux> Application<T> {
                 usage_rows: &usage,
                 gob_jobs: &jobs,
                 context: context.as_ref(),
-                states: &[],
                 commands: &commands,
                 git: git.as_ref(),
                 debug: debug.as_ref(),
@@ -1366,9 +1357,10 @@ fn source_explanation(
     }
     if let Some(context) = &context {
         result.push_str(&format!(
-            "pi-context plans={} prs={} skills={}\n",
+            "pi-context plans={} prs={} builds={} skills={}\n",
             context.plans.len(),
             context.pull_requests.len(),
+            context.builds.len(),
             context.skills.len()
         ));
     }
@@ -2100,21 +2092,21 @@ mod tests {
         fs::remove_file(&context_path).unwrap();
         app.render_query("/tmp/starmux-current.sock", "client", 40, None)
             .unwrap();
+        assert!(!fs::read_to_string(&log_path)
+            .unwrap_or_default()
+            .contains("pi-context"));
+        fs::write(&context_path, "{").unwrap();
+        app.render_query("/tmp/starmux-current.sock", "client", 40, None)
+            .unwrap();
         let log = fs::read_to_string(&log_path).unwrap();
         assert!(
             log.contains("pane=\"%0\"") && log.contains("source=\"pi-context\""),
             "{log}"
         );
         assert!(
-            log.contains("session=live") && log.contains("context file:"),
+            log.contains("session=live") && log.contains("invalid context JSON"),
             "{log}"
         );
-        fs::write(&context_path, "{").unwrap();
-        app.render_query("/tmp/starmux-current.sock", "client", 40, None)
-            .unwrap();
-        assert!(fs::read_to_string(&log_path)
-            .unwrap()
-            .contains("invalid context JSON"));
         assert!(rendered.contains("#[bold] repo#[bg=default]"), "{rendered}");
         assert!(
             rendered.contains("#[range=user|sp9 list=focus ]"),

@@ -53,15 +53,16 @@ pub(crate) fn pr_token(pane: &str, url: &str, index: usize) -> Result<String, St
 pub(crate) fn pr_target<'a>(
     token: &str,
     pane: &str,
-    urls: &'a [String],
+    pull_requests: &'a [crate::PiPullRequest],
 ) -> Result<&'a str, String> {
     if token.len() != 14 || !token.starts_with("sr") {
         return Err("invalid PR click target".into());
     }
     let index = usize::from_str_radix(&token[2..4], 16).map_err(|_| "invalid PR click target")?;
-    let url = urls
+    let url = &pull_requests
         .get(index)
-        .ok_or("PR click target is no longer present")?;
+        .ok_or("PR click target is no longer present")?
+        .url;
     if pr_token(pane, url, index)? != token {
         return Err("PR click target is no longer present".into());
     }

@@ -43,6 +43,9 @@ draft_style = "fg=muted"
 merged_style = "fg=accent"
 closed_style = "fg=danger"
 unknown_style = "fg=muted"
+build_success_style = "fg=green"
+build_failure_style = "fg=danger"
+build_pending_style = "fg=warning"
 
 [usage]
 provider_style = "fg=accent,bold"

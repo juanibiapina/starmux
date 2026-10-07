@@ -113,6 +113,7 @@ fn catalog(module: &str) -> Vec<(&'static str, &'static [&'static str])> {
             ("plan", &["file", "title"]),
             ("skill", &["file", "name"]),
             ("pr", &["url"]),
+            ("build", &["repository", "branch"]),
         ],
         "sessions" => vec![
             ("session", &["target_session", "name"]),

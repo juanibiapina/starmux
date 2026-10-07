@@ -165,6 +165,9 @@ struct PiContextConfig {
     merged_style: String,
     closed_style: String,
     unknown_style: String,
+    build_success_style: String,
+    build_failure_style: String,
+    build_pending_style: String,
 }
 
 impl Default for PiContextConfig {
@@ -183,6 +186,9 @@ impl Default for PiContextConfig {
             merged_style: "fg=magenta".into(),
             closed_style: "fg=red".into(),
             unknown_style: "fg=brightblack".into(),
+            build_success_style: "fg=green".into(),
+            build_failure_style: "fg=red".into(),
+            build_pending_style: "fg=yellow".into(),
         }
     }
 }
@@ -507,7 +513,6 @@ pub struct RenderInputs<'a> {
     pub usage_rows: &'a [crate::usage::UsageRow],
     pub gob_jobs: &'a [crate::gob::GobJob],
     pub context: Option<&'a crate::PiContext>,
-    pub states: &'a [crate::pr_state::PrState],
     pub commands: &'a BTreeMap<String, String>,
     pub git: Option<&'a crate::GitStatus>,
     pub debug: Option<&'a crate::debug::Diagnostics>,
@@ -849,6 +854,9 @@ impl Sidebar {
             &config.pi_context.merged_style,
             &config.pi_context.closed_style,
             &config.pi_context.unknown_style,
+            &config.pi_context.build_success_style,
+            &config.pi_context.build_failure_style,
+            &config.pi_context.build_pending_style,
             &config.gob.heading_style,
             &config.gob.running_style,
             &config.gob.progress_style,
@@ -1145,7 +1153,6 @@ impl Sidebar {
                 usage_rows,
                 gob_jobs,
                 context: None,
-                states: &[],
                 commands: &BTreeMap::new(),
                 git: None,
                 debug: None,
@@ -1203,7 +1210,6 @@ impl Sidebar {
             usage_rows,
             gob_jobs,
             context,
-            states,
             commands,
             git,
             debug,
@@ -1241,7 +1247,6 @@ impl Sidebar {
                                     .iter()
                                     .find(|session| session.selected)
                                     .map(|session| session.name.as_str()),
-                                states,
                                 snapshot.width,
                                 &snapshot.current_pane,
                             )?,
@@ -2189,6 +2194,16 @@ impl Sidebar {
         Ok(coalesce(spans))
     }
 
+    fn build_icon(&self, state: Option<crate::BuildState>) -> (&'static str, &str) {
+        let cfg = &self.config.pi_context;
+        match state {
+            Some(crate::BuildState::Success) => ("\u{eab2}", &cfg.build_success_style),
+            Some(crate::BuildState::Failure) => ("\u{ea76}", &cfg.build_failure_style),
+            Some(crate::BuildState::Pending) => ("\u{eb7c}", &cfg.build_pending_style),
+            None => ("\u{eafc}", &cfg.unknown_style),
+        }
+    }
+
     #[expect(
         clippy::too_many_lines,
         reason = "Context rows share icon, style, and click range assembly"
@@ -2197,11 +2212,13 @@ impl Sidebar {
         &self,
         context: &crate::PiContext,
         selected_name: Option<&str>,
-        states: &[crate::pr_state::PrState],
         width: usize,
         pane: &str,
     ) -> Result<Vec<Row>, String> {
-        if context.plans.is_empty() && context.pull_requests.is_empty() && context.skills.is_empty()
+        if context.plans.is_empty()
+            && context.pull_requests.is_empty()
+            && context.builds.is_empty()
+            && context.skills.is_empty()
         {
             return Ok(Vec::new());
         }
@@ -2211,7 +2228,8 @@ impl Sidebar {
                         style: &str,
                         icon: Option<(&str, &str)>,
                         range: Option<Range>,
-                        identity: crate::actions::Identity|
+                        identity: crate::actions::Identity,
+                        trailing: Option<(&str, &str)>|
          -> Result<(), String> {
             let mut spans = Vec::new();
             if let Some((glyph, icon_style)) = icon {
@@ -2232,6 +2250,16 @@ impl Sidebar {
                 text,
                 style: resolve_style(style, "default", &self.palette)?,
             });
+            if let Some((glyph, glyph_style)) = trailing {
+                spans.push(Span {
+                    text: " ".into(),
+                    style: "default".into(),
+                });
+                spans.push(Span {
+                    text: glyph.into(),
+                    style: resolve_style(glyph_style, "default", &self.palette)?,
+                });
+            }
             rows.push(Row {
                 divider: false,
                 identity,
@@ -2250,6 +2278,7 @@ impl Sidebar {
             None,
             None,
             crate::actions::Identity::new("heading"),
+            None,
         )?;
         if !context.plans.is_empty() {
             push(
@@ -2258,6 +2287,7 @@ impl Sidebar {
                 None,
                 None,
                 crate::actions::Identity::new("category").field("category", "plans"),
+                None,
             )?;
             for (index, plan) in context.plans.iter().enumerate() {
                 let range = plan
@@ -2280,6 +2310,7 @@ impl Sidebar {
                             identity
                         }
                     },
+                    None,
                 )?;
             }
         }
@@ -2290,32 +2321,27 @@ impl Sidebar {
                 None,
                 None,
                 crate::actions::Identity::new("category").field("category", "prs"),
+                None,
             )?;
-            for (index, url) in context.pull_requests.iter().enumerate() {
+            for (index, pull_request) in context.pull_requests.iter().enumerate() {
+                let url = &pull_request.url;
                 let Some((label, _)) = crate::pr_state::parse_url(url) else {
                     continue;
                 };
-                let (glyph, style) = match states
-                    .get(index)
-                    .copied()
-                    .unwrap_or(crate::pr_state::PrState::Unknown)
-                {
+                let (glyph, style) = match pull_request.state {
                     crate::pr_state::PrState::Open => ("\u{ea64}", &cfg.open_style),
                     crate::pr_state::PrState::Draft => ("\u{ebdb}", &cfg.draft_style),
                     crate::pr_state::PrState::Merged => ("\u{eafe}", &cfg.merged_style),
                     crate::pr_state::PrState::Closed => ("\u{ebda}", &cfg.closed_style),
                     crate::pr_state::PrState::Unknown => ("\u{ea64}", &cfg.unknown_style),
                 };
-                let state_word = match states
-                    .get(index)
-                    .copied()
-                    .unwrap_or(crate::pr_state::PrState::Unknown)
-                {
+                let state_word = match pull_request.state {
                     crate::pr_state::PrState::Draft => " draft",
                     crate::pr_state::PrState::Closed => " closed",
                     _ => "",
                 };
-                let available = width.saturating_sub(4);
+                let build = pull_request.build.map(|state| self.build_icon(Some(state)));
+                let available = width.saturating_sub(if build.is_some() { 6 } else { 4 });
                 let label = if label.len() + state_word.len() <= available {
                     format!("{label}{state_word}")
                 } else if label.len() <= available {
@@ -2338,6 +2364,33 @@ impl Sidebar {
                     Some((glyph, style)),
                     Some(Range::PullRequest(token)),
                     crate::actions::Identity::new("pr").field("url", url),
+                    build,
+                )?;
+            }
+        }
+        if !context.builds.is_empty() {
+            push(
+                " Builds".into(),
+                &cfg.category_style,
+                None,
+                None,
+                crate::actions::Identity::new("category").field("category", "builds"),
+                None,
+            )?;
+            for build in &context.builds {
+                let name = build
+                    .repository
+                    .split_once('/')
+                    .map_or(build.repository.as_str(), |(_, name)| name);
+                push(
+                    format!("{name}:{}", build.branch),
+                    &cfg.text_style,
+                    Some(self.build_icon(build.state)),
+                    None,
+                    crate::actions::Identity::new("build")
+                        .field("repository", &build.repository)
+                        .field("branch", &build.branch),
+                    None,
                 )?;
             }
         }
@@ -2348,6 +2401,7 @@ impl Sidebar {
                 None,
                 None,
                 crate::actions::Identity::new("category").field("category", "skills"),
+                None,
             )?;
             for (index, skill) in context.skills.iter().enumerate() {
                 let range = skill
@@ -2370,6 +2424,7 @@ impl Sidebar {
                         }
                         identity
                     },
+                    None,
                 )?;
             }
         }

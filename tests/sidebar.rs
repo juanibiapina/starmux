@@ -2,6 +2,18 @@ use starmux::usage::{RefreshFailure, UsageRow, UsageWindow};
 use starmux::{PiSession, PiTarget, Session, Sidebar, Snapshot, Window};
 use std::collections::BTreeMap;
 
+fn pull_request(
+    url: &str,
+    state: starmux::pr_state::PrState,
+    build: Option<starmux::BuildState>,
+) -> starmux::PiPullRequest {
+    starmux::PiPullRequest {
+        url: url.into(),
+        state,
+        build,
+    }
+}
+
 fn snapshot() -> Snapshot {
     Snapshot {
         width: 30,
@@ -233,7 +245,6 @@ fn folded_scroll_bounds_follow_content_without_changing_expansion() {
                     usage_rows: &[],
                     gob_jobs: &[],
                     context: None,
-                    states: &[],
                     commands: &commands,
                     git: None,
                     debug: None,
@@ -305,7 +316,6 @@ fn scrolling_pages_through_all_modules_and_clamps_after_resize() {
                     usage_rows: &[],
                     gob_jobs: &[],
                     context: None,
-                    states: &[],
                     commands: &BTreeMap::new(),
                     git: None,
                     debug: None,
@@ -851,7 +861,6 @@ fn collapsed_dividers_keep_bottom_alignment_and_scroll_bounds() {
                 usage_rows: &[],
                 gob_jobs: &[],
                 context: None,
-                states: &[],
                 commands: &BTreeMap::new(),
                 git: None,
                 debug: None,
@@ -884,7 +893,6 @@ fn command_output_separates_dividers_in_a_named_list() {
                 usage_rows: &[],
                 gob_jobs: &[],
                 context: None,
-                states: &[],
                 commands: &commands,
                 git: None,
                 debug: None,
@@ -1548,7 +1556,6 @@ fn pi_context_names_the_selected_session_above_its_entries() {
                     usage_rows: &[],
                     gob_jobs: &[],
                     context,
-                    states: &[],
                     commands: &BTreeMap::new(),
                     git: None,
                     debug: None,
@@ -1590,7 +1597,6 @@ fn pi_context_names_the_selected_session_above_its_entries() {
                     usage_rows: &[],
                     gob_jobs: &[],
                     context: Some(&context),
-                    states: &[],
                     commands: &BTreeMap::new(),
                     git: None,
                     debug: None,
@@ -1606,10 +1612,6 @@ fn pi_context_names_the_selected_session_above_its_entries() {
 #[test]
 fn pi_context_pr_state_icons_use_distinct_styles() {
     let sidebar = Sidebar::from_toml("modules = [\"pi-context\"]").unwrap();
-    let context = starmux::PiContext {
-        pull_requests: vec!["https://github.com/o/r/pull/1".into()],
-        ..Default::default()
-    };
     for (state, icon, style) in [
         (starmux::pr_state::PrState::Open, "\u{ea64}", "fg=green"),
         (
@@ -1625,6 +1627,10 @@ fn pi_context_pr_state_icons_use_distinct_styles() {
             "fg=brightblack",
         ),
     ] {
+        let context = starmux::PiContext {
+            pull_requests: vec![pull_request("https://github.com/o/r/pull/1", state, None)],
+            ..Default::default()
+        };
         let rendered = sidebar
             .render_with_inputs(
                 &snapshot(),
@@ -1634,7 +1640,6 @@ fn pi_context_pr_state_icons_use_distinct_styles() {
                     usage_rows: &[],
                     gob_jobs: &[],
                     context: Some(&context),
-                    states: &[state],
                     commands: &BTreeMap::new(),
                     git: None,
                     debug: None,
@@ -1646,6 +1651,67 @@ fn pi_context_pr_state_icons_use_distinct_styles() {
             "{rendered}"
         );
     }
+}
+
+#[test]
+fn pi_context_shows_build_state_on_pull_requests_and_lists_other_builds() {
+    let sidebar = Sidebar::from_toml("modules = [\"pi-context\"]").unwrap();
+    let build = |branch: &str, state| starmux::PiBuild {
+        repository: "owner/repo".into(),
+        branch: branch.into(),
+        state,
+    };
+    let context = starmux::PiContext {
+        pull_requests: vec![pull_request(
+            "https://github.com/owner/repo/pull/42",
+            starmux::pr_state::PrState::Open,
+            Some(starmux::BuildState::Failure),
+        )],
+        builds: vec![
+            build("main", Some(starmux::BuildState::Success)),
+            build("release", Some(starmux::BuildState::Pending)),
+            build("#[fg=red]docs", None),
+        ],
+        ..Default::default()
+    };
+    let render = |width| {
+        let mut input = snapshot();
+        input.width = width;
+        sidebar
+            .render_with_inputs(
+                &input,
+                starmux::RenderInputs {
+                    top: None,
+                    pi_sessions: &[],
+                    usage_rows: &[],
+                    gob_jobs: &[],
+                    context: Some(&context),
+                    commands: &BTreeMap::new(),
+                    git: None,
+                    debug: None,
+                },
+            )
+            .unwrap()
+    };
+    let rendered = render(40);
+    for expected in [
+        "owner/repo##42#[default] #[fg=red]\u{ea76}",
+        " Builds",
+        "#[fg=green]\u{eab2}#[default] #[default]repo:main",
+        "#[fg=yellow]\u{eb7c}#[default] #[default]repo:release",
+        "#[fg=brightblack]\u{eafc}#[default] #[default]repo:##[fg=red]docs",
+    ] {
+        assert!(
+            rendered.contains(expected),
+            "missing {expected}: {rendered}"
+        );
+    }
+    assert_eq!(rendered.matches("#[range=user|sr").count(), 1, "{rendered}");
+    let narrow = render(16);
+    assert!(
+        narrow.contains("…##42#[default] #[fg=red]\u{ea76}"),
+        "{narrow}"
+    );
 }
 
 #[test]
@@ -1664,7 +1730,12 @@ fn pi_context_icons_and_clipping_work_at_narrow_widths() {
             title: "#[fg=red] Build an extensive search".into(),
             path: plan,
         }],
-        pull_requests: vec!["https://github.com/owner/repo/pull/42".into()],
+        pull_requests: vec![pull_request(
+            "https://github.com/owner/repo/pull/42",
+            starmux::pr_state::PrState::Draft,
+            None,
+        )],
+        builds: vec![],
         skills: vec![starmux::PiSkill {
             name: "testing".into(),
             path: Some(skill),
@@ -1682,7 +1753,6 @@ fn pi_context_icons_and_clipping_work_at_narrow_widths() {
                     usage_rows: &[],
                     gob_jobs: &[],
                     context: Some(&context),
-                    states: &[starmux::pr_state::PrState::Draft],
                     commands: &BTreeMap::new(),
                     git: None,
                     debug: None,
@@ -1723,7 +1793,11 @@ fn pi_context_icons_and_clipping_work_at_narrow_widths() {
         }
     }
     let long = starmux::PiContext {
-        pull_requests: vec!["https://github.com/verylongowner/verylongrepository/pull/4242".into()],
+        pull_requests: vec![pull_request(
+            "https://github.com/verylongowner/verylongrepository/pull/4242",
+            starmux::pr_state::PrState::Unknown,
+            None,
+        )],
         ..Default::default()
     };
     let mut input = snapshot();
@@ -1737,7 +1811,6 @@ fn pi_context_icons_and_clipping_work_at_narrow_widths() {
                 usage_rows: &[],
                 gob_jobs: &[],
                 context: Some(&long),
-                states: &[],
                 commands: &BTreeMap::new(),
                 git: None,
                 debug: None,
@@ -1773,7 +1846,6 @@ fn named_commands_keep_order_and_render_only_validated_styles() {
                 usage_rows: &[],
                 gob_jobs: &[],
                 context: None,
-                states: &[],
                 commands: &commands,
                 git: None,
                 debug: None,
@@ -1838,7 +1910,6 @@ fn git_lines_can_hide_upstream_or_put_it_on_its_own_row() {
                     usage_rows: &[],
                     gob_jobs: &[],
                     context: None,
-                    states: &[],
                     commands: &BTreeMap::new(),
                     git: Some(&status),
                     debug: None,
@@ -1878,7 +1949,6 @@ fn debug_rows_follow_order_and_clip_without_click_targets() {
                     usage_rows: &[],
                     gob_jobs: &[],
                     context: None,
-                    states: &[],
                     commands: &BTreeMap::new(),
                     git: None,
                     debug: Some(&diagnostics),
@@ -1905,7 +1975,6 @@ fn debug_rows_follow_order_and_clip_without_click_targets() {
                 usage_rows: &[],
                 gob_jobs: &[],
                 context: None,
-                states: &[],
                 commands: &BTreeMap::new(),
                 git: None,
                 debug: Some(&diagnostics),
@@ -1943,7 +2012,11 @@ providers = ["codex"]
         selected: true,
     };
     let context = starmux::PiContext {
-        pull_requests: vec!["https://github.com/o/r/pull/1".into()],
+        pull_requests: vec![pull_request(
+            "https://github.com/o/r/pull/1",
+            starmux::pr_state::PrState::Open,
+            None,
+        )],
         ..Default::default()
     };
     let usage = UsageRow {
@@ -1987,7 +2060,6 @@ providers = ["codex"]
                     usage_rows: std::slice::from_ref(&usage),
                     gob_jobs: std::slice::from_ref(&job),
                     context: Some(&context),
-                    states: &[starmux::pr_state::PrState::Open],
                     commands: &commands,
                     git: Some(&git),
                     debug: Some(&debug),
@@ -2094,7 +2166,6 @@ argv = ["status"]
                     usage_rows: &[],
                     gob_jobs: &[],
                     context: None,
-                    states: &[],
                     commands: &commands,
                     git: None,
                     debug: None,
@@ -2260,7 +2331,6 @@ fn slim_configuration_validates_every_list_and_command_glyph() {
                 usage_rows: &[],
                 gob_jobs: &[],
                 context: None,
-                states: &[],
                 commands: &commands,
                 git: None,
                 debug: None,

@@ -21,7 +21,9 @@ mod tmux;
 pub mod top;
 pub mod usage;
 
-pub use pi_workbench::{PiContext, PiLocation, PiPlan, PiSession, PiSkill, PiTarget};
+pub use pi_workbench::{
+    BuildState, PiBuild, PiContext, PiLocation, PiPlan, PiPullRequest, PiSession, PiSkill, PiTarget,
+};
 pub use sidebar::{RenderInputs, Session, Sidebar, Snapshot, Window};
 pub use tmux::{
     scroll_client, scroll_client_for, scroll_client_in, scroll_worker, scroll_worker_for,

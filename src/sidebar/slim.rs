@@ -174,25 +174,21 @@ impl Sidebar {
             .into_iter()
             .collect();
         if row.identity.get("kind") == "pr" {
-            let state = input
-                .context
-                .and_then(|context| {
-                    context
-                        .pull_requests
-                        .iter()
-                        .position(|url| url == row.identity.get("url"))
-                })
-                .and_then(|index| input.states.get(index))
-                .copied()
-                .unwrap_or(crate::pr_state::PrState::Unknown);
-            if state == crate::pr_state::PrState::Unknown {
+            let pull_request = input.context.and_then(|context| {
+                context
+                    .pull_requests
+                    .iter()
+                    .find(|pr| pr.url == row.identity.get("url"))
+            });
+            let marker = match pull_request {
+                Some(pr) if pr.build.is_some() => Some(self.build_icon(pr.build)),
+                Some(pr) if pr.state != crate::pr_state::PrState::Unknown => None,
+                _ => Some((UNKNOWN, self.config.pi_context.unknown_style.as_str())),
+            };
+            if let Some((glyph, style)) = marker {
                 row.spans.push(Span {
-                    text: UNKNOWN.into(),
-                    style: resolve_style(
-                        &self.config.pi_context.unknown_style,
-                        "default",
-                        &self.palette,
-                    )?,
+                    text: glyph.into(),
+                    style: resolve_style(style, "default", &self.palette)?,
                 });
             }
         }
