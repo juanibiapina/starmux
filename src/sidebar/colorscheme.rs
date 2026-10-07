@@ -58,6 +58,7 @@ heading_style = "fg=text,bold"
 running_style = "fg=green"
 progress_style = "fg=green"
 overdue_style = "fg=warning"
+label_style = "fg=muted"
 bar_track_color = "border"
 
 [git]

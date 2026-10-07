@@ -322,12 +322,10 @@ impl Sidebar {
                 .iter()
                 .find(|j| j.id == row.identity.get("job_id"))
                 .and_then(|j| j.progress(time::OffsetDateTime::now_utc()));
-            let (glyph, style) = match progress.map(|p| (p, p.phase())) {
+            let (glyph, style) = match progress {
                 None => (UNKNOWN, &self.config.gob.progress_style),
-                Some((_, crate::gob::Phase::Overdue { .. })) => {
-                    ("█", &self.config.gob.overdue_style)
-                }
-                Some((p, _)) => (
+                Some(p) if p.elapsed >= p.typical => ("█", &self.config.gob.overdue_style),
+                Some(p) => (
                     gauge(p.elapsed.as_secs_f64() / p.typical.as_secs_f64() * 100.0),
                     &self.config.gob.progress_style,
                 ),

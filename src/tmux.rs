@@ -1,4 +1,4 @@
-use crate::{gob::Progress, Session, Sidebar, Snapshot, Window};
+use crate::{Session, Sidebar, Snapshot, Window};
 use std::{
     collections::BTreeMap,
     process::{Command, Stdio},
@@ -1010,7 +1010,7 @@ impl<T: Tmux> Application<T> {
                         "gob id={:?} name={:?} progress={:?}\n",
                         job.id,
                         job.name,
-                        job.progress(OffsetDateTime::now_utc()).map(Progress::phase)
+                        job.progress(OffsetDateTime::now_utc())
                     ));
                 }
                 gob_jobs = jobs;

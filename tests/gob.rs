@@ -67,8 +67,9 @@ fn gob_jobs_show_running_dots_and_progress_only_with_an_estimate() {
     let progress = visible_row(rendered.split("#[nl]").nth(5).unwrap());
     assert_eq!(progress.chars().count(), 40, "{rendered}");
     assert!(progress.starts_with("    █"), "{rendered}");
-    assert!(progress.ends_with("  ~5s  "), "{rendered}");
-    assert!(!progress.contains('┄'), "{rendered}");
+    assert!(progress.ends_with("   5s / ~10s  "), "{rendered}");
+    assert!(!rendered.contains("fg=yellow"), "{rendered}");
+    assert!(rendered.contains("#[dim]5s / ~10s"), "{rendered}");
     assert!(!rendered.contains("#[range=user|evil]#{pane_id}"));
     assert_eq!(rendered.matches("●").count(), 2);
     assert_eq!(rendered.matches("#[nl]").count(), 7);
@@ -80,41 +81,60 @@ fn gob_jobs_show_running_dots_and_progress_only_with_an_estimate() {
 }
 
 #[test]
-fn gob_progress_shows_typical_run_and_dashed_tail_with_remaining_time() {
+fn gob_progress_fills_past_the_typical_duration_in_overdue_style() {
     let sidebar = Sidebar::from_toml("modules = [\"gob\"]").unwrap();
-    let (visible, row) = progress_row(&sidebar, 31, &job(525_000, 1_000_000, 2_000_000));
-    assert_eq!(visible, "    █████▎    ┄┄┄┄┄┄┄┄┄┄  ~8m  ", "{row}");
-    assert!(row.contains("#[fg=green,bg=colour238]█████▎"), "{row}");
-    assert!(row.contains("#[bg=colour238]    "), "{row}");
+    let (visible, row) = progress_row(&sidebar, 40, &job(64_000, 20_000, 140_000));
+    assert_eq!(visible, "    █████████▏             1m4s / ~20s  ", "{row}");
     assert!(
-        row.contains("#[fg=colour238,bg=default]┄┄┄┄┄┄┄┄┄┄"),
+        row.contains(
+            "#[fg=green,bg=colour238]███#[fg=yellow,bg=colour238]██████▏#[bg=colour238]          "
+        ),
         "{row}"
     );
+    assert!(row.contains("#[dim]1m4s / ~20s"), "{row}");
 }
 
 #[test]
-fn gob_progress_past_typical_fills_the_tail_and_shows_time_within_the_upper_bound() {
+fn gob_progress_past_the_upper_bound_is_full_with_an_overdue_label() {
     let sidebar = Sidebar::from_toml("modules = [\"gob\"]").unwrap();
-    let (visible, row) = progress_row(&sidebar, 31, &job(1_500_000, 1_000_000, 2_000_000));
-    assert_eq!(visible, "    ███████████████┄┄┄┄┄  <9m  ", "{row}");
+    let (visible, row) = progress_row(&sidebar, 40, &job(2_090_000, 1_000_000, 2_000_000));
+    assert_eq!(visible, "    █████████████████ 34m50s / ~16m40s  ", "{row}");
     assert!(
-        row.contains("#[fg=green,bg=colour238]██████████#[fg=green,bg=default]█████"),
+        row.contains("#[fg=green,bg=colour238]█████████#[fg=yellow,bg=colour238]████████"),
         "{row}"
     );
+    assert!(row.contains("#[fg=yellow]34m50s / ~16m40s"), "{row}");
+
+    let custom = Sidebar::from_toml(
+        "modules = [\"gob\"]\n[gob]\noverdue_style = \"fg=red\"\nlabel_style = \"fg=blue\"",
+    )
+    .unwrap();
+    let (_, row) = progress_row(&custom, 40, &job(2_090_000, 1_000_000, 2_000_000));
+    assert!(row.contains("#[fg=red]34m50s"), "{row}");
+    let (_, row) = progress_row(&custom, 40, &job(64_000, 20_000, 140_000));
+    assert!(row.contains("#[fg=blue]1m4s"), "{row}");
 }
 
 #[test]
-fn gob_progress_past_the_upper_bound_shows_overdue_style_and_overrun() {
+fn gob_label_formats_durations_and_keeps_the_bar_length_within_a_magnitude() {
     let sidebar = Sidebar::from_toml("modules = [\"gob\"]").unwrap();
-    let (visible, row) = progress_row(&sidebar, 31, &job(2_090_000, 1_000_000, 2_000_000));
-    assert_eq!(visible, "    ████████████████████  +2m  ", "{row}");
-    assert!(row.contains("#[fg=yellow,bg=default]+2m"), "{row}");
-    assert!(!row.contains("fg=green"), "{row}");
-
-    let custom =
-        Sidebar::from_toml("modules = [\"gob\"]\n[gob]\noverdue_style = \"fg=red\"").unwrap();
-    let (_, row) = progress_row(&custom, 31, &job(2_090_000, 1_000_000, 2_000_000));
-    assert!(row.contains("fg=red"), "{row}");
+    let label = |elapsed_ms| progress_row(&sidebar, 40, &job(elapsed_ms, 7_200_000, 7_200_000)).0;
+    for (elapsed_ms, expected) in [
+        (500, "<1s / ~2h  "),
+        (59_000, "59s / ~2h  "),
+        (64_000, "1m4s / ~2h  "),
+        (120_000, "2m / ~2h  "),
+        (3_900_000, "1h5m / ~2h  "),
+    ] {
+        assert!(
+            label(elapsed_ms).ends_with(expected),
+            "{}",
+            label(elapsed_ms)
+        );
+    }
+    let slash = |elapsed_ms| label(elapsed_ms).chars().position(|c| c == '/');
+    assert_eq!(slash(10_000), slash(59_000));
+    assert_eq!(slash(64_000), slash(120_000));
 }
 
 #[test]
@@ -122,17 +142,18 @@ fn gob_track_resizes_and_starts_empty() {
     let sidebar = Sidebar::from_toml("modules = [\"gob\"]").unwrap();
     let overdue = job(29_500, 10_000, 10_000);
     for (width, expected) in [
-        (12, "    █ +20s  "),
-        (8, "█ +20s  "),
-        (5, "█+20s"),
-        (3, "+20"),
+        (40, "    ███████████████████████ 29s / ~10s  "),
+        (12, "    ██ 29s  "),
+        (8, " █ 29s  "),
+        (5, "29s  "),
+        (3, "29s"),
     ] {
         assert_eq!(progress_row(&sidebar, width, &overdue).0, expected);
     }
 
     let waiting = job(-10_000, 10_000, 10_000);
     let (visible, row) = progress_row(&sidebar, 8, &waiting);
-    assert_eq!(visible, "  ~10s  ");
+    assert_eq!(visible, "   <1s  ");
     assert!(row.contains("#[bg=colour238]"));
 
     let empty = sidebar
@@ -156,13 +177,14 @@ fn gob_is_optional_and_its_styles_and_variables_are_validated() {
         "[gob]\nrunning_style = \"fg=#[bad]\"",
         "[gob]\nbar_track_color = \"invalid\"",
         "[gob]\noverdue_style = \"fg=#[bad]\"",
+        "[gob]\nlabel_style = \"fg=#[bad]\"",
     ] {
         assert!(Sidebar::from_toml(text).is_err(), "accepted {text}");
     }
 }
 
 #[test]
-fn slim_gob_gauge_fills_to_typical_and_turns_overdue_past_the_upper_bound() {
+fn slim_gob_gauge_fills_to_typical_and_turns_overdue_past_it() {
     let sidebar = Sidebar::from_toml("modules = [\"gob\"]").unwrap();
     let gauge = |job: GobJob| {
         let rendered = sidebar
@@ -175,6 +197,6 @@ fn slim_gob_gauge_fills_to_typical_and_turns_overdue_past_the_upper_bound() {
             .to_owned()
     };
     assert!(gauge(job(5_000, 10_000, 20_000)).contains("#[fg=green]↳▄"));
-    assert!(gauge(job(15_000, 10_000, 20_000)).contains("#[fg=green]↳█"));
+    assert!(gauge(job(15_000, 10_000, 20_000)).contains("#[fg=yellow]↳█"));
     assert!(gauge(job(25_000, 10_000, 20_000)).contains("#[fg=yellow]↳█"));
 }

@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Show Gob job progress against the typical run duration with a dashed range where 90% of runs finish, the time left, and an `overdue_style` color for jobs running longer than usual. Requires a gob version that reports expected durations.
+- Show Gob job progress like gob's own progress bar: elapsed and typical time such as `1m4s / ~20s`.
 
 ## [0.8.0] - 2026-10-06
 

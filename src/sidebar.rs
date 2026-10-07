@@ -240,6 +240,7 @@ struct GobConfig {
     running_style: String,
     progress_style: String,
     overdue_style: String,
+    label_style: String,
     bar_track_color: String,
 }
 
@@ -385,6 +386,7 @@ impl Default for GobConfig {
             running_style: "fg=green".into(),
             progress_style: "fg=green".into(),
             overdue_style: "fg=yellow".into(),
+            label_style: "dim".into(),
             bar_track_color: "colour238".into(),
         }
     }
@@ -851,6 +853,7 @@ impl Sidebar {
             &config.gob.running_style,
             &config.gob.progress_style,
             &config.gob.overdue_style,
+            &config.gob.label_style,
             &config.git.branch_style,
             &config.git.upstream_style,
             &config.git.divergence_style,
@@ -2113,19 +2116,28 @@ impl Sidebar {
         width: usize,
     ) -> Result<Vec<Span>, String> {
         const EIGHTHS: [char; 8] = ['▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
-        let phase = progress.phase();
-        let style = if matches!(phase, crate::gob::Phase::Overdue { .. }) {
-            &self.config.gob.overdue_style
+        let gob = &self.config.gob;
+        let typical_fill = foreground(&resolve_style(
+            &gob.progress_style,
+            "default",
+            &self.palette,
+        )?);
+        let overdue = resolve_style(&gob.overdue_style, "default", &self.palette)?;
+        let overdue_fill = foreground(&overdue);
+        let track = resolve_color(&gob.bar_track_color, &self.palette)?;
+        let elapsed_width = if progress.elapsed < std::time::Duration::from_secs(60) {
+            3
         } else {
-            &self.config.gob.progress_style
+            6
         };
-        let fill = foreground(&resolve_style(style, "default", &self.palette)?);
-        let track = resolve_color(&self.config.gob.bar_track_color, &self.palette)?;
-        let label = format!("{:>4}", gob_label(phase));
-        let right_pad = if width >= label.len() + 2 { 2 } else { 0 };
-        let gap = usize::from(width > label.len() + right_pad + 1);
-        let indent = 4.min(width.saturating_sub(label.len() + right_pad + gap + 1));
-        let length = width.saturating_sub(indent + gap + label.len() + right_pad);
+        let elapsed = format!("{:>elapsed_width$}", gob_duration(progress.elapsed));
+        let full = format!("{elapsed} / ~{}", gob_duration(progress.typical));
+        let label = if gob_bar_layout(full.len(), width).2 >= 4 {
+            full
+        } else {
+            elapsed
+        };
+        let (indent, gap, length, right_pad) = gob_bar_layout(label.len(), width);
         let ratio = |part: std::time::Duration| part.as_secs_f64() / progress.upper.as_secs_f64();
         let boundary = if progress.upper > progress.typical && length >= 2 {
             ((ratio(progress.typical) * length as f64).round() as usize).clamp(1, length - 1)
@@ -2140,20 +2152,16 @@ impl Sidebar {
         }];
         for cell in 0..length {
             let level = eighths.saturating_sub(cell * 8).min(8);
-            let background = if cell < boundary {
-                track.as_str()
+            let fill = if cell < boundary {
+                &typical_fill
             } else {
-                "default"
+                &overdue_fill
             };
-            let (glyph, foreground) = match (level, cell < boundary) {
-                (0, true) => (' ', ""),
-                (0, false) => ('┄', track.as_str()),
-                _ => (EIGHTHS[level - 1], fill.as_str()),
-            };
-            let style = match (foreground, glyph) {
-                ("", _) => format!("bg={background}"),
-                (color, '┄') => format!("fg={color},bg={background}"),
-                (fill, _) => format!("{fill},bg={background}"),
+            let glyph = level.checked_sub(1).map_or(' ', |index| EIGHTHS[index]);
+            let style = if level == 0 || fill.is_empty() {
+                format!("bg={track}")
+            } else {
+                format!("{fill},bg={track}")
             };
             spans.push(Span {
                 text: glyph.to_string(),
@@ -2165,9 +2173,10 @@ impl Sidebar {
             text: " ".repeat(gap + label.len() - text.len()),
             style: "default".into(),
         });
-        let label_style = match (phase, fill.is_empty()) {
-            (crate::gob::Phase::Overdue { .. }, false) => format!("{fill},bg=default"),
-            _ => "default".into(),
+        let label_style = if progress.elapsed >= progress.upper {
+            overdue
+        } else {
+            resolve_style(&gob.label_style, "default", &self.palette)?
         };
         spans.push(Span {
             text: text.into(),
@@ -2763,25 +2772,25 @@ fn foreground(style: &str) -> String {
         .join(",")
 }
 
-fn gob_label(phase: crate::gob::Phase) -> String {
-    let (prefix, duration) = match phase {
-        crate::gob::Phase::Typical { remaining } => ('~', remaining),
-        crate::gob::Phase::Tail { remaining } => ('<', remaining),
-        crate::gob::Phase::Overdue { over } => ('+', over),
-    };
-    let seconds = duration.as_millis().div_ceil(1000).max(1);
-    let minutes = seconds.div_ceil(60);
-    let hours = seconds.div_ceil(3600);
-    let text = if seconds < 60 {
-        format!("{seconds}s")
-    } else if minutes < 60 {
-        format!("{minutes}m")
-    } else if hours < 100 {
-        format!("{hours}h")
-    } else {
-        format!("{}d", seconds.div_ceil(86_400).min(99))
-    };
-    format!("{prefix}{text}")
+fn gob_bar_layout(label: usize, width: usize) -> (usize, usize, usize, usize) {
+    let right_pad = if width >= label + 2 { 2 } else { 0 };
+    let gap = usize::from(width > label + right_pad + 1);
+    let indent = 4.min(width.saturating_sub(label + right_pad + gap + 1));
+    let length = width.saturating_sub(indent + gap + label + right_pad);
+    (indent, gap, length, right_pad)
+}
+
+fn gob_duration(duration: std::time::Duration) -> String {
+    let seconds = duration.as_secs();
+    let (hours, minutes) = (seconds / 3600, seconds / 60 % 60);
+    match seconds {
+        0 => "<1s".into(),
+        1..=59 => format!("{seconds}s"),
+        60..=3599 if seconds.is_multiple_of(60) => format!("{minutes}m"),
+        60..=3599 => format!("{minutes}m{}s", seconds % 60),
+        _ if minutes == 0 => format!("{hours}h"),
+        _ => format!("{hours}h{minutes}m"),
+    }
 }
 
 fn shade_usage_bar(values: &mut BTreeMap<&str, Value>, color: &str, track: &str, normal: &str) {

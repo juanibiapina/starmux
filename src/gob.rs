@@ -26,13 +26,6 @@ pub(crate) struct Progress {
     pub(crate) upper: Duration,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Phase {
-    Typical { remaining: Duration },
-    Tail { remaining: Duration },
-    Overdue { over: Duration },
-}
-
 impl GobJob {
     pub(crate) fn progress(&self, now: OffsetDateTime) -> Option<Progress> {
         let started = self.started_at?;
@@ -48,24 +41,6 @@ impl GobJob {
                     .max(self.expected_duration_ms),
             ),
         })
-    }
-}
-
-impl Progress {
-    pub(crate) fn phase(self) -> Phase {
-        if self.elapsed >= self.upper {
-            Phase::Overdue {
-                over: self.elapsed - self.upper,
-            }
-        } else if self.elapsed >= self.typical {
-            Phase::Tail {
-                remaining: self.upper - self.elapsed,
-            }
-        } else {
-            Phase::Typical {
-                remaining: self.typical - self.elapsed,
-            }
-        }
     }
 }
 
