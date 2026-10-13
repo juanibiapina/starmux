@@ -247,6 +247,7 @@ fn folded_scroll_bounds_follow_content_without_changing_expansion() {
                     context: None,
                     commands: &commands,
                     git: None,
+                    gitbutler: None,
                     debug: None,
                 },
                 offset,
@@ -318,6 +319,7 @@ fn scrolling_pages_through_all_modules_and_clamps_after_resize() {
                     context: None,
                     commands: &BTreeMap::new(),
                     git: None,
+                    gitbutler: None,
                     debug: None,
                 },
                 offset,
@@ -863,6 +865,7 @@ fn collapsed_dividers_keep_bottom_alignment_and_scroll_bounds() {
                 context: None,
                 commands: &BTreeMap::new(),
                 git: None,
+                gitbutler: None,
                 debug: None,
             },
             usize::MAX,
@@ -895,6 +898,7 @@ fn command_output_separates_dividers_in_a_named_list() {
                 context: None,
                 commands: &commands,
                 git: None,
+                gitbutler: None,
                 debug: None,
             },
         )
@@ -1558,6 +1562,7 @@ fn pi_context_names_the_selected_session_above_its_entries() {
                     context,
                     commands: &BTreeMap::new(),
                     git: None,
+                    gitbutler: None,
                     debug: None,
                 },
             )
@@ -1599,6 +1604,7 @@ fn pi_context_names_the_selected_session_above_its_entries() {
                     context: Some(&context),
                     commands: &BTreeMap::new(),
                     git: None,
+                    gitbutler: None,
                     debug: None,
                 },
             )
@@ -1642,6 +1648,7 @@ fn pi_context_pr_state_icons_use_distinct_styles() {
                     context: Some(&context),
                     commands: &BTreeMap::new(),
                     git: None,
+                    gitbutler: None,
                     debug: None,
                 },
             )
@@ -1689,6 +1696,7 @@ fn pi_context_shows_build_state_on_pull_requests_and_lists_other_builds() {
                 context: Some(&context),
                 commands: &BTreeMap::new(),
                 git: None,
+                gitbutler: None,
                 debug: None,
             },
         )
@@ -1749,6 +1757,7 @@ fn pi_context_icons_and_clipping_work_at_narrow_widths() {
                     context: Some(&context),
                     commands: &BTreeMap::new(),
                     git: None,
+                    gitbutler: None,
                     debug: None,
                 },
             )
@@ -1807,6 +1816,7 @@ fn pi_context_icons_and_clipping_work_at_narrow_widths() {
                 context: Some(&long),
                 commands: &BTreeMap::new(),
                 git: None,
+                gitbutler: None,
                 debug: None,
             },
         )
@@ -1842,6 +1852,7 @@ fn named_commands_keep_order_and_render_only_validated_styles() {
                 context: None,
                 commands: &commands,
                 git: None,
+                gitbutler: None,
                 debug: None,
             },
         )
@@ -1882,6 +1893,45 @@ fn command_instances_require_exact_valid_references() {
 }
 
 #[test]
+fn git_hides_configured_branches_in_full_and_slim_layouts() {
+    let render = |branch: &str, width: usize| {
+        let status = starmux::GitStatus {
+            branch: branch.into(),
+            ..Default::default()
+        };
+        let mut state = snapshot();
+        state.width = width;
+        Sidebar::from_toml("modules = [\"git\"]\n[git]\nhide_branches = [\"gitbutler/workspace\"]")
+            .unwrap()
+            .render_with_inputs(
+                &state,
+                starmux::RenderInputs {
+                    top: None,
+                    pi_sessions: &[],
+                    usage_rows: &[],
+                    gob_jobs: &[],
+                    context: None,
+                    commands: &BTreeMap::new(),
+                    git: Some(&status),
+                    gitbutler: None,
+                    debug: None,
+                },
+            )
+            .unwrap()
+    };
+    for width in [2, 30] {
+        assert!(render("main", width).contains("#[range=user|"), "{width}");
+        assert!(
+            !render("gitbutler/workspace", width).contains("#[range=user|"),
+            "{width}"
+        );
+    }
+    assert!(render("main", 30).contains("main"));
+    assert!(!render("gitbutler/workspace", 30).contains("gitbutler"));
+    assert!(Sidebar::from_toml("[git]\nhide_branches = [\"\"]").is_err());
+}
+
+#[test]
 fn git_lines_can_hide_upstream_or_put_it_on_its_own_row() {
     let status = starmux::GitStatus {
         branch: "main#[fg=red]".into(),
@@ -1906,6 +1956,7 @@ fn git_lines_can_hide_upstream_or_put_it_on_its_own_row() {
                     context: None,
                     commands: &BTreeMap::new(),
                     git: Some(&status),
+                    gitbutler: None,
                     debug: None,
                 },
             )
@@ -1930,7 +1981,7 @@ fn debug_rows_follow_order_and_clip_without_click_targets() {
     )
     .unwrap();
     let diagnostics = starmux::Diagnostics {
-        stages: [1200, 0, 0, 250, 0, 0, 100, 50, 0],
+        stages: [1200, 0, 0, 250, 0, 0, 100, 50, 0, 0],
     };
     let input = snapshot();
     let render = || {
@@ -1945,6 +1996,7 @@ fn debug_rows_follow_order_and_clip_without_click_targets() {
                     context: None,
                     commands: &BTreeMap::new(),
                     git: None,
+                    gitbutler: None,
                     debug: Some(&diagnostics),
                 },
             )
@@ -1971,6 +2023,7 @@ fn debug_rows_follow_order_and_clip_without_click_targets() {
                 context: None,
                 commands: &BTreeMap::new(),
                 git: None,
+                gitbutler: None,
                 debug: Some(&diagnostics),
             },
         )
@@ -2041,7 +2094,7 @@ providers = ["codex"]
         ..Default::default()
     };
     let debug = starmux::Diagnostics {
-        stages: [1000, 0, 0, 0, 0, 0, 0, 0, 0],
+        stages: [1000, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     };
     let commands = BTreeMap::from([("command.example".into(), "hello".into())]);
     let render = |sidebar: &Sidebar| {
@@ -2056,6 +2109,7 @@ providers = ["codex"]
                     context: Some(&context),
                     commands: &commands,
                     git: Some(&git),
+                    gitbutler: None,
                     debug: Some(&debug),
                 },
             )
@@ -2162,6 +2216,7 @@ argv = ["status"]
                     context: None,
                     commands: &commands,
                     git: None,
+                    gitbutler: None,
                     debug: None,
                 },
             )
@@ -2327,6 +2382,7 @@ fn slim_configuration_validates_every_list_and_command_glyph() {
                 context: None,
                 commands: &commands,
                 git: None,
+                gitbutler: None,
                 debug: None,
             },
         )

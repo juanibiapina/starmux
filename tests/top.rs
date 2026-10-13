@@ -61,6 +61,7 @@ fn render(sidebar: &Sidebar, status: Option<&HostStatus>, width: usize) -> Strin
                 context: None,
                 commands: &BTreeMap::new(),
                 git: None,
+                gitbutler: None,
                 debug: None,
             },
         )

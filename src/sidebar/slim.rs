@@ -15,6 +15,7 @@ impl Sidebar {
         if module == "git" && !self.config.git.disabled {
             return input
                 .git
+                .filter(|status| self.git_visible(status))
                 .map_or_else(|| Ok(Vec::new()), |status| self.slim_git(status));
         }
         let mut pi = if module == "pi-workbench" {
@@ -46,7 +47,8 @@ impl Sidebar {
             if matches!(
                 kind,
                 "skill" | "heading" | "category" | "project" | "cache-age" | "stage"
-            ) {
+            ) || (module == "gitbutler" && matches!(kind, "commit" | "more"))
+            {
                 continue;
             }
             match module {
@@ -60,6 +62,7 @@ impl Sidebar {
                 "usage" => self.slim_usage(&mut row, input.usage_rows, &mut windows)?,
                 "top" => self.slim_metric(&mut row, input.top)?,
                 "gob" => self.slim_job(&mut row, input.gob_jobs)?,
+                "gitbutler" => self.slim_gitbutler(&mut row, input.gitbutler)?,
                 "debug" => self.slim_text(
                     &mut row,
                     if input.debug.is_some() {
@@ -335,6 +338,48 @@ impl Sidebar {
                 style: resolve_style(&self.config.gob.running_style, "default", &self.palette)?,
             }];
         }
+        Ok(())
+    }
+
+    fn slim_gitbutler(
+        &self,
+        row: &mut Row,
+        status: Option<&crate::GitButlerStatus>,
+    ) -> Result<(), String> {
+        let cfg = &self.config.gitbutler;
+        if row.identity.get("kind") == "unassigned" {
+            row.spans = vec![Span {
+                text: "◆·".into(),
+                style: resolve_style(&cfg.changes_style, "default", &self.palette)?,
+            }];
+            return Ok(());
+        }
+        let Some(branch) = status.and_then(|status| {
+            status
+                .branches
+                .iter()
+                .find(|branch| branch.name == row.identity.get("branch"))
+        }) else {
+            return Ok(());
+        };
+        let (push, push_style) = gitbutler_push(cfg, branch.push);
+        let (second, second_style) = match (branch.conflicted, branch.ci) {
+            (true, _) => ("⚠", &cfg.conflicts_style),
+            (false, Some(crate::BuildState::Success)) => ("✓", &cfg.ci_success_style),
+            (false, Some(crate::BuildState::Failure)) => ("✗", &cfg.ci_failure_style),
+            (false, Some(crate::BuildState::Pending)) => ("●", &cfg.ci_pending_style),
+            (false, None) => ("·", &cfg.count_style),
+        };
+        row.spans = vec![
+            Span {
+                text: push.into(),
+                style: resolve_style(push_style, "default", &self.palette)?,
+            },
+            Span {
+                text: second.into(),
+                style: resolve_style(second_style, "default", &self.palette)?,
+            },
+        ];
         Ok(())
     }
 

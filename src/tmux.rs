@@ -785,6 +785,14 @@ impl<T: Tmux> Application<T> {
             diagnostics.stages[6] =
                 (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
         }
+        let gitbutler = events
+            .result("gitbutler", self.gitbutler_status(&snapshot))
+            .ok()
+            .flatten();
+        if self.sidebar.gitbutler_enabled() {
+            diagnostics.stages[9] =
+                (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
+        }
         let top = self.sidebar.top_enabled().then(|| {
             self.sidebar
                 .cache_dir("top")
@@ -806,6 +814,7 @@ impl<T: Tmux> Application<T> {
                 context: context.as_ref(),
                 commands: &commands,
                 git: git.as_ref(),
+                gitbutler: gitbutler.as_ref(),
                 debug: previous,
             },
             offset,
@@ -917,6 +926,46 @@ impl<T: Tmux> Application<T> {
         crate::git::query(std::path::Path::new(&snapshot.pane_path))
     }
 
+    fn explain_repository(
+        &self,
+        snapshot: &Snapshot,
+        result: &mut String,
+    ) -> (Option<crate::GitStatus>, Option<crate::GitButlerStatus>) {
+        let mut git = None;
+        if self.sidebar.git_enabled() {
+            match self.git_status(snapshot) {
+                Ok(Some(status)) => {
+                    result.push_str(&format!("git {status:?}\n"));
+                    git = Some(status);
+                }
+                Ok(None) => result.push_str("git: outside repository\n"),
+                Err(error) => result.push_str(&format!("git: {error}\n")),
+            }
+        }
+        let mut gitbutler = None;
+        if self.sidebar.gitbutler_enabled() {
+            match self.gitbutler_status(snapshot) {
+                Ok(Some(status)) => {
+                    result.push_str(&format!("gitbutler {status:?}\n"));
+                    gitbutler = Some(status);
+                }
+                Ok(None) => result.push_str("gitbutler: outside workspace\n"),
+                Err(error) => result.push_str(&format!("gitbutler: {error}\n")),
+            }
+        }
+        (git, gitbutler)
+    }
+
+    fn gitbutler_status(
+        &self,
+        snapshot: &Snapshot,
+    ) -> Result<Option<crate::GitButlerStatus>, String> {
+        if !self.sidebar.gitbutler_enabled() {
+            return Ok(None);
+        }
+        crate::gitbutler::query(std::path::Path::new(&snapshot.pane_path))
+    }
+
     fn gob_jobs(&self, snapshot: &Snapshot) -> Result<Vec<crate::GobJob>, String> {
         if !self.sidebar.gob_enabled() {
             return Ok(Vec::new());
@@ -1010,17 +1059,7 @@ impl<T: Tmux> Application<T> {
             }
             Err(error) => result.push_str(&format!("gob: {error}\n")),
         }
-        let mut git = None;
-        if self.sidebar.git_enabled() {
-            match self.git_status(&snapshot) {
-                Ok(Some(status)) => {
-                    result.push_str(&format!("git {status:?}\n"));
-                    git = Some(status);
-                }
-                Ok(None) => result.push_str("git: outside repository\n"),
-                Err(error) => result.push_str(&format!("git: {error}\n")),
-            }
-        }
+        let (git, gitbutler) = self.explain_repository(&snapshot, &mut result);
         let (commands, errors) = self.commands(&snapshot);
         for (name, output) in &commands {
             result.push_str(&format!("{name} output={output:?}\n"));
@@ -1053,6 +1092,7 @@ impl<T: Tmux> Application<T> {
                 context: context.as_ref(),
                 commands: &commands,
                 git: git.as_ref(),
+                gitbutler: gitbutler.as_ref(),
                 debug: debug.as_ref(),
             },
         )? {
@@ -1225,6 +1265,13 @@ impl<T: Tmux> Application<T> {
         } else {
             None
         };
+        let gitbutler = if module == "gitbutler" {
+            self.gitbutler_status(&snapshot)?
+        } else if structural {
+            self.gitbutler_status(&snapshot).ok().flatten()
+        } else {
+            None
+        };
         let commands = self
             .sidebar
             .module_names()
@@ -1254,6 +1301,7 @@ impl<T: Tmux> Application<T> {
                 context: context.as_ref(),
                 commands: &commands,
                 git: git.as_ref(),
+                gitbutler: gitbutler.as_ref(),
                 debug: debug.as_ref(),
             },
             (token, socket, client),

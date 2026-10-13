@@ -5,6 +5,8 @@
 ### Added
 
 - Show build status of the selected Pi session's pull requests and pushed branches from pi-workbench. Click a build to open its checks on GitHub.
+- Add a `gitbutler` module that shows a GitButler workspace: its base commit, unassigned changes, and applied branches with their recent commits and push, CI, review, and conflict state.
+- Hide the `git` module on selected branches with `[git].hide_branches`.
 
 ## [0.8.0] - 2026-10-06
 

@@ -78,6 +78,25 @@ deleted_style = "fg=danger"
 clean_style = "fg=green,bold"
 state_style = "fg=danger,bold"
 
+[gitbutler]
+heading_style = "fg=text,bold"
+branch_style = "fg=text,bold"
+count_style = "fg=muted"
+id_style = "fg=muted"
+message_style = "fg=text"
+changes_style = "fg=danger"
+behind_style = "fg=accent"
+review_style = "fg=accent"
+pushed_style = "fg=green"
+unpushed_style = "fg=warning"
+force_style = "fg=danger"
+local_style = "fg=muted"
+integrated_style = "fg=accent"
+ci_success_style = "fg=green"
+ci_failure_style = "fg=danger"
+ci_pending_style = "fg=warning"
+conflicts_style = "fg=danger,bold"
+
 [debug]
 style = "fg=muted"
 "#;

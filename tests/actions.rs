@@ -1,9 +1,9 @@
 use starmux::pr_state::PrState;
 use starmux::usage::{RefreshFailure, UsageRow, UsageWindow};
 use starmux::{
-    Application, BuildState, Diagnostics, GitStatus, GobJob, Pane, PiBuild, PiContext, PiPlan,
-    PiPullRequest, PiSession, PiSkill, PiTarget, ProcessTmux, RenderInputs, Session, Sidebar,
-    Snapshot, Tmux, Window,
+    Application, BuildState, Diagnostics, GitButlerBranch, GitButlerStatus, GitStatus, GobJob,
+    Pane, PiBuild, PiContext, PiPlan, PiPullRequest, PiSession, PiSkill, PiTarget, ProcessTmux,
+    PushStatus, RenderInputs, Session, Sidebar, Snapshot, Tmux, Window,
 };
 use std::{collections::BTreeMap, path::Path, sync::Mutex};
 
@@ -44,6 +44,7 @@ struct Fixture {
     context: PiContext,
     commands: BTreeMap<String, String>,
     git: GitStatus,
+    gitbutler: GitButlerStatus,
     debug: Diagnostics,
 }
 impl Fixture {
@@ -109,7 +110,22 @@ impl Fixture {
                 branch: "main".into(),
                 ..GitStatus::default()
             },
-            debug: Diagnostics { stages: [10; 9] },
+            gitbutler: GitButlerStatus {
+                branches: vec![GitButlerBranch {
+                    name: "feature".into(),
+                    depth: 0,
+                    commits: 1,
+                    recent_commits: Vec::new(),
+                    upstream_commits: 0,
+                    changes: 0,
+                    push: PushStatus::Unpushed,
+                    conflicted: false,
+                    review: Some("7".into()),
+                    ci: None,
+                }],
+                ..GitButlerStatus::default()
+            },
+            debug: Diagnostics { stages: [10; 10] },
         }
     }
     fn input(&self) -> RenderInputs<'_> {
@@ -121,12 +137,13 @@ impl Fixture {
             context: Some(&self.context),
             commands: &self.commands,
             git: Some(&self.git),
+            gitbutler: Some(&self.gitbutler),
             debug: Some(&self.debug),
         }
     }
 }
 const MODULE_CONFIG: &str = r#"
-modules = ["top", "sessions", "pi-workbench", "usage", "gob", "pi-context", "git", "command.test", "debug", "divider", "blank", "divider", "blank", "spacer"]
+modules = ["top", "sessions", "pi-workbench", "usage", "gob", "pi-context", "git", "gitbutler", "command.test", "debug", "divider", "blank", "divider", "blank", "spacer"]
 [commands.test]
 argv = ["echo", "healthy"]
 [debug]
@@ -429,8 +446,8 @@ fn slim_modules_show_source_items_and_keep_individual_actions() {
     let output = sidebar.render_with_inputs(&state, fixture.input()).unwrap();
     let rows = visible_rows(&output);
     let expected = vec![
-        "󰻠󰋗", "󰍛󰋗", "󰁹󰋗", "󰆍●", "○●", "◔", "▶", "↳░", "◇ ", " ", "✓ ", "✓·", " ", "◷ ", "--",
-        "  ", "--",
+        "󰻠󰋗", "󰍛󰋗", "󰁹󰋗", "󰆍●", "○●", "◔", "▶", "↳░", "◇ ", " ", "✓ ", "✓·", "↑·", " ", "◷ ",
+        "--", "  ", "--",
     ];
     assert_eq!(rows[..expected.len()], expected, "{output}");
     assert!(rows

@@ -67,6 +67,7 @@ struct Config {
     usage: UsageConfig,
     gob: GobConfig,
     git: GitConfig,
+    gitbutler: GitButlerConfig,
     debug: DebugConfig,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     commands: BTreeMap<String, CommandConfig>,
@@ -197,6 +198,7 @@ impl Default for PiContextConfig {
 #[serde(default, deny_unknown_fields)]
 struct GitConfig {
     disabled: bool,
+    hide_branches: Vec<String>,
     lines: Vec<String>,
     branch_style: String,
     upstream_style: String,
@@ -216,6 +218,7 @@ impl Default for GitConfig {
     fn default() -> Self {
         Self {
             disabled: false,
+            hide_branches: Vec::new(),
             lines: vec![
                 " $branch( $upstream)( $divergence)".into(),
                 " ( $conflicts)( $staged)( $modified)( $untracked)( $stash)( $added)( $deleted)( $clean)".into(),
@@ -233,6 +236,64 @@ impl Default for GitConfig {
             deleted_style: "fg=red".into(),
             clean_style: "fg=green".into(),
             state_style: "fg=red,bold".into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+struct GitButlerConfig {
+    disabled: bool,
+    heading_format: String,
+    unassigned_format: String,
+    format: String,
+    commit_format: String,
+    max_commits: usize,
+    heading_style: String,
+    branch_style: String,
+    count_style: String,
+    id_style: String,
+    message_style: String,
+    changes_style: String,
+    behind_style: String,
+    review_style: String,
+    pushed_style: String,
+    unpushed_style: String,
+    force_style: String,
+    local_style: String,
+    integrated_style: String,
+    ci_success_style: String,
+    ci_failure_style: String,
+    ci_pending_style: String,
+    conflicts_style: String,
+}
+
+impl Default for GitButlerConfig {
+    fn default() -> Self {
+        Self {
+            disabled: false,
+            heading_format: " 󰜘( $id)( $message)( $behind)( $conflicts)".into(),
+            unassigned_format: "  ◆ $count unassigned".into(),
+            format: "  $tree$push $name( $commits)( $changes)( $review)( $ci)( $conflicted)".into(),
+            commit_format: "    $marker $message".into(),
+            max_commits: 3,
+            heading_style: "bold".into(),
+            branch_style: "bold".into(),
+            count_style: "dim".into(),
+            id_style: "dim".into(),
+            message_style: "default".into(),
+            changes_style: "fg=red".into(),
+            behind_style: "fg=cyan".into(),
+            review_style: "fg=cyan".into(),
+            pushed_style: "fg=green".into(),
+            unpushed_style: "fg=yellow".into(),
+            force_style: "fg=red".into(),
+            local_style: "fg=brightblack".into(),
+            integrated_style: "fg=magenta".into(),
+            ci_success_style: "fg=green".into(),
+            ci_failure_style: "fg=red".into(),
+            ci_pending_style: "fg=yellow".into(),
+            conflicts_style: "fg=red,bold".into(),
         }
     }
 }
@@ -376,6 +437,7 @@ impl Default for Config {
             usage: UsageConfig::default(),
             gob: GobConfig::default(),
             git: GitConfig::default(),
+            gitbutler: GitButlerConfig::default(),
             debug: DebugConfig::default(),
             commands: BTreeMap::new(),
             pi_context: PiContextConfig::default(),
@@ -515,6 +577,7 @@ pub struct RenderInputs<'a> {
     pub context: Option<&'a crate::PiContext>,
     pub commands: &'a BTreeMap<String, String>,
     pub git: Option<&'a crate::GitStatus>,
+    pub gitbutler: Option<&'a crate::GitButlerStatus>,
     pub debug: Option<&'a crate::debug::Diagnostics>,
 }
 
@@ -529,6 +592,10 @@ pub struct Sidebar {
     usage_format: Vec<Node>,
     gob_format: Vec<Node>,
     git_lines: Vec<Vec<Node>>,
+    gitbutler_heading: Vec<Node>,
+    gitbutler_unassigned: Vec<Node>,
+    gitbutler_format: Vec<Node>,
+    gitbutler_commit: Vec<Node>,
     actions: crate::actions::Actions,
 }
 
@@ -600,6 +667,7 @@ impl Sidebar {
             "usage",
             "gob",
             "git",
+            "gitbutler",
             "debug",
             "pi-context",
             "spacer",
@@ -724,6 +792,47 @@ impl Sidebar {
         validate_format(&pi_workbench_format, &["name", "state"], &palette)?;
         let gob_format = Parser::parse(&config.gob.format)?;
         validate_format(&gob_format, &["id", "name", "state"], &palette)?;
+        let gitbutler_heading = Parser::parse(&config.gitbutler.heading_format)?;
+        validate_format(
+            &gitbutler_heading,
+            &["id", "message", "behind", "unassigned", "conflicts"],
+            &palette,
+        )?;
+        let gitbutler_unassigned = Parser::parse(&config.gitbutler.unassigned_format)?;
+        validate_format(&gitbutler_unassigned, &["count"], &palette)?;
+        let gitbutler_commit = Parser::parse(&config.gitbutler.commit_format)?;
+        validate_format(&gitbutler_commit, &["marker", "id", "message"], &palette)?;
+        if config.gitbutler.max_commits > crate::gitbutler::MAX_COMMITS {
+            return Err(format!(
+                "gitbutler max_commits may be at most {}",
+                crate::gitbutler::MAX_COMMITS
+            ));
+        }
+        let gitbutler_format = Parser::parse(&config.gitbutler.format)?;
+        validate_format(
+            &gitbutler_format,
+            &[
+                "tree",
+                "push",
+                "name",
+                "commits",
+                "upstream",
+                "changes",
+                "review",
+                "ci",
+                "conflicted",
+            ],
+            &palette,
+        )?;
+        if config.git.hide_branches.len() > 32
+            || config
+                .git
+                .hide_branches
+                .iter()
+                .any(|branch| branch.is_empty() || branch.len() > 256)
+        {
+            return Err("git hide_branches accepts at most 32 names of 1-256 bytes".into());
+        }
         if config.git.lines.len() > 12 {
             return Err("git lines may contain at most 12 rows".into());
         }
@@ -874,6 +983,23 @@ impl Sidebar {
             &config.git.deleted_style,
             &config.git.clean_style,
             &config.git.state_style,
+            &config.gitbutler.heading_style,
+            &config.gitbutler.branch_style,
+            &config.gitbutler.count_style,
+            &config.gitbutler.id_style,
+            &config.gitbutler.message_style,
+            &config.gitbutler.changes_style,
+            &config.gitbutler.behind_style,
+            &config.gitbutler.review_style,
+            &config.gitbutler.pushed_style,
+            &config.gitbutler.unpushed_style,
+            &config.gitbutler.force_style,
+            &config.gitbutler.local_style,
+            &config.gitbutler.integrated_style,
+            &config.gitbutler.ci_success_style,
+            &config.gitbutler.ci_failure_style,
+            &config.gitbutler.ci_pending_style,
+            &config.gitbutler.conflicts_style,
             &config.debug.style,
         ] {
             resolve_style(style, "default", &palette)?;
@@ -927,6 +1053,10 @@ impl Sidebar {
             actions,
             gob_format,
             git_lines,
+            gitbutler_heading,
+            gitbutler_unassigned,
+            gitbutler_format,
+            gitbutler_commit,
         })
     }
 
@@ -1093,6 +1223,14 @@ impl Sidebar {
         !self.config.git.disabled && self.modules().iter().any(|name| name == "git")
     }
 
+    fn git_visible(&self, status: &crate::GitStatus) -> bool {
+        !self.config.git.hide_branches.contains(&status.branch)
+    }
+
+    pub(crate) fn gitbutler_enabled(&self) -> bool {
+        !self.config.gitbutler.disabled && self.modules().iter().any(|name| name == "gitbutler")
+    }
+
     pub(crate) fn gob_enabled(&self) -> bool {
         !self.config.gob.disabled && self.modules().iter().any(|name| name == "gob")
     }
@@ -1155,6 +1293,7 @@ impl Sidebar {
                 context: None,
                 commands: &BTreeMap::new(),
                 git: None,
+                gitbutler: None,
                 debug: None,
             },
         )
@@ -1212,6 +1351,7 @@ impl Sidebar {
             context,
             commands,
             git,
+            gitbutler,
             debug,
         } = input;
         validate_snapshot(snapshot)?;
@@ -1257,8 +1397,13 @@ impl Sidebar {
                     rows.extend(self.render_gob(gob_jobs, snapshot.width)?)
                 }
                 "git" if !self.config.git.disabled => {
-                    if let Some(status) = git {
+                    if let Some(status) = git.filter(|status| self.git_visible(status)) {
                         rows.extend(self.render_git(status)?);
+                    }
+                }
+                "gitbutler" if !self.config.gitbutler.disabled => {
+                    if let Some(status) = gitbutler {
+                        rows.extend(self.render_gitbutler(status)?);
                     }
                 }
                 name if name.starts_with("command.") => {
@@ -1271,7 +1416,7 @@ impl Sidebar {
                 }
                 "spacer" => spacer = Some(rows.len()),
                 "blank" => rows.push(Row::blank()),
-                "sessions" | "divider" | "pi-workbench" | "usage" | "gob" | "git"
+                "sessions" | "divider" | "pi-workbench" | "usage" | "gob" | "git" | "gitbutler"
                 | "pi-context" | "debug" | "top" => {}
                 _ => return Err(format!("unknown module {name}")),
             }
@@ -2045,6 +2190,202 @@ impl Sidebar {
             }
         }
         Ok(rows)
+    }
+
+    fn gitbutler_span(&self, text: String, style: &str) -> Result<Value, String> {
+        Ok(Value::Spans(vec![Span {
+            text,
+            style: resolve_style(style, "default", &self.palette)?,
+        }]))
+    }
+
+    fn gitbutler_heading(&self, status: &crate::GitButlerStatus) -> Result<Option<Row>, String> {
+        let config = &self.config.gitbutler;
+        let (id, message) = status
+            .base
+            .as_ref()
+            .map_or((String::new(), String::new()), |base| {
+                (base.id.clone(), base.message.clone())
+            });
+        let values = BTreeMap::from([
+            ("id", self.gitbutler_span(id, &config.id_style)?),
+            (
+                "message",
+                self.gitbutler_span(message, &config.message_style)?,
+            ),
+            (
+                "behind",
+                self.gitbutler_span(count("↓", status.behind), &config.behind_style)?,
+            ),
+            (
+                "unassigned",
+                self.gitbutler_span(count("◆", status.unassigned_changes), &config.changes_style)?,
+            ),
+            (
+                "conflicts",
+                self.gitbutler_span(count("⚠", status.conflicted_files), &config.conflicts_style)?,
+            ),
+        ]);
+        let heading_style = resolve_style(&config.heading_style, "default", &self.palette)?;
+        let (spans, present) = render_nodes(
+            &self.gitbutler_heading,
+            &values,
+            &heading_style,
+            &self.palette,
+            None,
+        )?;
+        Ok(
+            (present || !has_variables(&self.gitbutler_heading)).then(|| Row {
+                identity: crate::actions::Identity::new("heading"),
+                spans,
+                ..Row::blank()
+            }),
+        )
+    }
+
+    fn render_gitbutler(&self, status: &crate::GitButlerStatus) -> Result<Vec<Row>, String> {
+        let config = &self.config.gitbutler;
+        let mut rows: Vec<Row> = self.gitbutler_heading(status)?.into_iter().collect();
+        if status.unassigned_changes > 0 {
+            let values = BTreeMap::from([(
+                "count",
+                self.gitbutler_span(status.unassigned_changes.to_string(), &config.changes_style)?,
+            )]);
+            rows.push(Row {
+                identity: crate::actions::Identity::new("unassigned"),
+                spans: render_format(
+                    &self.gitbutler_unassigned,
+                    &values,
+                    "default",
+                    &self.palette,
+                )?,
+                ..Row::blank()
+            });
+        }
+        for branch in &status.branches {
+            rows.push(self.gitbutler_branch(branch)?);
+            rows.extend(self.gitbutler_commits(branch)?);
+        }
+        Ok(rows)
+    }
+
+    fn gitbutler_more(&self, branch: &str, part: &str, hidden: u64) -> Result<Option<Row>, String> {
+        if hidden == 0 {
+            return Ok(None);
+        }
+        Ok(Some(Row {
+            identity: crate::actions::Identity::new("more")
+                .field("branch", branch)
+                .field("part", part),
+            spans: vec![Span {
+                text: format!("    … {hidden} more"),
+                style: resolve_style(&self.config.gitbutler.count_style, "default", &self.palette)?,
+            }],
+            ..Row::blank()
+        }))
+    }
+
+    fn gitbutler_commits(&self, branch: &crate::GitButlerBranch) -> Result<Vec<Row>, String> {
+        let config = &self.config.gitbutler;
+        let mut rows = Vec::new();
+        for commit in branch.recent_commits.iter().take(config.max_commits) {
+            let (marker, style) = if commit.conflicted {
+                ("⚠", &config.conflicts_style)
+            } else {
+                ("●", &config.count_style)
+            };
+            let values = BTreeMap::from([
+                ("marker", self.gitbutler_span(marker.into(), style)?),
+                (
+                    "id",
+                    self.gitbutler_span(commit.id.clone(), &config.id_style)?,
+                ),
+                (
+                    "message",
+                    self.gitbutler_span(commit.message.clone(), &config.message_style)?,
+                ),
+            ]);
+            rows.push(Row {
+                identity: crate::actions::Identity::new("commit")
+                    .field("branch", &branch.name)
+                    .field("commit", &commit.id),
+                spans: render_format(&self.gitbutler_commit, &values, "default", &self.palette)?,
+                ..Row::blank()
+            });
+        }
+        let shown = branch.recent_commits.len().min(config.max_commits) as u64;
+        rows.extend(self.gitbutler_more(
+            &branch.name,
+            "commits",
+            if config.max_commits == 0 {
+                0
+            } else {
+                branch.commits.saturating_sub(shown)
+            },
+        )?);
+        Ok(rows)
+    }
+
+    fn gitbutler_branch(&self, branch: &crate::GitButlerBranch) -> Result<Row, String> {
+        let config = &self.config.gitbutler;
+        let span = |text: String, style: &str| self.gitbutler_span(text, style);
+        let (push, push_style) = gitbutler_push(config, branch.push);
+        let (ci, ci_style) = match branch.ci {
+            Some(crate::BuildState::Success) => ("✓", &config.ci_success_style),
+            Some(crate::BuildState::Failure) => ("✗", &config.ci_failure_style),
+            Some(crate::BuildState::Pending) => ("●", &config.ci_pending_style),
+            None => ("", &config.ci_pending_style),
+        };
+        let review = branch.review.clone().unwrap_or_default();
+        let values = BTreeMap::from([
+            (
+                "tree",
+                span(
+                    if branch.depth > 0 { "└ " } else { "" }.into(),
+                    &config.count_style,
+                )?,
+            ),
+            ("push", span(push.into(), push_style)?),
+            ("name", span(branch.name.clone(), &config.branch_style)?),
+            (
+                "commits",
+                span(count("", branch.commits), &config.count_style)?,
+            ),
+            (
+                "upstream",
+                span(count("⇣", branch.upstream_commits), &config.behind_style)?,
+            ),
+            (
+                "changes",
+                span(count("◆", branch.changes), &config.changes_style)?,
+            ),
+            (
+                "review",
+                span(
+                    if review.is_empty() {
+                        String::new()
+                    } else {
+                        format!("#{review}")
+                    },
+                    &config.review_style,
+                )?,
+            ),
+            ("ci", span(ci.into(), ci_style)?),
+            (
+                "conflicted",
+                span(
+                    if branch.conflicted { "⚠" } else { "" }.into(),
+                    &config.conflicts_style,
+                )?,
+            ),
+        ]);
+        Ok(Row {
+            identity: crate::actions::Identity::new("branch")
+                .field("branch", &branch.name)
+                .field("review", &review),
+            spans: render_format(&self.gitbutler_format, &values, "default", &self.palette)?,
+            ..Row::blank()
+        })
     }
 
     fn render_gob(&self, jobs: &[crate::gob::GobJob], width: usize) -> Result<Vec<Row>, String> {
@@ -3062,6 +3403,24 @@ fn progress_blocks(percent: f64, count: usize) -> Vec<&'static str> {
 enum Value {
     Text(String),
     Spans(Vec<Span>),
+}
+
+fn has_variables(nodes: &[Node]) -> bool {
+    nodes.iter().any(|node| match node {
+        Node::Text(_) => false,
+        Node::Variable(_) => true,
+        Node::Optional(children) | Node::Styled(children, _) => has_variables(children),
+    })
+}
+
+fn gitbutler_push(config: &GitButlerConfig, push: crate::PushStatus) -> (&'static str, &str) {
+    match push {
+        crate::PushStatus::Pushed => ("●", &config.pushed_style),
+        crate::PushStatus::Unpushed => ("↑", &config.unpushed_style),
+        crate::PushStatus::NeedsForce => ("⇡", &config.force_style),
+        crate::PushStatus::Local => ("○", &config.local_style),
+        crate::PushStatus::Integrated => ("✔", &config.integrated_style),
+    }
 }
 
 fn count(prefix: &str, value: u64) -> String {

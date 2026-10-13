@@ -14,7 +14,7 @@ Run `starmux print-config` to print the complete configuration. Run `starmux che
 modules = ["sessions", "divider"]
 ```
 
-The built-ins are `top`, `sessions`, `divider`, `pi-workbench`, `pi-context`, `usage`, `gob`, `git`, `debug`, `spacer`, and `blank`. Named external commands use `command.<name>`. Unknown names and duplicate names other than `divider` and `blank` are errors. Repeat `divider` to separate multiple sections, for example `modules = ["sessions", "divider", "pi-workbench", "divider", "usage", "divider", "gob"]`. Each divider uses the same `[divider]` settings. `top`, `pi-workbench`, `pi-context`, `usage`, `gob`, `git`, and `debug` are not enabled by default.
+The built-ins are `top`, `sessions`, `divider`, `pi-workbench`, `pi-context`, `usage`, `gob`, `git`, `gitbutler`, `debug`, `spacer`, and `blank`. Named external commands use `command.<name>`. Unknown names and duplicate names other than `divider` and `blank` are errors. Repeat `divider` to separate multiple sections, for example `modules = ["sessions", "divider", "pi-workbench", "divider", "usage", "divider", "gob"]`. Each divider uses the same `[divider]` settings. `top`, `pi-workbench`, `pi-context`, `usage`, `gob`, `git`, `gitbutler`, and `debug` are not enabled by default.
 
 Place one `spacer` between modules to push the following rows to the bottom of the sidebar. For example, `modules = ["sessions", "spacer", "divider", "usage"]` keeps sessions at the top and usage at the bottom. The spacer takes only the rows left after all other modules render. It adds no rows if the sidebar is full, and it has no style or default click action. Its size updates when the client is resized. Add `blank` after `usage` to leave one empty row below it: `modules = ["sessions", "spacer", "divider", "usage", "blank"]`. Each `blank` entry adds one empty row without a style or default click action; repeat it for more space.
 
@@ -337,7 +337,7 @@ danger = "#ff808c"
 
 Each role is required. Colors accept the same validated tmux color names, `colour0`–`colour255`, and `#RRGGBB` values as palette colors. Custom names cannot replace bundled names. `check-config` rejects missing or unknown roles and invalid colors.
 
-Each scheme supplies default styles and fills for top, sessions, dividers, Pi Workbench, Pi context, git, usage, gob, debug, and text-mode named commands. The scheme colors ordinary text in these modules too. `spacer` and `blank` contain no styled content. A scheme does not set tmux's outer `side-status-style`, change tmux's other status options, or recolor styles supplied by an external command in `tmux-styles` mode.
+Each scheme supplies default styles and fills for top, sessions, dividers, Pi Workbench, Pi context, git, GitButler, usage, gob, debug, and text-mode named commands. The scheme colors ordinary text in these modules too. `spacer` and `blank` contain no styled content. A scheme does not set tmux's outer `side-status-style`, change tmux's other status options, or recolor styles supplied by an external command in `tmux-styles` mode.
 
 Explicit module styles and fills take priority over scheme defaults. A selected custom `palette` overlays colors with the same names in the scheme, so a module style such as `fg=accent` uses your palette's `accent`. Formats and indicator rules remain under your control; explicit colors in a format or rule are not replaced. Unknown scheme names and invalid colors or styles fail `check-config`. Without a colorscheme, styles use terminal colors directly unless you select a custom palette as above.
 
@@ -381,7 +381,7 @@ character = "-"
 style = "dim"
 ```
 
-Set `disabled = true` in `[sessions]`, `[divider]`, `[pi-workbench]`, `[pi-context]`, `[usage]`, `[gob]`, `[git]`, or `[debug]` to omit that module without changing the shared module order.
+Set `disabled = true` in `[sessions]`, `[divider]`, `[pi-workbench]`, `[pi-context]`, `[usage]`, `[gob]`, `[git]`, `[gitbutler]`, or `[debug]` to omit that module without changing the shared module order.
 
 ## Provider usage
 
@@ -541,11 +541,50 @@ lines = [
 ]
 ```
 
-Each string in `lines` is one sidebar row. An entry with no nonempty variables produces no row. Remove `$upstream` to hide the upstream name, or move it to its own string to give it a separate row. The safe formatter supports optional groups and validated styled groups. Variables are `$branch`, `$upstream`, `$ahead`, `$behind`, `$divergence`, `$staged`, `$modified`, `$untracked`, `$conflicts`, `$stash`, `$added`, `$deleted`, `$clean`, and `$state`. Zero counts are empty. Branch names are escaped and clipped. The rows have no click action by default. See [click actions](#click-actions) for overrides. Set `disabled = true` in `[git]` to omit the section.
+Each string in `lines` is one sidebar row. An entry with no nonempty variables produces no row. Remove `$upstream` to hide the upstream name, or move it to its own string to give it a separate row. The safe formatter supports optional groups and validated styled groups. Variables are `$branch`, `$upstream`, `$ahead`, `$behind`, `$divergence`, `$staged`, `$modified`, `$untracked`, `$conflicts`, `$stash`, `$added`, `$deleted`, `$clean`, and `$state`. Zero counts are empty. Branch names are escaped and clipped. The rows have no click action by default. See [click actions](#click-actions) for overrides. Set `disabled = true` in `[git]` to omit the section. Set `hide_branches` to a list of branch names to omit the section while one of them is checked out, for example `hide_branches = ["gitbutler/workspace"]`.
 
 `$staged`, `$modified`, `$untracked`, and `$conflicts` count files; one file can be both staged and modified. `$added` and `$deleted` count tracked line changes against HEAD across staged and unstaged edits. Untracked files and binary changes have no line totals. `$clean` shows `✔` when no files have changed and no Git operation is active; stashes do not make the worktree dirty. `$stash` counts repository stashes, shared across linked worktrees. `$upstream` and `$divergence` use local refs without fetching. `$state` shows an active merge, rebase, cherry-pick, or revert. Detached HEAD shows a short commit ID.
 
 The `[git]` styles are `branch_style`, `upstream_style`, `divergence_style`, `staged_style`, `modified_style`, `untracked_style`, `conflicts_style`, `stash_style`, `added_style`, `deleted_style`, `clean_style`, and `state_style`. Each accepts validated tmux styles and palette colors. The default colors make additions green and deletions red.
+
+## GitButler workspace
+
+Add `gitbutler` to show the workspace when the selected pane's repository is in [GitButler](https://gitbutler.com) workspace mode:
+
+```toml
+modules = ["sessions", "divider", "gitbutler"]
+
+[gitbutler]
+heading_format = " 󰜘( $id)( $message)( $behind)( $conflicts)"
+unassigned_format = "  ◆ $count unassigned"
+format = "  $tree$push $name( $commits)( $changes)( $review)( $ci)( $conflicted)"
+commit_format = "    $marker $message"
+max_commits = 3
+```
+
+Rows appear only when the repository's `HEAD` is `gitbutler/workspace` and the `but` CLI is installed. Starmux runs `but status --json` on each redraw; it reads pull request and CI results from GitButler's cache without fetching. Repositories outside workspace mode, including linked worktrees, show nothing; use `git` for those, and set `hide_branches = ["gitbutler/workspace"]` under `[git]` to hide the `git` rows while GitButler shows the workspace.
+
+The module shows, in order:
+
+- The heading: the commit the workspace builds on. Variables are `$id` (short commit ID), `$message` (first line of its message), `$behind` (upstream commits not yet integrated), `$unassigned` (count of unassigned changes), and `$conflicts` (conflicted files). The row is omitted when its variables are all empty.
+- Unassigned changes: a `unassigned_format` row with `$count`, when there are any.
+- One row per applied branch, followed by its most recent commits.
+
+Branch variables are `$tree` (`└ ` for a branch stacked below another), `$push`, `$name`, `$commits` (commit count), `$upstream` (commits only on the remote branch), `$changes` (uncommitted changes assigned to the stack, shown on its top branch), `$review` (`#` and the pull request number), `$ci`, and `$conflicted`. Zero counts are empty.
+
+| `$push` | Meaning | Style |
+| --- | --- | --- |
+| `●` | Nothing to push | `pushed_style` |
+| `↑` | Unpushed commits | `unpushed_style` |
+| `⇡` | Push requires force | `force_style` |
+| `○` | Never pushed | `local_style` |
+| `✔` | Integrated upstream | `integrated_style` |
+
+`$ci` shows `✓`, `✗`, or `●` with `ci_success_style`, `ci_failure_style`, or `ci_pending_style`. `$conflicted` shows `⚠` with `conflicts_style` when a branch has a conflicted commit.
+
+Commit rows use `commit_format` with `$marker` (`●`, or `⚠` for a conflicted commit), `$id`, and `$message`, newest first. `max_commits` (at most 20) limits each branch's list; the rest collapse into a `… N more` row. Set it to `0` to hide commits.
+
+The other styles are `heading_style`, `branch_style`, `count_style` (commit counts, markers, the stack marker, and `… N more`), `id_style`, `message_style`, `changes_style`, `behind_style`, and `review_style`. Each accepts validated tmux styles and palette colors. The slim layout shows `◆` for unassigned changes and each branch's push icon followed by its conflict or CI icon. Rows have no click action by default. Match `kind` `branch` (fields `branch`, `review`), `commit` (`branch`, `commit`), `unassigned`, `more`, or `heading` to add one, as described in [click actions](#click-actions).
 
 ## Debug timings
 
@@ -559,7 +598,7 @@ details = true
 style = "dim"
 ```
 
-The default shows only `last 12.34 ms`; `details = true` adds rows for nonzero `tmux`, `pi`, `pr`, `usage`, `gob`, `commands`, `git`, `format`, and `top` stages. `style` applies to all timing rows.
+The default shows only `last 12.34 ms`; `details = true` adds rows for nonzero `tmux`, `pi`, `pr`, `usage`, `gob`, `commands`, `git`, `gitbutler`, `format`, and `top` stages. `style` applies to all timing rows.
 
 Set an absolute `cache_dir` under `[debug]` to change where timings are stored. The default is `starmux/debug/` under the platform's cache directory. Rows have no click action by default and use the configured validated style. `disabled = true` hides the module. The default module list does not include `debug`.
 
