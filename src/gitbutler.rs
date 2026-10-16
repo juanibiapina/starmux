@@ -5,7 +5,6 @@ use crate::{
 use serde::{de::IgnoredAny, Deserialize};
 use std::{
     fs,
-    io::Read,
     path::{Path, PathBuf},
     process::Command,
     time::{Duration, Instant},
@@ -13,7 +12,7 @@ use std::{
 
 const MAX_OUTPUT: u64 = 4 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_millis(1500);
-const WORKSPACE_HEAD: &str = "ref: refs/heads/gitbutler/workspace";
+const TARGET_REF: &str = "gitbutler.project.targetRef";
 const MAX_STACKS: usize = 32;
 const MAX_BRANCHES: usize = 64;
 const MAX_NAME: usize = 256;
@@ -168,17 +167,27 @@ fn query_with(binary: &str, pane_path: &Path) -> Result<Option<GitButlerStatus>,
 
 fn workspace_root(path: &Path) -> Option<PathBuf> {
     let dir = path.ancestors().find(|dir| dir.join(".git").exists())?;
-    let git = dir.join(".git");
-    if !fs::metadata(&git).ok()?.is_dir() {
+    if !fs::metadata(dir.join(".git")).ok()?.is_dir() {
         return None;
     }
-    let mut head = String::new();
-    fs::File::open(git.join("HEAD"))
-        .ok()?
-        .take(256)
-        .read_to_string(&mut head)
-        .ok()?;
-    (head.trim_end() == WORKSPACE_HEAD).then(|| dir.to_path_buf())
+    let mut command = Command::new("git");
+    command
+        .args([
+            "--no-optional-locks",
+            "config",
+            "--local",
+            "--get",
+            TARGET_REF,
+        ])
+        .current_dir(dir)
+        .env("GIT_OPTIONAL_LOCKS", "0");
+    let limits = Limits {
+        deadline: Instant::now() + TIMEOUT,
+        stdout: 4096,
+        stderr: 0,
+    };
+    let output = process::run(command, limits).ok()?;
+    (output.status.success() && !output.stdout.trim_ascii().is_empty()).then(|| dir.to_path_buf())
 }
 
 fn parse(bytes: &[u8]) -> Result<GitButlerStatus, String> {
@@ -264,13 +273,35 @@ fn commit(wire: WireCommit) -> GitButlerCommit {
 mod tests {
     use super::{query_with, GitButlerBranch, GitButlerCommit, GitButlerStatus, PushStatus};
     use crate::BuildState;
-    use std::{fs, os::unix::fs::PermissionsExt, path::Path};
+    use std::{fs, os::unix::fs::PermissionsExt, path::Path, process::Command};
 
-    fn repo(head: &str) -> tempfile::TempDir {
+    fn git(dir: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    }
+
+    fn repo(branch: &str) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join(".git")).unwrap();
+        git(dir.path(), &["init", "-q", "-b", branch]);
         fs::create_dir_all(dir.path().join("src/nested")).unwrap();
-        fs::write(dir.path().join(".git/HEAD"), head).unwrap();
+        dir
+    }
+
+    fn adopted(branch: &str) -> tempfile::TempDir {
+        let dir = repo(branch);
+        git(
+            dir.path(),
+            &[
+                "config",
+                "--local",
+                "gitbutler.project.targetRef",
+                "refs/remotes/origin/main",
+            ],
+        );
         dir
     }
 
@@ -297,8 +328,8 @@ mod tests {
     }
 
     #[test]
-    fn workspace_status_describes_stacks_branches_and_changes() {
-        let repo = repo("ref: refs/heads/gitbutler/workspace\n");
+    fn adopted_repository_status_describes_stacks_branches_and_changes_on_any_branch() {
+        let repo = adopted("main");
         let tools = tempfile::tempdir().unwrap();
         let json = serde_json::json!({
             "uncommittedChanges": [
@@ -402,19 +433,21 @@ mod tests {
     }
 
     #[test]
-    fn repositories_outside_the_workspace_never_run_but() {
-        let repo = repo("ref: refs/heads/main\n");
+    fn repositories_gitbutler_does_not_manage_never_run_but() {
+        let plain = repo("main");
+        let workspace_branch = repo("gitbutler/workspace");
         let tools = tempfile::tempdir().unwrap();
         let marker = tools.path().join("ran");
         let but = fake_but(tools.path(), &format!("touch '{}'", marker.display()));
-        assert_eq!(query_with(&but, repo.path()).unwrap(), None);
+        assert_eq!(query_with(&but, plain.path()).unwrap(), None);
+        assert_eq!(query_with(&but, workspace_branch.path()).unwrap(), None);
         assert_eq!(query_with(&but, tools.path()).unwrap(), None);
         assert!(!marker.exists());
     }
 
     #[test]
     fn failures_report_but_errors() {
-        let repo = repo("ref: refs/heads/gitbutler/workspace\n");
+        let repo = adopted("feature");
         let tools = tempfile::tempdir().unwrap();
         let but = fake_but(tools.path(), "echo 'workspace broken' >&2\nexit 1");
         assert_eq!(

@@ -1893,15 +1893,27 @@ fn command_instances_require_exact_valid_references() {
 }
 
 #[test]
-fn git_hides_configured_branches_in_full_and_slim_layouts() {
-    let render = |branch: &str, width: usize| {
-        let status = starmux::GitStatus {
-            branch: branch.into(),
-            ..Default::default()
-        };
+fn git_hides_while_gitbutler_shows_a_status_in_full_and_slim_layouts() {
+    let git = starmux::GitStatus {
+        branch: "main".into(),
+        ..Default::default()
+    };
+    let gitbutler = starmux::GitButlerStatus {
+        base: Some(starmux::GitButlerCommit {
+            id: "abcdef1".into(),
+            message: "Base".into(),
+            conflicted: false,
+        }),
+        unassigned_changes: 1,
+        ..Default::default()
+    };
+    let render = |modules: &str,
+                  git: Option<&starmux::GitStatus>,
+                  gitbutler: Option<&starmux::GitButlerStatus>,
+                  width: usize| {
         let mut state = snapshot();
         state.width = width;
-        Sidebar::from_toml("modules = [\"git\"]\n[git]\nhide_branches = [\"gitbutler/workspace\"]")
+        Sidebar::from_toml(&format!("modules = {modules}"))
             .unwrap()
             .render_with_inputs(
                 &state,
@@ -1912,23 +1924,34 @@ fn git_hides_configured_branches_in_full_and_slim_layouts() {
                     gob_jobs: &[],
                     context: None,
                     commands: &BTreeMap::new(),
-                    git: Some(&status),
-                    gitbutler: None,
+                    git,
+                    gitbutler,
                     debug: None,
                 },
             )
             .unwrap()
     };
+    let both = r#"["git", "gitbutler"]"#;
     for width in [2, 30] {
-        assert!(render("main", width).contains("#[range=user|"), "{width}");
-        assert!(
-            !render("gitbutler/workspace", width).contains("#[range=user|"),
+        let empty = render(both, None, None, width);
+        assert_ne!(render(both, Some(&git), None, width), empty, "{width}");
+        assert_eq!(
+            render(both, Some(&git), Some(&gitbutler), width),
+            render(both, None, Some(&gitbutler), width),
+            "{width}"
+        );
+        assert_ne!(
+            render(both, None, Some(&gitbutler), width),
+            empty,
+            "{width}"
+        );
+        assert_ne!(
+            render(r#"["git"]"#, Some(&git), Some(&gitbutler), width),
+            render(r#"["git"]"#, None, None, width),
             "{width}"
         );
     }
-    assert!(render("main", 30).contains("main"));
-    assert!(!render("gitbutler/workspace", 30).contains("gitbutler"));
-    assert!(Sidebar::from_toml("[git]\nhide_branches = [\"\"]").is_err());
+    assert!(Sidebar::from_toml("[git]\nhide_branches = [\"main\"]").is_err());
 }
 
 #[test]

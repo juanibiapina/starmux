@@ -541,7 +541,7 @@ lines = [
 ]
 ```
 
-Each string in `lines` is one sidebar row. An entry with no nonempty variables produces no row. Remove `$upstream` to hide the upstream name, or move it to its own string to give it a separate row. The safe formatter supports optional groups and validated styled groups. Variables are `$branch`, `$upstream`, `$ahead`, `$behind`, `$divergence`, `$staged`, `$modified`, `$untracked`, `$conflicts`, `$stash`, `$added`, `$deleted`, `$clean`, and `$state`. Zero counts are empty. Branch names are escaped and clipped. The rows have no click action by default. See [click actions](#click-actions) for overrides. Set `disabled = true` in `[git]` to omit the section. Set `hide_branches` to a list of branch names to omit the section while one of them is checked out, for example `hide_branches = ["gitbutler/workspace"]`.
+Each string in `lines` is one sidebar row. An entry with no nonempty variables produces no row. Remove `$upstream` to hide the upstream name, or move it to its own string to give it a separate row. The safe formatter supports optional groups and validated styled groups. Variables are `$branch`, `$upstream`, `$ahead`, `$behind`, `$divergence`, `$staged`, `$modified`, `$untracked`, `$conflicts`, `$stash`, `$added`, `$deleted`, `$clean`, and `$state`. Zero counts are empty. Branch names are escaped and clipped. The rows have no click action by default. See [click actions](#click-actions) for overrides. Set `disabled = true` in `[git]` to omit the section.
 
 `$staged`, `$modified`, `$untracked`, and `$conflicts` count files; one file can be both staged and modified. `$added` and `$deleted` count tracked line changes against HEAD across staged and unstaged edits. Untracked files and binary changes have no line totals. `$clean` shows `✔` when no files have changed and no Git operation is active; stashes do not make the worktree dirty. `$stash` counts repository stashes, shared across linked worktrees. `$upstream` and `$divergence` use local refs without fetching. `$state` shows an active merge, rebase, cherry-pick, or revert. Detached HEAD shows a short commit ID.
 
@@ -549,7 +549,7 @@ The `[git]` styles are `branch_style`, `upstream_style`, `divergence_style`, `st
 
 ## GitButler workspace
 
-Add `gitbutler` to show the workspace when the selected pane's repository is in [GitButler](https://gitbutler.com) workspace mode:
+Add `gitbutler` to show the workspace when [GitButler](https://gitbutler.com) manages the selected pane's repository:
 
 ```toml
 modules = ["sessions", "divider", "gitbutler"]
@@ -562,7 +562,7 @@ commit_format = "    $marker $message"
 max_commits = 3
 ```
 
-Rows appear only when the repository's `HEAD` is `gitbutler/workspace` and the `but` CLI is installed. Starmux runs `but status --json` on each redraw; it reads pull request and CI results from GitButler's cache without fetching. Repositories outside workspace mode, including linked worktrees, show nothing; use `git` for those, and set `hide_branches = ["gitbutler/workspace"]` under `[git]` to hide the `git` rows while GitButler shows the workspace.
+Rows appear on any branch, including single-branch mode, when the repository's own Git config sets `gitbutler.project.targetRef` and the `but` CLI is installed. `but` sets it the first time it runs in a repository. Starmux runs `but status --json` on each redraw; it reads pull request and CI results from GitButler's cache without fetching. Other repositories, including linked worktrees, show nothing here. While this module shows a workspace, the `git` module is hidden.
 
 The module shows, in order:
 

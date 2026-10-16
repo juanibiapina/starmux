@@ -15,7 +15,7 @@ impl Sidebar {
         if module == "git" && !self.config.git.disabled {
             return input
                 .git
-                .filter(|status| self.git_visible(status))
+                .filter(|_| self.git_visible(input.gitbutler))
                 .map_or_else(|| Ok(Vec::new()), |status| self.slim_git(status));
         }
         let mut pi = if module == "pi-workbench" {

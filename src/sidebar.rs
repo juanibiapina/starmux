@@ -198,7 +198,6 @@ impl Default for PiContextConfig {
 #[serde(default, deny_unknown_fields)]
 struct GitConfig {
     disabled: bool,
-    hide_branches: Vec<String>,
     lines: Vec<String>,
     branch_style: String,
     upstream_style: String,
@@ -218,7 +217,6 @@ impl Default for GitConfig {
     fn default() -> Self {
         Self {
             disabled: false,
-            hide_branches: Vec::new(),
             lines: vec![
                 " $branch( $upstream)( $divergence)".into(),
                 " ( $conflicts)( $staged)( $modified)( $untracked)( $stash)( $added)( $deleted)( $clean)".into(),
@@ -824,15 +822,6 @@ impl Sidebar {
             ],
             &palette,
         )?;
-        if config.git.hide_branches.len() > 32
-            || config
-                .git
-                .hide_branches
-                .iter()
-                .any(|branch| branch.is_empty() || branch.len() > 256)
-        {
-            return Err("git hide_branches accepts at most 32 names of 1-256 bytes".into());
-        }
         if config.git.lines.len() > 12 {
             return Err("git lines may contain at most 12 rows".into());
         }
@@ -1223,8 +1212,8 @@ impl Sidebar {
         !self.config.git.disabled && self.modules().iter().any(|name| name == "git")
     }
 
-    fn git_visible(&self, status: &crate::GitStatus) -> bool {
-        !self.config.git.hide_branches.contains(&status.branch)
+    fn git_visible(&self, gitbutler: Option<&crate::GitButlerStatus>) -> bool {
+        gitbutler.is_none() || !self.gitbutler_enabled()
     }
 
     pub(crate) fn gitbutler_enabled(&self) -> bool {
@@ -1397,7 +1386,7 @@ impl Sidebar {
                     rows.extend(self.render_gob(gob_jobs, snapshot.width)?)
                 }
                 "git" if !self.config.git.disabled => {
-                    if let Some(status) = git.filter(|status| self.git_visible(status)) {
+                    if let Some(status) = git.filter(|_| self.git_visible(gitbutler)) {
                         rows.extend(self.render_git(status)?);
                     }
                 }
