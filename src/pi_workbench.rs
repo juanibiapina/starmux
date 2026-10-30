@@ -74,6 +74,8 @@ pub(crate) fn default_data_dir() -> Result<PathBuf, String> {
 pub(crate) struct LiveEntry {
     pub session: PiSession,
     pub session_id: String,
+    pub pid: u32,
+    pub updated_at: String,
     pub context_path: Option<PathBuf>,
 }
 
@@ -81,7 +83,7 @@ pub(crate) struct LiveEntry {
     clippy::too_many_lines,
     reason = "The bounded scan validates and filters each record before publishing sessions"
 )]
-pub(crate) fn list(data_dir: &Path, tmux_socket: &Path) -> Result<Vec<LiveEntry>, String> {
+pub(crate) fn list(data_dir: &Path, tmux_socket: Option<&Path>) -> Result<Vec<LiveEntry>, String> {
     let status_dir = data_dir.join("status");
     let entries = match fs::read_dir(&status_dir) {
         Ok(entries) => entries,
@@ -143,10 +145,13 @@ pub(crate) fn list(data_dir: &Path, tmux_socket: &Path) -> Result<Vec<LiveEntry>
             || record.updated_at.is_empty()
             || !matches!(record.state.as_str(), "idle" | "working")
             || socket_path.and_then(Path::parent) != Some(data_dir.join("sockets").as_path())
-            || tmux.as_ref().is_none_or(|tmux| {
-                tmux.socket_path.as_deref() != Some(tmux_socket)
-                    || !tmux_socket.is_absolute()
-                    || !valid_tmux_id(&tmux.pane_id, '%')
+            || u32::try_from(record.pid).is_err()
+            || tmux_socket.is_some_and(|tmux_socket| {
+                tmux.as_ref().is_none_or(|tmux| {
+                    tmux.socket_path.as_deref() != Some(tmux_socket)
+                        || !tmux_socket.is_absolute()
+                        || !valid_tmux_id(&tmux.pane_id, '%')
+                })
             })
         {
             continue;
@@ -186,6 +191,8 @@ pub(crate) fn list(data_dir: &Path, tmux_socket: &Path) -> Result<Vec<LiveEntry>
         };
         sessions.push(LiveEntry {
             session_id: record.session_id,
+            pid: u32::try_from(record.pid).unwrap_or_default(),
+            updated_at: record.updated_at,
             context_path,
             session: PiSession {
                 name,

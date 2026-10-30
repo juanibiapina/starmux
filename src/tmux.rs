@@ -838,7 +838,7 @@ impl<T: Tmux> Application<T> {
         } else {
             std::path::PathBuf::from(data_dir)
         };
-        let mut entries = crate::pi_workbench::list(&path, std::path::Path::new(socket))?;
+        let mut entries = crate::pi_workbench::list(&path, Some(std::path::Path::new(socket)))?;
         if entries.iter().any(|entry| entry.session.location.is_some()) {
             let panes = self.tmux.panes(socket)?;
             for entry in &mut entries {

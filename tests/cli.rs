@@ -366,3 +366,74 @@ fn named_config_is_validated_before_querying_tmux() {
         .unwrap();
     assert!(String::from_utf8_lossy(&printed.stdout).contains("[configs.right]"));
 }
+
+#[test]
+fn snapshot_selects_the_pi_session_running_under_a_process() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let root = tempdir.path();
+    let data = root.join("pi");
+    std::fs::create_dir_all(data.join("status")).unwrap();
+    std::fs::create_dir_all(data.join("sockets")).unwrap();
+    let socket = data.join("sockets/1.sock");
+    let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    let mut pi = Command::new("sleep").arg("30").spawn().unwrap();
+    let mut stranger = Command::new("sleep").arg("30").spawn().unwrap();
+    let session_file = root.join("session.jsonl");
+    let context_path = root.join("session.jsonl.context.json");
+    std::fs::write(
+        &context_path,
+        serde_json::json!({
+            "version": 2, "sessionId": "session",
+            "extensions": {"pi-plans": {"version": 1, "data": {"plans": [
+                {"id": "0".repeat(24), "title": "Ship it", "path": format!("session.jsonl.plans/{}.md", "0".repeat(24))}
+            ]}}}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        data.join("status/session.json"),
+        serde_json::json!({
+            "version": 2, "sessionId": "session", "pid": pi.id(), "cwd": root,
+            "name": "Ship it", "state": "working",
+            "startedAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z",
+            "sessionFile": session_file, "contextPath": context_path,
+            "extensions": {"pi-socket": {"version": 1, "data": {"socketPath": socket}}}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let config = root.join("config.toml");
+    std::fs::write(
+        &config,
+        format!(
+            "modules = [\"pi-workbench\", \"pi-context\", \"git\"]\ncache_dir = {:?}\n[pi-workbench]\ndata_dir = {:?}\n",
+            root.join("cache").to_str().unwrap(),
+            data.to_str().unwrap()
+        ),
+    )
+    .unwrap();
+    let snapshot = |pid: Option<u32>| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_starmux"));
+        command.args(["snapshot", "--dir", root.to_str().unwrap()]);
+        if let Some(pid) = pid {
+            command.args(["--pid", &pid.to_string()]);
+        }
+        let output = command.env("STARMUX_CONFIG", &config).output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+
+    let selected = snapshot(Some(std::process::id()));
+    assert_eq!(selected["pi"]["session"]["name"], "Ship it");
+    assert_eq!(selected["pi"]["session"]["state"], "working");
+    assert_eq!(selected["pi"]["context"]["plans"][0]["title"], "Ship it");
+    assert!(selected["git"].is_null());
+    assert!(snapshot(Some(stranger.id()))["pi"].is_null());
+    assert!(snapshot(None)["pi"].is_null());
+
+    for child in [&mut pi, &mut stranger] {
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+}

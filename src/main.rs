@@ -65,6 +65,15 @@ enum Command {
     Scroll(ScrollArgs),
     #[command(about = "Scroll the sidebar from a tmux wheel binding")]
     ScrollEvent(ScrollArgs),
+    #[command(about = "Print the sidebar's data as JSON for other programs")]
+    Snapshot {
+        #[arg(long, value_name = "PATH")]
+        dir: PathBuf,
+        #[arg(long, value_name = "PID")]
+        pid: Option<u32>,
+        #[arg(long, value_name = "NAME", default_value = "default")]
+        config: String,
+    },
     #[command(about = "Validate the configuration")]
     CheckConfig,
     #[command(about = "Print the complete configuration")]
@@ -209,6 +218,10 @@ fn run(command: &Command) -> Result<(), String> {
         )?,
         Command::Scroll(args) => scroll(args, true)?,
         Command::ScrollEvent(args) => scroll(args, false)?,
+        Command::Snapshot { dir, pid, config } => println!(
+            "{}",
+            starmux::snapshot::render(&load_sidebar()?.select(config)?, dir, *pid)?
+        ),
         Command::CheckConfig => {
             load_sidebar()?;
             println!("configuration valid");

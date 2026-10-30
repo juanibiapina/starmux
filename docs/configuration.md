@@ -602,6 +602,26 @@ The default shows only `last 12.34 ms`; `details = true` adds rows for nonzero `
 
 Set an absolute `cache_dir` under `[debug]` to change where timings are stored. The default is `starmux/debug/` under the platform's cache directory. Rows have no click action by default and use the configured validated style. `disabled = true` hides the module. The default module list does not include `debug`.
 
+## JSON snapshot
+
+`starmux snapshot --dir <path> [--pid <pid>]` prints the data of the enabled modules as one JSON object, without tmux. Other programs use it to draw their own sidebar. The configuration decides what it contains: each module must be in `modules` and not disabled, and the same options apply, such as `[usage].providers` and `[pi-context].plan_server_url`.
+
+`--dir` takes the place of the selected pane's directory for `git`, `gitbutler`, and `gob`. `--pid` selects the Pi session whose process is `<pid>` or runs under it, such as the process of the terminal Pi runs in; any live pi-workbench session qualifies, with or without pi-tmux. `--config` selects a [named module list](#multiple-module-lists).
+
+```text
+{
+  "version": 1,
+  "pi": { "session": { "id", "name", "state", "project" }, "context": { "plans", "pullRequests", "builds", "skills" } },
+  "jobs": [{ "id", "name", "elapsedMs", "typicalMs", "upperMs" }],
+  "git": { "branch", "upstream", "ahead", "behind", "staged", "modified", "untracked", "conflicts", "stash", "added", "deleted", "state", "unborn", "clean" },
+  "gitbutler": { "base", "behind", "unassignedChanges", "conflictedFiles", "branches" },
+  "system": { "cpu", "memory", "battery": { "percent", "charging", "full" } },
+  "usage": [{ "provider", "name", "stale", "unavailable", "fetchedAt", "failure", "windows" }]
+}
+```
+
+A disabled module, or one without data, is `null`. `git` is `null` while `gitbutler` shows a workspace, as in the sidebar. `system` and `usage` start background refreshes like the sidebar does, so the first call after a while can return old or empty values.
+
 ## Tmux integration
 
 `starmux init tmux` generates the side-status render command, click binding, and wheel bindings. Position, width, and outer style remain ordinary tmux options.

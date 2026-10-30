@@ -6,6 +6,7 @@
 
 - Show build status of the selected Pi session's pull requests and pushed branches from pi-workbench. Click a build to open its checks on GitHub.
 - Add a `gitbutler` module that shows the workspace of a repository GitButler manages, on any branch: its base commit, unassigned changes, and applied branches with their recent commits and push, CI, review, and conflict state. It replaces the `git` module while it shows.
+- Add `starmux snapshot`, which prints the sidebar's data as JSON for other programs, such as a sidebar in another terminal app.
 
 ## [0.8.0] - 2026-10-06
 

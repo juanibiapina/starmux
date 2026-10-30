@@ -19,6 +19,7 @@ mod process;
 mod scroll;
 pub use scroll::ScrollDirection;
 mod sidebar;
+pub mod snapshot;
 mod tmux;
 pub mod top;
 pub mod usage;
