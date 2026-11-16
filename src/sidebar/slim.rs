@@ -58,7 +58,7 @@ impl Sidebar {
                         self.slim_pi(&mut row, session)?;
                     }
                 }
-                "pi-context" => self.slim_context(&mut row, input)?,
+                "pi-context" => Self::slim_context(&mut row),
                 "usage" => self.slim_usage(&mut row, input.usage_rows, &mut windows)?,
                 "top" => self.slim_metric(&mut row, input.top)?,
                 "gob" => self.slim_job(&mut row, input.gob_jobs)?,
@@ -167,7 +167,7 @@ impl Sidebar {
         Ok(())
     }
 
-    fn slim_context(&self, row: &mut Row, input: RenderInputs<'_>) -> Result<(), String> {
+    fn slim_context(row: &mut Row) {
         // Full context item rows already carry their semantic icon and style.
         row.spans = row
             .spans
@@ -176,25 +176,6 @@ impl Sidebar {
             .cloned()
             .into_iter()
             .collect();
-        if row.identity.get("kind") == "pr" {
-            let pull_request = input.context.and_then(|context| {
-                context
-                    .pull_requests
-                    .iter()
-                    .find(|pr| pr.url == row.identity.get("url"))
-            });
-            if pull_request.is_none_or(|pr| pr.state == crate::pr_state::PrState::Unknown) {
-                row.spans.push(Span {
-                    text: UNKNOWN.into(),
-                    style: resolve_style(
-                        &self.config.pi_context.unknown_style,
-                        "default",
-                        &self.palette,
-                    )?,
-                });
-            }
-        }
-        Ok(())
     }
 
     fn slim_usage(

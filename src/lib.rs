@@ -10,11 +10,10 @@ mod gitbutler;
 mod gob;
 pub use debug::Diagnostics;
 pub use git::GitStatus;
-pub use gitbutler::{GitButlerBranch, GitButlerCommit, GitButlerStatus, PushStatus};
+pub use gitbutler::{BuildState, GitButlerBranch, GitButlerCommit, GitButlerStatus, PushStatus};
 mod navigation;
 pub use gob::GobJob;
 mod pi_workbench;
-pub mod pr_state;
 mod process;
 mod scroll;
 pub use scroll::ScrollDirection;
@@ -24,9 +23,7 @@ mod tmux;
 pub mod top;
 pub mod usage;
 
-pub use pi_workbench::{
-    BuildState, PiBuild, PiContext, PiLocation, PiPlan, PiPullRequest, PiSession, PiSkill, PiTarget,
-};
+pub use pi_workbench::{PiContext, PiLocation, PiPlan, PiSession, PiSkill, PiTarget};
 pub use sidebar::{RenderInputs, Session, Sidebar, Snapshot, Window};
 pub use tmux::{
     scroll_client, scroll_client_for, scroll_client_in, scroll_worker, scroll_worker_for,

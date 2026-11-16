@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Removed
+
+- Remove pull requests and builds from the selected Pi context, since pi-workbench no longer records them. Delete `open_style`, `draft_style`, `merged_style`, `closed_style`, `unknown_style`, `build_success_style`, `build_failure_style`, and `build_pending_style` from `[pi-context]`, and click rules that match `kind = "pr"`, `kind = "build"`, or `category = "prs"`; starmux rejects them now.
+- Remove `pullRequests` and `builds` from `starmux snapshot`.
+- Remove the `pr` debug timing stage.
+
 ## [0.9.0] - 2026-10-30
 
 ### Added

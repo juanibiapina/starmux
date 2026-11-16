@@ -8,10 +8,9 @@ use std::{
 };
 use tempfile::NamedTempFile;
 
-pub(crate) const STAGES: [&str; 10] = [
+pub(crate) const STAGES: [&str; 9] = [
     "tmux",
     "pi",
-    "pr",
     "usage",
     "gob",
     "commands",
@@ -24,7 +23,7 @@ const MAX_AGE_NS: u128 = 300_000_000_000;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Diagnostics {
-    pub stages: [u64; 10],
+    pub stages: [u64; 9],
 }
 
 impl Diagnostics {
@@ -140,7 +139,7 @@ mod tests {
         let dir = tempdir.path().to_path_buf();
         std::fs::create_dir_all(&dir).unwrap();
         let expected = Diagnostics {
-            stages: [1200, 0, 0, 0, 0, 0, 0, 80, 0, 0],
+            stages: [1200, 0, 0, 0, 0, 0, 80, 0, 0],
         };
         write(&dir, "socket", "client", &expected).unwrap();
         assert_eq!(read(&dir, "socket", "client").unwrap().total(), 1280);

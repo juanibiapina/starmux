@@ -1,9 +1,8 @@
-use starmux::pr_state::PrState;
 use starmux::usage::{RefreshFailure, UsageRow, UsageWindow};
 use starmux::{
-    Application, BuildState, Diagnostics, GitButlerBranch, GitButlerStatus, GitStatus, GobJob,
-    Pane, PiBuild, PiContext, PiPlan, PiPullRequest, PiSession, PiSkill, PiTarget, ProcessTmux,
-    PushStatus, RenderInputs, Session, Sidebar, Snapshot, Tmux, Window,
+    Application, Diagnostics, GitButlerBranch, GitButlerStatus, GitStatus, GobJob, Pane, PiContext,
+    PiPlan, PiSession, PiSkill, PiTarget, ProcessTmux, PushStatus, RenderInputs, Session, Sidebar,
+    Snapshot, Tmux, Window,
 };
 use std::{collections::BTreeMap, path::Path, sync::Mutex};
 
@@ -93,17 +92,6 @@ impl Fixture {
                     name: "documentation".into(),
                     path: None,
                 }],
-                pull_requests: vec![PiPullRequest {
-                    url: "https://github.com/owner/repo/pull/1".into(),
-                    state: PrState::Open,
-                    build: Some(BuildState::Failure),
-                }],
-                builds: vec![PiBuild {
-                    repository: "owner/repo".into(),
-                    branch: "main".into(),
-                    url: "https://github.com/owner/repo/commit/abc1234/checks".into(),
-                    state: Some(BuildState::Success),
-                }],
             },
             commands: BTreeMap::from([("command.test".into(), "healthy".into())]),
             git: GitStatus {
@@ -125,7 +113,7 @@ impl Fixture {
                 }],
                 ..GitButlerStatus::default()
             },
-            debug: Diagnostics { stages: [10; 10] },
+            debug: Diagnostics { stages: [10; 9] },
         }
     }
     fn input(&self) -> RenderInputs<'_> {
@@ -446,8 +434,7 @@ fn slim_modules_show_source_items_and_keep_individual_actions() {
     let output = sidebar.render_with_inputs(&state, fixture.input()).unwrap();
     let rows = visible_rows(&output);
     let expected = vec![
-        "󰻠󰋗", "󰍛󰋗", "󰁹󰋗", "󰆍●", "○●", "◔", "▶", "↳░", "◇ ", " ", "✓ ", "↑·", " ", "◷ ", "--",
-        "  ", "--",
+        "󰻠󰋗", "󰍛󰋗", "󰁹󰋗", "󰆍●", "○●", "◔", "▶", "↳░", "◇ ", "↑·", " ", "◷ ", "--", "  ", "--",
     ];
     assert_eq!(rows[..expected.len()], expected, "{output}");
     assert!(rows
@@ -533,16 +520,11 @@ action = "window"
 }
 
 #[test]
-fn slim_context_keeps_an_icon_and_action_for_each_plan_pr_and_build() {
+fn slim_context_keeps_an_icon_and_action_for_each_plan() {
     let mut fixture = Fixture::new();
     fixture.context.plans.push(PiPlan {
         title: "Second plan".into(),
         path: "/tmp/second.md".into(),
-    });
-    fixture.context.pull_requests.push(PiPullRequest {
-        url: "https://github.com/owner/repo/pull/2".into(),
-        state: PrState::Merged,
-        build: None,
     });
     let sidebar = Sidebar::from_toml(
         r#"
@@ -553,14 +535,6 @@ argv = ["echo", "{kind}"]
 module = "pi-context"
 match = { kind = "plan" }
 action = "item"
-[[clicks]]
-module = "pi-context"
-match = { kind = "pr" }
-action = "item"
-[[clicks]]
-module = "pi-context"
-match = { kind = "build" }
-action = "item"
 "#,
     )
     .unwrap();
@@ -568,20 +542,16 @@ action = "item"
     let mut state = snapshot();
     state.width = width;
     let output = sidebar.render_with_inputs(&state, fixture.input()).unwrap();
-    assert_eq!(
-        visible_rows(&output),
-        ["◇ ", "◇ ", "\u{ea64} ", "\u{eafe} ", "✓ "]
-    );
-    assert!(output.contains("#[fg=red]\u{ea64}"), "{output}");
+    assert_eq!(visible_rows(&output), ["◇ ", "◇ "]);
     let targets = tokens(&output);
-    assert_eq!(targets.len(), 5);
+    assert_eq!(targets.len(), 2);
     assert!(targets.iter().all(|target| target.starts_with("sc")));
     assert_eq!(
         targets
             .iter()
             .collect::<std::collections::BTreeSet<_>>()
             .len(),
-        5
+        2
     );
 }
 
@@ -589,8 +559,6 @@ action = "item"
 fn slim_context_omits_skills_and_their_category_actions() {
     let mut fixture = Fixture::new();
     fixture.context.plans.clear();
-    fixture.context.pull_requests.clear();
-    fixture.context.builds.clear();
     fixture.context.skills = ["documentation", "testing", "name #[range=user|bad]"]
         .into_iter()
         .map(|name| PiSkill {

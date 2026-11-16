@@ -273,34 +273,10 @@ pub struct PiSkill {
     pub path: Option<PathBuf>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BuildState {
-    Pending,
-    Success,
-    Failure,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PiPullRequest {
-    pub url: String,
-    pub state: crate::pr_state::PrState,
-    pub build: Option<BuildState>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PiBuild {
-    pub repository: String,
-    pub branch: String,
-    pub url: String,
-    pub state: Option<BuildState>,
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct PiContext {
     pub session_id: String,
     pub plans: Vec<PiPlan>,
-    pub pull_requests: Vec<PiPullRequest>,
-    pub builds: Vec<PiBuild>,
     pub skills: Vec<PiSkill>,
 }
 
@@ -352,15 +328,12 @@ pub(crate) fn read_context(path: &Path, session_id: &str) -> Result<PiContext, S
         .and_then(Value::as_object)
         .ok_or("invalid context extensions")?;
     let plans_data = namespaces.get("pi-plans").and_then(entry_data);
-    let github_data = namespaces.get("pi-github").and_then(entry_data);
     let skills_data = namespaces.get("pi-skills").and_then(entry_data);
     let empty = Vec::new();
     let plans = plans_data
         .map(|data| data.get("plans").and_then(Value::as_array))
         .unwrap_or(Some(&empty))
         .ok_or("invalid context plans")?;
-    let (pull_requests, builds) =
-        github_data.map_or_else(|| Ok(Default::default()), read_github)?;
     let skills = skills_data
         .and_then(|data| data.get("skills"))
         .map(Value::as_array)
@@ -410,8 +383,6 @@ pub(crate) fn read_context(path: &Path, session_id: &str) -> Result<PiContext, S
                 })
             })
             .collect(),
-        pull_requests,
-        builds,
         skills: skills
             .iter()
             .take(MAX_ITEMS)
@@ -429,141 +400,6 @@ pub(crate) fn read_context(path: &Path, session_id: &str) -> Result<PiContext, S
             })
             .collect(),
     })
-}
-
-type GithubContext = (Vec<PiPullRequest>, Vec<PiBuild>);
-
-fn read_github(data: &Value) -> Result<GithubContext, String> {
-    let invalid = || "invalid context pull requests or builds".to_owned();
-    let empty = Vec::new();
-    let prs = match data.get("pullRequests") {
-        Some(value) => value.as_array().ok_or_else(invalid)?,
-        None => &empty,
-    };
-    let Some(builds) = data.get("builds") else {
-        let prs = prs
-            .iter()
-            .map(|url| {
-                url.as_str()
-                    .filter(|url| crate::pr_state::parse_url(url).is_some())
-                    .map(|url| PiPullRequest {
-                        url: url.to_owned(),
-                        state: crate::pr_state::PrState::Unknown,
-                        build: None,
-                    })
-            })
-            .collect::<Option<Vec<_>>>()
-            .ok_or_else(invalid)?;
-        return Ok((prs.into_iter().take(MAX_ITEMS).collect(), Vec::new()));
-    };
-    let builds = builds
-        .as_array()
-        .ok_or_else(invalid)?
-        .iter()
-        .map(read_build)
-        .collect::<Option<Vec<_>>>()
-        .ok_or_else(invalid)?;
-    let prs = prs
-        .iter()
-        .map(read_pull_request)
-        .collect::<Option<Vec<_>>>()
-        .ok_or_else(invalid)?;
-    let on_branch = |build: &PiBuild, repository: &str, branch: Option<&str>| {
-        build.repository == repository && Some(build.branch.as_str()) == branch
-    };
-    let pull_requests = prs
-        .iter()
-        .map(|(pr, repository, branch)| PiPullRequest {
-            build: builds
-                .iter()
-                .find(|build| on_branch(build, repository, branch.as_deref()))
-                .and_then(|build| build.state),
-            ..pr.clone()
-        })
-        .take(MAX_ITEMS)
-        .collect();
-    let builds = builds
-        .into_iter()
-        .filter(|build| {
-            !prs.iter()
-                .any(|(_, repository, branch)| on_branch(build, repository, branch.as_deref()))
-        })
-        .take(MAX_ITEMS)
-        .collect();
-    Ok((pull_requests, builds))
-}
-
-fn read_build(value: &Value) -> Option<PiBuild> {
-    let repository = value.get("repository")?.as_str()?;
-    let branch = value.get("branch")?.as_str()?;
-    let sha = value.get("sha")?.as_str()?;
-    if !(7..=64).contains(&sha.len())
-        || !sha
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    {
-        return None;
-    }
-    let state = match value.get("checks") {
-        None | Some(Value::Null) => None,
-        Some(checks) => match checks.get("state")?.as_str()? {
-            "pending" => Some(BuildState::Pending),
-            "success" => Some(BuildState::Success),
-            "failure" => Some(BuildState::Failure),
-            "none" => None,
-            _ => return None,
-        },
-    };
-    (valid_repository(repository) && valid_branch(branch)).then(|| PiBuild {
-        repository: repository.to_owned(),
-        branch: branch.to_owned(),
-        url: format!("https://github.com/{repository}/commit/{sha}/checks"),
-        state,
-    })
-}
-
-fn read_pull_request(value: &Value) -> Option<(PiPullRequest, String, Option<String>)> {
-    let url = value.get("url")?.as_str()?;
-    let (label, _) = crate::pr_state::parse_url(url)?;
-    let repository = value.get("repository")?.as_str()?;
-    if label.split_once('#').map(|(repo, _)| repo) != Some(repository) {
-        return None;
-    }
-    let branch = match value.get("branch") {
-        None | Some(Value::Null) => None,
-        Some(branch) => Some(branch.as_str().filter(|b| valid_branch(b))?.to_owned()),
-    };
-    let state = match value.get("state") {
-        None | Some(Value::Null) => crate::pr_state::PrState::Unknown,
-        Some(state) => match state.as_str()? {
-            "open" => crate::pr_state::PrState::Open,
-            "closed" => crate::pr_state::PrState::Closed,
-            "merged" => crate::pr_state::PrState::Merged,
-            _ => return None,
-        },
-    };
-    let pr = PiPullRequest {
-        url: url.to_owned(),
-        state,
-        build: None,
-    };
-    Some((pr, repository.to_owned(), branch))
-}
-
-fn valid_repository(repository: &str) -> bool {
-    repository.len() <= 256
-        && repository.split_once('/').is_some_and(|(owner, name)| {
-            [owner, name].iter().all(|part| {
-                !part.is_empty()
-                    && part
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b"-._".contains(&b))
-            })
-        })
-}
-
-fn valid_branch(branch: &str) -> bool {
-    !branch.is_empty() && branch.len() <= 255 && !branch.chars().any(char::is_control)
 }
 
 fn valid_skill_name(name: &str) -> bool {
@@ -606,133 +442,14 @@ mod context_tests {
         )
         .unwrap();
         let context = read_context(&path, "session").unwrap();
-        assert!(
-            context.plans.is_empty()
-                && context.pull_requests.is_empty()
-                && context.skills.is_empty()
-        );
+        assert!(context.plans.is_empty() && context.skills.is_empty());
     }
-    fn github_context(github: serde_json::Value) -> Result<PiContext, String> {
-        let tempdir = tempfile::tempdir().unwrap();
-        let path = tempdir.path().join("session.jsonl.context.json");
-        let value = serde_json::json!({
-            "version": 2, "sessionId": "session", "extensions": {"pi-github": github}
-        });
-        fs::write(&path, value.to_string()).unwrap();
-        read_context(&path, "session")
-    }
-
-    fn build(repository: &str, branch: &str, checks: serde_json::Value) -> serde_json::Value {
-        serde_json::json!({
-            "repository": repository, "branch": branch, "sha": "abc1234",
-            "pushedAt": "2026-10-07T10:40:30.000Z", "source": "agent", "checks": checks
-        })
-    }
-
-    #[test]
-    fn pull_requests_take_the_build_of_their_branch_and_other_builds_stay_separate() {
-        let checks = |state: &str| serde_json::json!({"sha": "abc1234", "state": state, "updatedAt": "", "runs": []});
-        let context = github_context(serde_json::json!({"version": 1, "data": {
-            "builds": [
-                build("owner/repo", "feature", checks("failure")),
-                build("owner/repo", "main", checks("success")),
-                build("owner/other", "main", checks("none")),
-                build("owner/other", "release", serde_json::Value::Null),
-            ],
-            "pullRequests": [
-                {"repository": "owner/repo", "number": 7, "url": "https://github.com/owner/repo/pull/7",
-                 "branch": "feature", "title": "Feature", "state": "merged"},
-                {"repository": "owner/repo", "number": 8, "url": "https://github.com/owner/repo/pull/8",
-                 "branch": null, "title": null, "state": null},
-            ]
-        }}))
-        .unwrap();
-        assert_eq!(
-            context.pull_requests,
-            [
-                PiPullRequest {
-                    url: "https://github.com/owner/repo/pull/7".into(),
-                    state: crate::pr_state::PrState::Merged,
-                    build: Some(BuildState::Failure),
-                },
-                PiPullRequest {
-                    url: "https://github.com/owner/repo/pull/8".into(),
-                    state: crate::pr_state::PrState::Unknown,
-                    build: None,
-                },
-            ]
-        );
-        let build = |repository: &str, branch: &str, state| PiBuild {
-            repository: repository.into(),
-            branch: branch.into(),
-            url: format!("https://github.com/{repository}/commit/abc1234/checks"),
-            state,
-        };
-        assert_eq!(
-            context.builds,
-            [
-                build("owner/repo", "main", Some(BuildState::Success)),
-                build("owner/other", "main", None),
-                build("owner/other", "release", None),
-            ]
-        );
-    }
-
-    #[test]
-    fn legacy_pull_request_urls_are_read_without_state_or_build() {
-        let context = github_context(serde_json::json!({"version": 1, "data": {
-            "pullRequests": ["https://github.com/owner/repo/pull/42"]
-        }}))
-        .unwrap();
-        assert_eq!(
-            context.pull_requests,
-            [PiPullRequest {
-                url: "https://github.com/owner/repo/pull/42".into(),
-                state: crate::pr_state::PrState::Unknown,
-                build: None,
-            }]
-        );
-        assert!(context.builds.is_empty());
-        let unpublished = github_context(serde_json::json!({"version": 2, "data": {
-            "branches": [{"repository": "owner/repo", "branch": "main"}]
-        }}))
-        .unwrap();
-        assert!(unpublished.pull_requests.is_empty() && unpublished.builds.is_empty());
-    }
-
-    #[test]
-    fn invalid_builds_or_pull_requests_reject_the_context() {
-        let pr = |repository: &str, branch: serde_json::Value, state: &str| {
-            serde_json::json!({"repository": repository, "number": 1,
-                "url": "https://github.com/owner/repo/pull/1", "branch": branch, "title": null, "state": state})
-        };
-        for data in [
-            serde_json::json!({"builds": [build("owner", "main", serde_json::Value::Null)]}),
-            serde_json::json!({"builds": [build("owner/repo/x", "main", serde_json::Value::Null)]}),
-            serde_json::json!({"builds": [build("owner/repo", "main\u{1b}[31m", serde_json::Value::Null)]}),
-            serde_json::json!({"builds": [build("owner/repo", "", serde_json::Value::Null)]}),
-            serde_json::json!({"builds": [{"repository": "owner/repo", "branch": "main", "sha": "abc", "checks": null}]}),
-            serde_json::json!({"builds": [{"repository": "owner/repo", "branch": "main", "sha": "ABC1234/../x", "checks": null}]}),
-            serde_json::json!({"builds": [build("owner/repo", "main", serde_json::json!({"state": "skipped"}))]}),
-            serde_json::json!({"builds": [], "pullRequests": [pr("other/repo", serde_json::Value::Null, "open")]}),
-            serde_json::json!({"builds": [], "pullRequests": [pr("owner/repo", serde_json::json!(3), "open")]}),
-            serde_json::json!({"builds": [], "pullRequests": [pr("owner/repo", serde_json::Value::Null, "draft")]}),
-            serde_json::json!({"builds": [], "pullRequests": ["https://github.com/owner/repo/pull/1"]}),
-            serde_json::json!({"pullRequests": ["https://example.com/owner/repo/pull/1"]}),
-        ] {
-            assert!(
-                github_context(serde_json::json!({"version": 1, "data": data})).is_err(),
-                "accepted {data}"
-            );
-        }
-    }
-
     #[test]
     fn a_missing_context_file_is_an_empty_context() {
         let tempdir = tempfile::tempdir().unwrap();
         let context = read_context(&tempdir.path().join("new.jsonl.context.json"), "new").unwrap();
         assert_eq!(context.session_id, "new");
-        assert!(context.plans.is_empty() && context.pull_requests.is_empty());
+        assert!(context.plans.is_empty());
     }
 
     #[test]
@@ -745,7 +462,6 @@ mod context_tests {
             "version": 2, "sessionId": "session",
             "extensions": {
                 "pi-plans": {"version": 1, "data": {"plans": (0..20).map(|n| serde_json::json!({"id": format!("{n:024x}"), "title": format!("Plan {n}"), "path": format!("session.jsonl.plans/{n:024x}.md")})).collect::<Vec<_>>() }},
-                "pi-github": {"version": 1, "data": {"pullRequests": ["https://github.com/owner/repo/pull/42"]}},
                 "pi-skills": {"version": 1, "data": {"skills": ["testing"]}}
             }
         });

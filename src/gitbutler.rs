@@ -1,7 +1,4 @@
-use crate::{
-    process::{self, Limits, Stream},
-    BuildState,
-};
+use crate::process::{self, Limits, Stream};
 use serde::{de::IgnoredAny, Deserialize};
 use std::{
     fs,
@@ -18,6 +15,13 @@ const MAX_BRANCHES: usize = 64;
 const MAX_NAME: usize = 256;
 pub(crate) const MAX_COMMITS: usize = 20;
 const MAX_MESSAGE: usize = 200;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuildState {
+    Pending,
+    Success,
+    Failure,
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GitButlerStatus {

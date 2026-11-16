@@ -71,7 +71,6 @@ The default slim list inherits the top-level `modules`. Each named list inherits
 | Optional tmux window | `` window icon | `●` selected, `○` other window |
 | Pi session | `󰂚` attention, `▶` working, `○` idle | `●` selected, `○` other pane |
 | Pi plan | `◇` | One glyph only |
-| Pi pull request | Existing open, draft, merged, or closed icon | `󰋗` when its state is unknown |
 | Usage without valid windows | Provider icon | `󰌾` sign-in failure, `` refresh failure, `󰋗` unavailable, `◷` stale |
 | Usage window | Provider icon; cached failures use `󰌾` or `` | Pie of used quota, such as `◑` for roughly 50% used |
 | Host metric | `󰻠` CPU, `󰍛` memory, battery-state icon | Pie of CPU/memory used or battery charge remaining; `󰋗` unavailable |
@@ -82,9 +81,9 @@ The default slim list inherits the top-level `modules`. Each named list inherits
 | Debug timing | `◷` previous timing available, `󰋗` unavailable | One glyph only |
 | Divider | Configured glyph; `─` when it needs two columns | Repeat across the second column |
 
-Provider icons are Anthropic `󰚩`, Codex ``, Copilot ``, Gemini `✦`, Antigravity `◎`, Kiro `󰊠`, z.ai `󰘦`, and xAI `󰖟`. The rail uses Nerd Font icons, as do the full-layout host and PR rows. Usage and host pies use `○ ◔ ◑ ◕ ●`, rounded to the nearest 25%. Usage pies show quota consumed; host pies show CPU/memory used and battery charge remaining. Job gauges use `░` for zero and `▁` through `█` for eight increasing bands. Missing data is not zero.
+Provider icons are Anthropic `󰚩`, Codex ``, Copilot ``, Gemini `✦`, Antigravity `◎`, Kiro `󰊠`, z.ai `󰘦`, and xAI `󰖟`. The rail uses Nerd Font icons, as do the full-layout host rows. Usage and host pies use `○ ◔ ◑ ◕ ●`, rounded to the nearest 25%. Usage pies show quota consumed; host pies show CPU/memory used and battery charge remaining. Job gauges use `░` for zero and `▁` through `█` for eight increasing bands. Missing data is not zero.
 
-Slim mode omits usage provider headers when valid windows are available, names, initials, numeric indices, system/job headings, Pi project headings, Pi context headings, plan/PR category labels, usage cache-age rows and reset counts, and detailed debug rows. Plans and PRs keep individual click targets and the selectors listed in the [selector catalog](#selector-catalog). Skills and their category are omitted from slim mode. Click rules for skills and their category apply to full-layout rows. Job progress retains its separate `part = "progress"` row. Git uses one `kind = "summary"` row; full-layout `kind = "line"` and `slot` rules apply only to full rows. Hidden headings have no row for a heading click rule to match.
+Slim mode omits usage provider headers when valid windows are available, names, initials, numeric indices, system/job headings, Pi project headings, Pi context headings, plan category labels, usage cache-age rows and reset counts, and detailed debug rows. Plans keep individual click targets and the selectors listed in the [selector catalog](#selector-catalog). Skills and their category are omitted from slim mode. Click rules for skills and their category apply to full-layout rows. Job progress retains its separate `part = "progress"` row. Git uses one `kind = "summary"` row; full-layout `kind = "line"` and `slot` rules apply only to full rows. Hidden headings have no row for a heading click rule to match.
 
 Full layout supplies names, individual skills, exact readings, counts, reset times, and timings. Debug markers convey availability only.
 
@@ -192,12 +191,12 @@ Usage windows expose their raw provider labels and optional durations. The examp
 | `top` | `heading`, `metric` | `metric`: `cpu`, `memory`, `battery` |
 | `gob` | `heading`, `job` | `job_id`, `name` |
 | `usage` | `provider`, `cache-age`, `window` | `provider`; windows also have `label`, optional `duration_seconds` |
-| `pi-context` | `heading`, `category`, `plan`, `skill`, `pr`, `build` | Categories: `category` (`plans`, `prs`, `builds`, `skills`); plans: `file`, `title`; skills: `name`, optional `file`; PRs: `url`; builds: `repository`, `branch` |
+| `pi-context` | `heading`, `category`, `plan`, `skill` | Categories: `category` (`plans`, `skills`); plans: `file`, `title`; skills: `name`, optional `file` |
 | `sessions` | `session`, `window` | `target_session`, `name`; windows also have `target_window`, `index` |
 | `pi-workbench` | `heading`, `project`, `session` | `project`; sessions also have `name`, optional `target_pane`, `target_window` |
 | `git` | `line`, `summary` | Full-layout lines have `slot`: entry in the configured `git.lines` list; the slim summary has no slot |
 | `command.NAME` | `output` | Select the command through its full module name |
-| `debug` | `total`, `stage` | `stage`: `tmux`, `pi`, `pr`, `usage`, `gob`, `commands`, `git`, `format`, `top` |
+| `debug` | `total`, `stage` | `stage`: `tmux`, `pi`, `usage`, `gob`, `commands`, `git`, `format`, `top`, `gitbutler` |
 | `divider` | `divider` | Select repeated dividers through `instance` |
 | `blank` | `blank` | Select repeated blanks through `instance` |
 | `spacer` | `padding` | `slot`: position within the spacer allocation |
@@ -440,7 +439,7 @@ Pi sessions require pi-workbench to publish session status. The default data dir
 
 ## Selected Pi context
 
-Add `pi-context` to show the plans, pull requests, builds, and loaded skills recorded by pi-workbench for the Pi session in the selected tmux pane. It can be placed independently of `pi-workbench`:
+Add `pi-context` to show the plans and loaded skills recorded by pi-workbench for the Pi session in the selected tmux pane. It can be placed independently of `pi-workbench`:
 
 ```toml
 modules = ["sessions", "divider", "pi-workbench", "divider", "pi-context"]
@@ -451,19 +450,9 @@ category_style = "dim"
 text_style = "default"
 plan_style = "fg=magenta"
 skill_style = "fg=magenta"
-open_style = "fg=green"
-draft_style = "fg=brightblack"
-merged_style = "fg=magenta"
-closed_style = "fg=red"
-unknown_style = "fg=brightblack"
-build_success_style = "fg=green"
-build_failure_style = "fg=red"
-build_pending_style = "fg=yellow"
 ```
 
-Use `heading_style` for the selected session's `π` heading, `category_style` for the Plans, PRs, Builds, and Skills labels, and `text_style` for item text. `plan_style` and `skill_style` style the plan and skill icons. PR icons use `open_style`, `draft_style`, `merged_style`, `closed_style`, or `unknown_style` according to their state.
-
-When a pull request's branch has a build pushed in the session, its icon takes the build's color instead of its state color. Builds lists pushes without a pull request, such as pushes to `main`, as `repo:branch` after `✓` (passed), `✗` (failed), `●` (running), or `·` (no checks). Click a pull request to open it on GitHub, or a build to open its commit's checks. Build icons use `build_success_style`, `build_failure_style`, or `build_pending_style`; builds without checks use `unknown_style`. Builds require the pi-git and pi-github extensions from pi-workbench.
+Use `heading_style` for the selected session's `π` heading, `category_style` for the Plans and Skills labels, and `text_style` for item text. `plan_style` and `skill_style` style the plan and skill icons.
 
 Plans and skills open with the system's file handler by default. Set `open_command` under `[pi-context]` to override that handler:
 
@@ -479,8 +468,6 @@ plan_server_url = "http://127.0.0.1:19433"
 ```
 
 Starmux passes each array item as a separate process argument without a shell. `{file}` is required exactly once; `{pane}` is the selected tmux pane ID and `{socket}` is the current tmux server socket. This example opens the file in that pane's tmux session's Neovim editor window. The command runs only for plan and skill rows. Styles accept palette colors. Use `disabled = true` to hide the module.
-
-Install `gh` and authenticate with GitHub to enable PR state lookups.
 
 ## Gob jobs
 
@@ -598,7 +585,7 @@ details = true
 style = "dim"
 ```
 
-The default shows only `last 12.34 ms`; `details = true` adds rows for nonzero `tmux`, `pi`, `pr`, `usage`, `gob`, `commands`, `git`, `gitbutler`, `format`, and `top` stages. `style` applies to all timing rows.
+The default shows only `last 12.34 ms`; `details = true` adds rows for nonzero `tmux`, `pi`, `usage`, `gob`, `commands`, `git`, `gitbutler`, `format`, and `top` stages. `style` applies to all timing rows.
 
 Set an absolute `cache_dir` under `[debug]` to change where timings are stored. The default is `starmux/debug/` under the platform's cache directory. Rows have no click action by default and use the configured validated style. `disabled = true` hides the module. The default module list does not include `debug`.
 
@@ -611,7 +598,7 @@ Set an absolute `cache_dir` under `[debug]` to change where timings are stored. 
 ```text
 {
   "version": 1,
-  "pi": { "session": { "id", "name", "state", "project" }, "context": { "plans", "pullRequests", "builds", "skills" } },
+  "pi": { "session": { "id", "name", "state", "project" }, "context": { "plans", "skills" } },
   "jobs": [{ "id", "name", "elapsedMs", "typicalMs", "upperMs" }],
   "git": { "branch", "upstream", "ahead", "behind", "staged", "modified", "untracked", "conflicts", "stash", "added", "deleted", "state", "unborn", "clean" },
   "gitbutler": { "base", "behind", "unassignedChanges", "conflictedFiles", "branches" },

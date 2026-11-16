@@ -2,18 +2,6 @@ use starmux::usage::{RefreshFailure, UsageRow, UsageWindow};
 use starmux::{PiSession, PiTarget, Session, Sidebar, Snapshot, Window};
 use std::collections::BTreeMap;
 
-fn pull_request(
-    url: &str,
-    state: starmux::pr_state::PrState,
-    build: Option<starmux::BuildState>,
-) -> starmux::PiPullRequest {
-    starmux::PiPullRequest {
-        url: url.into(),
-        state,
-        build,
-    }
-}
-
 fn snapshot() -> Snapshot {
     Snapshot {
         width: 30,
@@ -1616,107 +1604,6 @@ fn pi_context_names_the_selected_session_above_its_entries() {
 }
 
 #[test]
-fn pi_context_pr_state_icons_use_distinct_styles() {
-    let sidebar = Sidebar::from_toml("modules = [\"pi-context\"]").unwrap();
-    for (state, icon, style) in [
-        (starmux::pr_state::PrState::Open, "\u{ea64}", "fg=green"),
-        (
-            starmux::pr_state::PrState::Draft,
-            "\u{ebdb}",
-            "fg=brightblack",
-        ),
-        (starmux::pr_state::PrState::Merged, "\u{eafe}", "fg=magenta"),
-        (starmux::pr_state::PrState::Closed, "\u{ebda}", "fg=red"),
-        (
-            starmux::pr_state::PrState::Unknown,
-            "\u{ea64}",
-            "fg=brightblack",
-        ),
-    ] {
-        let context = starmux::PiContext {
-            pull_requests: vec![pull_request("https://github.com/o/r/pull/1", state, None)],
-            ..Default::default()
-        };
-        let rendered = sidebar
-            .render_with_inputs(
-                &snapshot(),
-                starmux::RenderInputs {
-                    top: None,
-                    pi_sessions: &[],
-                    usage_rows: &[],
-                    gob_jobs: &[],
-                    context: Some(&context),
-                    commands: &BTreeMap::new(),
-                    git: None,
-                    gitbutler: None,
-                    debug: None,
-                },
-            )
-            .unwrap();
-        assert!(
-            rendered.contains(&format!("#[{style}]{icon}")),
-            "{rendered}"
-        );
-    }
-}
-
-#[test]
-fn pi_context_shows_build_state_on_pull_requests_and_lists_other_builds() {
-    let sidebar = Sidebar::from_toml("modules = [\"pi-context\"]").unwrap();
-    let build = |branch: &str, state| starmux::PiBuild {
-        repository: "owner/repo".into(),
-        branch: branch.into(),
-        url: format!(
-            "https://github.com/owner/repo/commit/{:07x}/checks",
-            branch.len()
-        ),
-        state,
-    };
-    let context = starmux::PiContext {
-        pull_requests: vec![pull_request(
-            "https://github.com/owner/repo/pull/42",
-            starmux::pr_state::PrState::Open,
-            Some(starmux::BuildState::Failure),
-        )],
-        builds: vec![
-            build("main", Some(starmux::BuildState::Success)),
-            build("release", Some(starmux::BuildState::Pending)),
-            build("#[fg=red]docs", None),
-        ],
-        ..Default::default()
-    };
-    let rendered = sidebar
-        .render_with_inputs(
-            &snapshot(),
-            starmux::RenderInputs {
-                top: None,
-                pi_sessions: &[],
-                usage_rows: &[],
-                gob_jobs: &[],
-                context: Some(&context),
-                commands: &BTreeMap::new(),
-                git: None,
-                gitbutler: None,
-                debug: None,
-            },
-        )
-        .unwrap();
-    for expected in [
-        "#[fg=red]\u{ea64}#[default] #[default]owner/repo##42",
-        " Builds",
-        "#[fg=green]✓#[default] #[default]repo:main",
-        "#[fg=yellow]●#[default] #[default]repo:release",
-        "#[fg=brightblack]·#[default] #[default]repo:##[fg=red]docs",
-    ] {
-        assert!(
-            rendered.contains(expected),
-            "missing {expected}: {rendered}"
-        );
-    }
-    assert_eq!(rendered.matches("#[range=user|sr").count(), 4, "{rendered}");
-}
-
-#[test]
 fn pi_context_icons_and_clipping_work_at_narrow_widths() {
     let sidebar = Sidebar::from_toml("modules = [\"pi-context\"]").unwrap();
     let tempdir = tempfile::tempdir().unwrap();
@@ -1732,12 +1619,6 @@ fn pi_context_icons_and_clipping_work_at_narrow_widths() {
             title: "#[fg=red] Build an extensive search".into(),
             path: plan,
         }],
-        pull_requests: vec![pull_request(
-            "https://github.com/owner/repo/pull/42",
-            starmux::pr_state::PrState::Draft,
-            None,
-        )],
-        builds: vec![],
         skills: vec![starmux::PiSkill {
             name: "testing".into(),
             path: Some(skill),
@@ -1763,20 +1644,20 @@ fn pi_context_icons_and_clipping_work_at_narrow_widths() {
             )
             .unwrap();
         assert!(
-            rendered.contains("◇") && rendered.contains("\u{ebdb}") && rendered.contains("✦"),
+            rendered.contains("◇") && rendered.contains("✦"),
             "{rendered}"
         );
         assert!(rendered.contains("##[fg=red]"), "{rendered}");
-        for kind in ["sl", "sr", "ss"] {
+        for kind in ["sl", "ss"] {
             assert_eq!(
                 rendered.matches(&format!("#[range=user|{kind}")).count(),
                 1,
                 "{rendered}"
             );
         }
-        assert_eq!(rendered.matches("#[range=").count(), 7, "{rendered}");
+        assert_eq!(rendered.matches("#[range=").count(), 5, "{rendered}");
         for row in rendered.split("#[nl]").filter(|row| {
-            ["sl", "sr", "ss"]
+            ["sl", "ss"]
                 .iter()
                 .any(|kind| row.contains(&format!("#[range=user|{kind}")))
         }) {
@@ -1789,39 +1670,9 @@ fn pi_context_icons_and_clipping_work_at_narrow_widths() {
                 .unwrap();
             assert_eq!(token.len(), 14);
         }
-        assert_eq!(rendered.matches("#[nl]").count(), 9);
+        assert_eq!(rendered.matches("#[nl]").count(), 7);
         assert!(rendered.contains(" π"), "{rendered}");
-        if width == 30 {
-            assert!(rendered.contains("owner/repo##42 draft"), "{rendered}");
-        }
     }
-    let long = starmux::PiContext {
-        pull_requests: vec![pull_request(
-            "https://github.com/verylongowner/verylongrepository/pull/4242",
-            starmux::pr_state::PrState::Unknown,
-            None,
-        )],
-        ..Default::default()
-    };
-    let mut input = snapshot();
-    input.width = 16;
-    let rendered = sidebar
-        .render_with_inputs(
-            &input,
-            starmux::RenderInputs {
-                top: None,
-                pi_sessions: &[],
-                usage_rows: &[],
-                gob_jobs: &[],
-                context: Some(&long),
-                commands: &BTreeMap::new(),
-                git: None,
-                gitbutler: None,
-                debug: None,
-            },
-        )
-        .unwrap();
-    assert!(rendered.contains("…##4242"), "{rendered}");
 }
 
 #[test]
@@ -2004,7 +1855,7 @@ fn debug_rows_follow_order_and_clip_without_click_targets() {
     )
     .unwrap();
     let diagnostics = starmux::Diagnostics {
-        stages: [1200, 0, 0, 250, 0, 0, 100, 50, 0, 0],
+        stages: [1200, 0, 250, 0, 0, 100, 50, 0, 0],
     };
     let input = snapshot();
     let render = || {
@@ -2082,11 +1933,10 @@ providers = ["codex"]
         selected: true,
     };
     let context = starmux::PiContext {
-        pull_requests: vec![pull_request(
-            "https://github.com/o/r/pull/1",
-            starmux::pr_state::PrState::Open,
-            None,
-        )],
+        skills: vec![starmux::PiSkill {
+            name: "testing".into(),
+            path: None,
+        }],
         ..Default::default()
     };
     let usage = UsageRow {
@@ -2117,7 +1967,7 @@ providers = ["codex"]
         ..Default::default()
     };
     let debug = starmux::Diagnostics {
-        stages: [1000, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        stages: [1000, 0, 0, 0, 0, 0, 0, 0, 0],
     };
     let commands = BTreeMap::from([("command.example".into(), "hello".into())]);
     let render = |sidebar: &Sidebar| {
@@ -2143,7 +1993,7 @@ providers = ["codex"]
         "#[fg=#1b1d2b,bg=#c099ff,bold]", // sessions
         "#[fg=#3b4261,nobold]",          // divider
         "fg=#ffc777,bg=#3b4261]●",       // selected Pi Workbench
-        "#[fg=#c3e88d]",                 // Pi context
+        "#[fg=#ffc777]✦",                // Pi context
         "#[fg=#f7768e",                  // usage and git
         "#[fg=#82aaff,bold] Jobs",       // gob
         "#[fg=#828bb8] last",            // debug

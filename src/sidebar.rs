@@ -161,14 +161,6 @@ struct PiContextConfig {
     text_style: String,
     plan_style: String,
     skill_style: String,
-    open_style: String,
-    draft_style: String,
-    merged_style: String,
-    closed_style: String,
-    unknown_style: String,
-    build_success_style: String,
-    build_failure_style: String,
-    build_pending_style: String,
 }
 
 impl Default for PiContextConfig {
@@ -182,14 +174,6 @@ impl Default for PiContextConfig {
             text_style: "default".into(),
             plan_style: "fg=magenta".into(),
             skill_style: "fg=magenta".into(),
-            open_style: "fg=green".into(),
-            draft_style: "fg=brightblack".into(),
-            merged_style: "fg=magenta".into(),
-            closed_style: "fg=red".into(),
-            unknown_style: "fg=brightblack".into(),
-            build_success_style: "fg=green".into(),
-            build_failure_style: "fg=red".into(),
-            build_pending_style: "fg=yellow".into(),
         }
     }
 }
@@ -947,14 +931,6 @@ impl Sidebar {
             &config.pi_context.text_style,
             &config.pi_context.plan_style,
             &config.pi_context.skill_style,
-            &config.pi_context.open_style,
-            &config.pi_context.draft_style,
-            &config.pi_context.merged_style,
-            &config.pi_context.closed_style,
-            &config.pi_context.unknown_style,
-            &config.pi_context.build_success_style,
-            &config.pi_context.build_failure_style,
-            &config.pi_context.build_pending_style,
             &config.gob.heading_style,
             &config.gob.running_style,
             &config.gob.progress_style,
@@ -1185,7 +1161,7 @@ impl Sidebar {
     }
 
     pub fn cache_dir_for(&self, name: &str) -> Option<std::path::PathBuf> {
-        if !matches!(name, "top" | "usage" | "pr-state" | "debug" | "scroll") {
+        if !matches!(name, "top" | "usage" | "debug" | "scroll") {
             return None;
         }
         crate::cache::root(self.config.cache_dir.as_deref()).map(|root| root.join(name))
@@ -1376,7 +1352,6 @@ impl Sidebar {
                                     .iter()
                                     .find(|session| session.selected)
                                     .map(|session| session.name.as_str()),
-                                snapshot.width,
                                 &snapshot.current_pane,
                             )?,
                         );
@@ -2524,16 +2499,6 @@ impl Sidebar {
         Ok(coalesce(spans))
     }
 
-    fn build_icon(&self, state: Option<crate::BuildState>) -> (&'static str, &str) {
-        let cfg = &self.config.pi_context;
-        match state {
-            Some(crate::BuildState::Success) => ("✓", &cfg.build_success_style),
-            Some(crate::BuildState::Failure) => ("✗", &cfg.build_failure_style),
-            Some(crate::BuildState::Pending) => ("●", &cfg.build_pending_style),
-            None => ("·", &cfg.unknown_style),
-        }
-    }
-
     #[expect(
         clippy::too_many_lines,
         reason = "Context rows share icon, style, and click range assembly"
@@ -2542,14 +2507,9 @@ impl Sidebar {
         &self,
         context: &crate::PiContext,
         selected_name: Option<&str>,
-        width: usize,
         pane: &str,
     ) -> Result<Vec<Row>, String> {
-        if context.plans.is_empty()
-            && context.pull_requests.is_empty()
-            && context.builds.is_empty()
-            && context.skills.is_empty()
-        {
+        if context.plans.is_empty() && context.skills.is_empty() {
             return Ok(Vec::new());
         }
         let cfg = &self.config.pi_context;
@@ -2627,89 +2587,6 @@ impl Sidebar {
                             identity
                         }
                     },
-                )?;
-            }
-        }
-        if !context.pull_requests.is_empty() {
-            push(
-                " PRs".into(),
-                &cfg.category_style,
-                None,
-                None,
-                crate::actions::Identity::new("category").field("category", "prs"),
-            )?;
-            for (index, pull_request) in context.pull_requests.iter().enumerate() {
-                let url = &pull_request.url;
-                let Some((label, _)) = crate::pr_state::parse_url(url) else {
-                    continue;
-                };
-                let (glyph, style) = match pull_request.state {
-                    crate::pr_state::PrState::Open => ("\u{ea64}", &cfg.open_style),
-                    crate::pr_state::PrState::Draft => ("\u{ebdb}", &cfg.draft_style),
-                    crate::pr_state::PrState::Merged => ("\u{eafe}", &cfg.merged_style),
-                    crate::pr_state::PrState::Closed => ("\u{ebda}", &cfg.closed_style),
-                    crate::pr_state::PrState::Unknown => ("\u{ea64}", &cfg.unknown_style),
-                };
-                let state_word = match pull_request.state {
-                    crate::pr_state::PrState::Draft => " draft",
-                    crate::pr_state::PrState::Closed => " closed",
-                    _ => "",
-                };
-                let style = pull_request
-                    .build
-                    .map_or(style.as_str(), |state| self.build_icon(Some(state)).1);
-                let available = width.saturating_sub(4);
-                let label = if label.len() + state_word.len() <= available {
-                    format!("{label}{state_word}")
-                } else if label.len() <= available {
-                    label
-                } else if let Some((repo, number)) = label.split_once('#') {
-                    let suffix = format!("#{number}");
-                    let prefix = available.saturating_sub(suffix.len() + 1);
-                    if prefix == 0 {
-                        suffix
-                    } else {
-                        format!("{}…{suffix}", &repo[..prefix.min(repo.len())])
-                    }
-                } else {
-                    label
-                };
-                let token = crate::navigation::link_token(pane, url, index)?;
-                push(
-                    label,
-                    &cfg.text_style,
-                    Some((glyph, style)),
-                    Some(Range::Link(token)),
-                    crate::actions::Identity::new("pr").field("url", url),
-                )?;
-            }
-        }
-        if !context.builds.is_empty() {
-            push(
-                " Builds".into(),
-                &cfg.category_style,
-                None,
-                None,
-                crate::actions::Identity::new("category").field("category", "builds"),
-            )?;
-            for (index, build) in context.builds.iter().enumerate() {
-                let token = crate::navigation::link_token(
-                    pane,
-                    &build.url,
-                    context.pull_requests.len() + index,
-                )?;
-                let name = build
-                    .repository
-                    .split_once('/')
-                    .map_or(build.repository.as_str(), |(_, name)| name);
-                push(
-                    format!("{name}:{}", build.branch),
-                    &cfg.text_style,
-                    Some(self.build_icon(build.state)),
-                    Some(Range::Link(token)),
-                    crate::actions::Identity::new("build")
-                        .field("repository", &build.repository)
-                        .field("branch", &build.branch),
                 )?;
             }
         }
@@ -3570,7 +3447,6 @@ enum Range {
     Window(String),
     PiPane(String),
     UsagePage(String),
-    Link(String),
     File(String),
     Action(String),
 }
@@ -3671,7 +3547,6 @@ fn render_rows(rows: &[Row], width: usize, text_color: Option<&str>) -> String {
                 | Range::Window(token)
                 | Range::PiPane(token)
                 | Range::UsagePage(token)
-                | Range::Link(token)
                 | Range::File(token)
                 | Range::Action(token),
             ) => token.as_str(),

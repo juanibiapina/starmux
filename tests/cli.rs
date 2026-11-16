@@ -25,7 +25,6 @@ fn help_and_adapter_expose_only_the_query_interface() {
     }
     for hidden in [
         "provider",
-        "pr-refresh",
         "usage-refresh",
         "top-refresh",
         "scroll-worker",
@@ -39,12 +38,12 @@ fn help_and_adapter_expose_only_the_query_interface() {
     let adapter = String::from_utf8(adapter.stdout).unwrap();
     assert!(adapter.contains("--width=#{e|-:#{side-status-width},1}"));
     assert!(adapter.contains("MouseDown1Status"));
-    assert!(adapter.contains("(st|sw|sp|su|sr|sl|ss|sc),#{mouse_status_range}"));
+    assert!(adapter.contains("(st|sw|sp|su|sl|ss|sc),#{mouse_status_range}"));
     assert!(adapter.contains("WheelUpStatus"));
     assert!(adapter.contains("WheelDownStatus"));
     assert!(adapter.contains("run-shell 'starmux scroll-event"));
     assert!(!adapter.contains("run-shell -b 'starmux scroll"));
-    assert!(adapter.contains("(st|sw|sp|su|sr|sl|ss|sc|sv),#{mouse_status_range}"));
+    assert!(adapter.contains("(st|sw|sp|su|sl|ss|sc|sv),#{mouse_status_range}"));
     assert!(!adapter.contains("side-status-width 30"));
     assert!(!adapter.contains("side-status-style"));
     assert!(!adapter.contains("@window_icon"));

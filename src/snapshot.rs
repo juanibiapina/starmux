@@ -1,7 +1,6 @@
 use crate::{
-    gitbutler::{GitButlerBranch, GitButlerCommit, PushStatus},
-    pi_workbench::{BuildState, LiveEntry, PiContext},
-    pr_state::PrState,
+    gitbutler::{BuildState, GitButlerBranch, GitButlerCommit, PushStatus},
+    pi_workbench::{LiveEntry, PiContext},
     Sidebar,
 };
 use serde_json::{json, Value};
@@ -84,31 +83,12 @@ fn descends_from(system: &System, pid: u32, ancestor: u32) -> bool {
 
 fn context(sidebar: &Sidebar, entry: &LiveEntry) -> Option<Value> {
     let path = entry.context_path.as_ref()?;
-    let mut context: PiContext = crate::pi_workbench::read_context(path, &entry.session_id).ok()?;
-    if let Some(dir) = sidebar.cache_dir("pr-state") {
-        for pull_request in &mut context.pull_requests {
-            let cached = crate::pr_state::resolve(&pull_request.url, &dir, true);
-            if cached != PrState::Unknown {
-                pull_request.state = cached;
-            }
-        }
-    }
+    let context: PiContext = crate::pi_workbench::read_context(path, &entry.session_id).ok()?;
     Some(json!({
         "plans": context.plans.iter().map(|plan| json!({
             "title": plan.title,
             "path": plan.path,
             "url": sidebar.plan_browser_url(&entry.session_id, &plan.path).ok().flatten(),
-        })).collect::<Vec<_>>(),
-        "pullRequests": context.pull_requests.iter().map(|pull_request| json!({
-            "url": pull_request.url,
-            "state": pr_state(pull_request.state),
-            "build": pull_request.build.map(build_state),
-        })).collect::<Vec<_>>(),
-        "builds": context.builds.iter().map(|build| json!({
-            "repository": build.repository,
-            "branch": build.branch,
-            "url": build.url,
-            "state": build.state.map_or("none", build_state),
         })).collect::<Vec<_>>(),
         "skills": context.skills.iter().map(|skill| json!({
             "name": skill.name,
@@ -230,15 +210,5 @@ const fn build_state(state: BuildState) -> &'static str {
         BuildState::Pending => "pending",
         BuildState::Success => "success",
         BuildState::Failure => "failure",
-    }
-}
-
-const fn pr_state(state: PrState) -> &'static str {
-    match state {
-        PrState::Open => "open",
-        PrState::Draft => "draft",
-        PrState::Merged => "merged",
-        PrState::Closed => "closed",
-        PrState::Unknown => "unknown",
     }
 }

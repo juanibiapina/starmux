@@ -740,17 +740,9 @@ impl<T: Tmux> Application<T> {
         let snapshot = self.snapshot(socket, client, width, focus)?;
         diagnostics.stages[0] = started.elapsed().as_micros() as u64;
         events.pane.clone_from(&snapshot.current_pane);
-        let (pi_sessions, mut context) = self.pi_sessions(socket, &snapshot, Some(events))?;
+        let (pi_sessions, context) = self.pi_sessions(socket, &snapshot, Some(events))?;
         if self.sidebar.pi_workbench_data_dir().is_some() {
             diagnostics.stages[1] =
-                (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
-        }
-        self.overlay_pr_states(context.as_mut(), spawn);
-        if context
-            .as_ref()
-            .is_some_and(|context| !context.pull_requests.is_empty())
-        {
-            diagnostics.stages[2] =
                 (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
         }
         let usage = self.usage_rows(spawn)?;
@@ -759,14 +751,14 @@ impl<T: Tmux> Application<T> {
             .usage_options()
             .is_some_and(|(providers, _)| !providers.is_empty())
         {
-            diagnostics.stages[3] =
+            diagnostics.stages[2] =
                 (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
         }
         let jobs = events
             .result("gob", self.gob_jobs(&snapshot))
             .unwrap_or_default();
         if self.sidebar.gob_enabled() {
-            diagnostics.stages[4] =
+            diagnostics.stages[3] =
                 (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
         }
         let (commands, errors) = self.commands(&snapshot);
@@ -774,7 +766,7 @@ impl<T: Tmux> Application<T> {
             events.missing("command", &error);
         }
         if !self.sidebar.command_options().is_empty() {
-            diagnostics.stages[5] =
+            diagnostics.stages[4] =
                 (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
         }
         let git = events
@@ -782,7 +774,7 @@ impl<T: Tmux> Application<T> {
             .ok()
             .flatten();
         if self.sidebar.git_enabled() {
-            diagnostics.stages[6] =
+            diagnostics.stages[5] =
                 (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
         }
         let gitbutler = events
@@ -790,7 +782,7 @@ impl<T: Tmux> Application<T> {
             .ok()
             .flatten();
         if self.sidebar.gitbutler_enabled() {
-            diagnostics.stages[9] =
+            diagnostics.stages[8] =
                 (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
         }
         let top = self.sidebar.top_enabled().then(|| {
@@ -800,7 +792,7 @@ impl<T: Tmux> Application<T> {
                 .unwrap_or_default()
         });
         if top.is_some() {
-            diagnostics.stages[8] =
+            diagnostics.stages[7] =
                 (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
         }
         events.availability(&usage, top.as_ref());
@@ -819,7 +811,7 @@ impl<T: Tmux> Application<T> {
             },
             offset,
         )?;
-        diagnostics.stages[7] =
+        diagnostics.stages[6] =
             (started.elapsed().as_micros() as u64).saturating_sub(diagnostics.total());
         Ok((rendered, diagnostics, max_offset))
     }
@@ -890,18 +882,6 @@ impl<T: Tmux> Application<T> {
             entries.into_iter().map(|entry| entry.session).collect(),
             context,
         ))
-    }
-
-    fn overlay_pr_states(&self, context: Option<&mut crate::PiContext>, spawn: bool) {
-        let (Some(context), Some(dir)) = (context, self.sidebar.cache_dir("pr-state")) else {
-            return;
-        };
-        for pull_request in &mut context.pull_requests {
-            let cached = crate::pr_state::resolve(&pull_request.url, &dir, spawn);
-            if cached != crate::pr_state::PrState::Unknown {
-                pull_request.state = cached;
-            }
-        }
     }
 
     fn commands(&self, snapshot: &Snapshot) -> (BTreeMap<String, String>, Vec<String>) {
@@ -1126,7 +1106,7 @@ impl<T: Tmux> Application<T> {
         let stages = diagnostics.stages;
         Ok(format!(
             "{{\"query_us\":{},\"usage_us\":{},\"gob_us\":{},\"command_us\":{},\"git_us\":{},\"top_us\":{},\"render_us\":{}}}",
-            stages[0] + stages[1] + stages[2], stages[3], stages[4], stages[5], stages[6], stages[8], stages[7]
+            stages[0] + stages[1], stages[2], stages[3], stages[4], stages[5], stages[7], stages[6]
         ))
     }
 
@@ -1144,7 +1124,7 @@ impl<T: Tmux> Application<T> {
         if let Some(width) = width {
             validate_width(width)?;
         }
-        if !["sc", "sl", "ss", "sr"]
+        if !["sc", "sl", "ss"]
             .iter()
             .any(|prefix| token.starts_with(prefix))
         {
@@ -1208,16 +1188,6 @@ impl<T: Tmux> Application<T> {
                 .sidebar
                 .file_open_args(path, &snapshot.current_pane, socket);
             return self.tmux.open_file(path, command.as_deref());
-        }
-        if token.starts_with("sr") {
-            if !self.sidebar.pi_context_enabled() {
-                return Err("link click target is not enabled".into());
-            }
-            let snapshot = self.snapshot(socket, client, width, None)?;
-            let (_, context) = self.pi_sessions(socket, &snapshot, None)?;
-            let context = context.ok_or("link click target is no longer present")?;
-            let url = crate::navigation::link_target(token, &snapshot.current_pane, &context)?;
-            return self.tmux.open_url(url);
         }
         self.tmux.activate(socket, client, token)
     }
@@ -1401,10 +1371,8 @@ fn source_explanation(
     }
     if let Some(context) = &context {
         result.push_str(&format!(
-            "pi-context plans={} prs={} builds={} skills={}\n",
+            "pi-context plans={} skills={}\n",
             context.plans.len(),
-            context.pull_requests.len(),
-            context.builds.len(),
             context.skills.len()
         ));
     }
@@ -1926,7 +1894,6 @@ mod tests {
                 "version": 2, "sessionId": "live",
                 "extensions": {
                     "pi-plans": {"version": 1, "data": {"plans": [{"id": "0123456789abcdef01234567", "title": "#[fg=red] Build search", "path": "live.jsonl.plans/0123456789abcdef01234567.md"}]}},
-                    "pi-github": {"version": 1, "data": {"pullRequests": []}},
                     "pi-skills": {"version": 1, "data": {"skills": ["testing"], "skillPaths": {"testing": skill_path}}}
                 }
             })
@@ -2087,56 +2054,6 @@ mod tests {
             .activate("/tmp/starmux-current.sock", "client", &plan_token)
             .is_err());
         assert_eq!(tmux.opened_files().len(), 2);
-        let pr_url = "https://github.com/owner/repo/pull/42";
-        let second_url = "https://github.com/owner/another/pull/47";
-        let mut updated_context: serde_json::Value =
-            serde_json::from_slice(&fs::read(&context_path).unwrap()).unwrap();
-        updated_context["extensions"]["pi-github"]["data"]["pullRequests"] =
-            serde_json::json!([pr_url, second_url]);
-        fs::write(&context_path, updated_context.to_string()).unwrap();
-        let token = crate::navigation::link_token("%0", pr_url, 0).unwrap();
-        let second_token = crate::navigation::link_token("%0", second_url, 1).unwrap();
-        app.activate("/tmp/starmux-current.sock", "client", &token)
-            .unwrap();
-        app.activate("/tmp/starmux-current.sock", "client", &second_token)
-            .unwrap();
-        assert_eq!(
-            tmux.opened_urls(),
-            [browser_url.as_str(), pr_url, second_url]
-        );
-        assert!(other_app
-            .activate("/tmp/starmux-current.sock", "client", &token)
-            .is_err());
-        updated_context["extensions"]["pi-github"]["data"]["pullRequests"] = serde_json::json!([]);
-        fs::write(&context_path, updated_context.to_string()).unwrap();
-        assert!(app
-            .activate("/tmp/starmux-current.sock", "client", &token)
-            .is_err());
-        assert_eq!(
-            tmux.opened_urls(),
-            [browser_url.as_str(), pr_url, second_url]
-        );
-        updated_context["extensions"]["pi-github"]["data"] = serde_json::json!({
-            "pullRequests": [],
-            "builds": [{"repository": "owner/repo", "branch": "main", "sha": "0123abc",
-                        "pushedAt": "2026-10-07T10:40:30.000Z", "source": "agent", "checks": null}]
-        });
-        fs::write(&context_path, updated_context.to_string()).unwrap();
-        let with_build = context_app
-            .render_query("/tmp/starmux-current.sock", "client", 40, None)
-            .unwrap();
-        let build_token = with_build
-            .split("#[range=user|")
-            .find(|row| row.contains("repo:main"))
-            .and_then(|row| row.split(' ').next())
-            .unwrap()
-            .to_owned();
-        app.activate("/tmp/starmux-current.sock", "client", &build_token)
-            .unwrap();
-        assert_eq!(
-            tmux.opened_urls().last().map(String::as_str),
-            Some("https://github.com/owner/repo/commit/0123abc/checks")
-        );
         let log_path = data_dir.join("events.log");
         fs::write(
             &context_path,

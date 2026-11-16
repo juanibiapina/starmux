@@ -113,8 +113,6 @@ fn catalog(module: &str) -> Vec<(&'static str, &'static [&'static str])> {
             ("category", &["category"]),
             ("plan", &["file", "title"]),
             ("skill", &["file", "name"]),
-            ("pr", &["url"]),
-            ("build", &["repository", "branch"]),
         ],
         "sessions" => vec![
             ("session", &["target_session", "name"]),
@@ -434,7 +432,7 @@ fn validate_rule(
     }
     for (key, accepted) in [
         ("metric", &["cpu", "memory", "battery"][..]),
-        ("category", &["plans", "skills", "prs"][..]),
+        ("category", &["plans", "skills"][..]),
         ("part", &["main", "name", "progress"][..]),
         ("stage", &crate::debug::STAGES[..]),
         ("provider", crate::usage::PROVIDERS),
