@@ -1,5 +1,8 @@
 # Starmux
 
+> [!WARNING]
+> Starmux is retired and this repository is archived. It receives no updates, and its Homebrew formula is gone.
+
 A fast and configurable sidebar for tmux.
 
 - View tmux sessions and windows, host CPU, memory, and battery status, live Pi sessions and selected Pi context from [pi-workbench](https://github.com/juanibiapina/pi-workbench), and AI provider usage
